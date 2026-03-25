@@ -193,7 +193,6 @@ Fields:
 - `title`
 - `description`
 - `targetUrl`
-- `targetType: 'tweet' | 'product'`
 - `topics: string[]`
 - `status: 'draft' | 'active' | 'paused' | 'completed'`
 - `budgetCredits`
@@ -367,7 +366,7 @@ Fields:
 On submit:
 
 - create or update `users` doc
-- set initial credits to `0`
+- set initial credits to `25` (signup bonus)
 - redirect to dashboard
 
 ---
