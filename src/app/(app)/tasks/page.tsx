@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 
 export default async function TasksPage() {
   const user = await getCurrentUserProfile();
-  if (!user) redirect("/onboarding");
+  if (!user) redirect("/sign-in");
 
   const tasks = await getOpenTasks();
 

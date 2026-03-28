@@ -3,28 +3,20 @@
  *
  * Usage: npx tsx scripts/seed.ts
  *
- * Before running, make sure you have a .env.local with Firebase config.
+ * Before running, make sure you have a .env.local with Supabase config.
  * This script creates starter campaigns and open tasks so the marketplace
  * isn't empty for new users.
  */
 
-import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, Timestamp } from "firebase/firestore";
+import { createClient } from "@supabase/supabase-js";
 import { config } from "dotenv";
 
 config({ path: ".env.local" });
 
-const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app, "day3");
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 const TASK_INSTRUCTIONS = {
   like: "Open the target X post and like it from your real account. Then submit a short note confirming completion.",
@@ -76,19 +68,26 @@ async function seed() {
   console.log("Starting seed...");
 
   // Seed bot user who "owns" the starter campaigns
-  const botRef = await addDoc(collection(db, "users"), {
-    clerkUserId: "seed-bot",
-    email: "bot@day3.app",
-    name: "Day3 Bot",
-    username: "day3bot",
-    xHandle: "@day3bot",
-    bio: "Starter campaigns bot",
-    interests: [],
-    credits: 0,
-    createdAt: Timestamp.now(),
-    updatedAt: Timestamp.now(),
-  });
-  console.log(`Created bot user: ${botRef.id}`);
+  const { data: botUser, error: botErr } = await supabase
+    .from("users")
+    .insert({
+      clerk_user_id: "seed-bot",
+      email: "bot@day3.app",
+      name: "Day3 Bot",
+      username: "day3bot",
+      x_handle: "@day3bot",
+      bio: "Starter campaigns bot",
+      interests: [],
+      credits: 0,
+    })
+    .select("id")
+    .single();
+
+  if (botErr) {
+    console.error("Failed to create bot user:", botErr);
+    process.exit(1);
+  }
+  console.log(`Created bot user: ${botUser.id}`);
 
   for (const campaign of SEED_CAMPAIGNS) {
     const totalCost =
@@ -96,20 +95,26 @@ async function seed() {
       campaign.tasks.reply * CREDIT_VALUES.reply +
       campaign.tasks.quote * CREDIT_VALUES.quote;
 
-    const campaignRef = await addDoc(collection(db, "campaigns"), {
-      ownerUserId: "seed-bot",
-      title: campaign.title,
-      description: campaign.description,
-      targetUrl: campaign.targetUrl,
-      topics: campaign.topics,
-      status: "active",
-      budgetCredits: totalCost,
-      remainingCredits: totalCost,
-      createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-    });
+    const { data: campaignRow, error: campErr } = await supabase
+      .from("campaigns")
+      .insert({
+        owner_user_id: "seed-bot",
+        title: campaign.title,
+        description: campaign.description,
+        target_url: campaign.targetUrl,
+        topics: campaign.topics,
+        status: "active",
+        budget_credits: totalCost,
+        remaining_credits: totalCost,
+      })
+      .select("id")
+      .single();
 
-    console.log(`Created campaign: ${campaign.title} (${campaignRef.id})`);
+    if (campErr) {
+      console.error(`Failed to create campaign: ${campaign.title}`, campErr);
+      continue;
+    }
+    console.log(`Created campaign: ${campaign.title} (${campaignRow.id})`);
 
     const taskTypes = [
       { type: "like" as const, count: campaign.tasks.like },
@@ -117,30 +122,29 @@ async function seed() {
       { type: "quote" as const, count: campaign.tasks.quote },
     ];
 
-    let taskCount = 0;
+    const taskRows = [];
     for (const { type, count } of taskTypes) {
       for (let i = 0; i < count; i++) {
-        await addDoc(collection(db, "campaignTasks"), {
-          campaignId: campaignRef.id,
-          ownerUserId: "seed-bot",
+        taskRows.push({
+          campaign_id: campaignRow.id,
+          owner_user_id: "seed-bot",
           type,
           instructions: TASK_INSTRUCTIONS[type],
-          targetUrl: campaign.targetUrl,
-          creditReward: CREDIT_VALUES[type],
+          target_url: campaign.targetUrl,
+          credit_reward: CREDIT_VALUES[type],
           status: "open",
-          claimedByUserId: null,
-          claimedAt: null,
-          submittedAt: null,
-          reviewedAt: null,
-          reviewedByUserId: null,
-          proofText: null,
-          proofUrl: null,
-          createdAt: Timestamp.now(),
         });
-        taskCount++;
       }
     }
-    console.log(`  Created ${taskCount} tasks`);
+
+    if (taskRows.length > 0) {
+      const { error: taskErr } = await supabase.from("campaign_tasks").insert(taskRows);
+      if (taskErr) {
+        console.error(`  Failed to create tasks:`, taskErr);
+      } else {
+        console.log(`  Created ${taskRows.length} tasks`);
+      }
+    }
   }
 
   console.log("\nSeed complete!");

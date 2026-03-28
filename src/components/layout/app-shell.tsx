@@ -15,7 +15,7 @@ import {
   SidebarGroupLabel,
   SidebarGroupContent,
 } from "@/components/ui/sidebar";
-import { Zap } from "lucide-react";
+import { Zap, Settings } from "lucide-react";
 import { TopNav } from "./top-nav";
 
 export async function AppShell({ children }: { children: React.ReactNode }) {
@@ -47,6 +47,14 @@ export async function AppShell({ children }: { children: React.ReactNode }) {
         </SidebarContent>
 
         <SidebarFooter>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton tooltip="Settings" render={<Link href="/settings" />}>
+                <Settings />
+                <span>Settings</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
           <SidebarUserFooter />
         </SidebarFooter>
       </Sidebar>

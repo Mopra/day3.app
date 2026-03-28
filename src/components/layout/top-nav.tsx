@@ -9,7 +9,7 @@ const titles: Record<string, string> = {
   "/tasks": "Tasks",
   "/campaigns": "Campaigns",
   "/campaigns/new": "New Campaign",
-  "/onboarding": "Set Up Profile",
+  "/settings": "Settings",
 };
 
 function getTitle(pathname: string) {

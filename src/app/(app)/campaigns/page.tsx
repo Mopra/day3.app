@@ -12,7 +12,7 @@ import { ReviewTaskCard } from "@/components/tasks/review-task-card";
 
 export default async function CampaignsPage() {
   const user = await getCurrentUserProfile();
-  if (!user) redirect("/onboarding");
+  if (!user) redirect("/sign-in");
 
   const [campaigns, pendingSubmissions] = await Promise.all([
     fetchMyCampaigns().catch(() => []),

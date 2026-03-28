@@ -12,7 +12,7 @@ import { ReviewTaskCard } from "@/components/tasks/review-task-card";
 
 export default async function DashboardPage() {
   const user = await getCurrentUserProfile();
-  if (!user) redirect("/onboarding");
+  if (!user) redirect("/sign-in");
 
   const [claimedTasks, pendingSubmissions] = await Promise.all([
     fetchMyClaimedTasks().catch(() => []),

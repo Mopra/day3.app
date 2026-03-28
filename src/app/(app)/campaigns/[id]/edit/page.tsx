@@ -11,7 +11,7 @@ export default async function EditCampaignPage({
   params: Promise<{ id: string }>;
 }) {
   const user = await getCurrentUserProfile();
-  if (!user) redirect("/onboarding");
+  if (!user) redirect("/sign-in");
 
   const { id } = await params;
   const campaign = await fetchCampaignById(id);

@@ -3,8 +3,6 @@ import { z } from "zod/v4";
 export const profileSchema = z.object({
   name: z.string().min(1, "Name is required"),
   xHandle: z.string().min(1, "X handle is required"),
-  bio: z.string().optional().default(""),
-  interests: z.string().optional().default(""),
 });
 
 export type ProfileInput = z.infer<typeof profileSchema>;

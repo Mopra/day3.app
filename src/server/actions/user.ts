@@ -2,29 +2,49 @@
 
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { getUserByClerkId, createOrUpdateProfile } from "@/lib/db";
-import { serialize } from "@/lib/firebase";
 
+/**
+ * Returns the current user's profile, auto-provisioning from Clerk OAuth data
+ * on first visit so no manual onboarding form is needed.
+ */
 export async function getCurrentUserProfile() {
   const { userId } = await auth();
   if (!userId) return null;
-  const user = await getUserByClerkId(userId);
-  if (!user) return null;
-  return serialize(user);
+
+  const existing = await getUserByClerkId(userId);
+  if (existing) return existing;
+
+  // First visit — auto-create profile from Clerk / X OAuth data
+  const clerk = await currentUser();
+  if (!clerk) return null;
+
+  const xAccount = clerk.externalAccounts?.find(
+    (a) => a.provider === "x" || a.provider === "twitter",
+  );
+
+  const email = clerk.emailAddresses[0]?.emailAddress ?? "";
+  const name =
+    [clerk.firstName, clerk.lastName].filter(Boolean).join(" ") ||
+    clerk.username ||
+    xAccount?.username ||
+    "";
+  const xHandle = xAccount?.username ?? clerk.username ?? "";
+
+  await createOrUpdateProfile(userId, email, { name, xHandle });
+
+  return getUserByClerkId(userId);
 }
 
 export async function saveProfile(formData: FormData) {
   const { userId } = await auth();
   if (!userId) return { success: false, error: "Not authenticated" };
 
-  const user = await currentUser();
-  const email = user?.emailAddresses[0]?.emailAddress || "";
+  const clerk = await currentUser();
+  const email = clerk?.emailAddresses[0]?.emailAddress ?? "";
 
   const name = formData.get("name") as string;
   const xHandle = formData.get("xHandle") as string;
-  const bio = (formData.get("bio") as string) || "";
-  const interestsRaw = (formData.get("interests") as string) || "";
-  const interests = interestsRaw.split(",").map((s) => s.trim()).filter(Boolean);
 
-  await createOrUpdateProfile(userId, email, { name, xHandle, bio, interests });
+  await createOrUpdateProfile(userId, email, { name, xHandle });
   return { success: true };
 }

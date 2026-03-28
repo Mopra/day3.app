@@ -14,7 +14,7 @@ export default async function TaskDetailPage({
 }) {
   const { id } = await params;
   const user = await getCurrentUserProfile();
-  if (!user) redirect("/onboarding");
+  if (!user) redirect("/sign-in");
 
   const task = await fetchTaskById(id);
   if (!task) notFound();

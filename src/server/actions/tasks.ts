@@ -8,23 +8,22 @@ import {
   submitTaskProof as dbSubmitTaskProof,
   getMyClaimedTasks,
 } from "@/lib/db";
-import { serialize } from "@/lib/firebase";
 
 export async function getOpenTasks() {
   const tasks = await listOpenTasks();
-  return serialize(tasks);
+  return tasks;
 }
 
 export async function fetchTaskById(taskId: string) {
   const task = await getTaskById(taskId);
-  return task ? serialize(task) : null;
+  return task ?? null;
 }
 
 export async function fetchMyClaimedTasks() {
   const { userId } = await auth();
   if (!userId) return [];
   const tasks = await getMyClaimedTasks(userId);
-  return serialize(tasks);
+  return tasks;
 }
 
 export async function claimTaskAction(taskId: string) {

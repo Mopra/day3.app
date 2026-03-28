@@ -12,13 +12,12 @@ import {
   rejectTask as dbRejectTask,
 } from "@/lib/db";
 import { campaignSchema, campaignEditSchema } from "@/lib/validators";
-import { serialize } from "@/lib/firebase";
 
 export async function fetchMyCampaigns() {
   const { userId } = await auth();
   if (!userId) return [];
   const campaigns = await listMyCampaigns(userId);
-  return serialize(campaigns);
+  return campaigns;
 }
 
 export async function createCampaignAction(formData: FormData) {
@@ -56,7 +55,7 @@ export async function fetchCampaignById(campaignId: string) {
   if (!userId) return null;
   const campaign = await getCampaignById(campaignId);
   if (!campaign || campaign.ownerUserId !== userId) return null;
-  return serialize(campaign);
+  return campaign;
 }
 
 export async function fetchMyPendingSubmissions() {
@@ -66,7 +65,7 @@ export async function fetchMyPendingSubmissions() {
   try {
     const results = await listPendingSubmissionsForOwner(userId);
     console.log("[fetchMyPendingSubmissions] results count:", results.length);
-    return serialize(results);
+    return results;
   } catch (err) {
     console.error("[fetchMyPendingSubmissions] ERROR:", err);
     throw err;

@@ -5,8 +5,6 @@ export interface User {
   name: string;
   username: string;
   xHandle: string;
-  bio: string;
-  interests: string[];
   credits: number;
   createdAt: Date;
   updatedAt: Date;
