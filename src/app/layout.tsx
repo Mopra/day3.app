@@ -15,9 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Day3 — Earn distribution by helping others get seen",
-  description:
-    "Complete simple promotion tasks on X, earn credits, and spend them to get your own product or post promoted.",
+  title: "Day3",
+  description: "Day3 — day3.app",
 };
 
 export default function RootLayout({

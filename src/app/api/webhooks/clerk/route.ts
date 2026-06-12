@@ -1,6 +1,5 @@
 import { Webhook } from "svix";
 import { headers } from "next/headers";
-import { deleteAllUserData } from "@/lib/db";
 
 export async function POST(request: Request) {
   const SIGNING_SECRET = process.env.CLERK_WEBHOOK_SIGNING_SECRET;
@@ -33,10 +32,7 @@ export async function POST(request: Request) {
   }
 
   if (event.type === "user.deleted") {
-    const clerkUserId = event.data.id;
-    if (clerkUserId) {
-      await deleteAllUserData(clerkUserId);
-    }
+    // TODO: clean up this user's data in Supabase once the new schema exists.
   }
 
   return new Response("OK", { status: 200 });

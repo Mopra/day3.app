@@ -4,11 +4,11 @@ import { SignUp } from "@clerk/nextjs";
 
 export default async function SignUpPage() {
   const { userId } = await auth();
-  if (userId) redirect("/dashboard");
+  if (userId) redirect("/");
 
   return (
     <div className="flex items-center justify-center min-h-screen">
-      <SignUp fallbackRedirectUrl="/dashboard" />
+      <SignUp fallbackRedirectUrl="/" />
     </div>
   );
 }
