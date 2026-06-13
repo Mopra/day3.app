@@ -7,23 +7,25 @@ export { schema };
 
 // One factory, two connection styles (per migration plan):
 //   - Vercel web tier (serverless) → Supabase *transaction pooler* (port 6543).
-//     pgbouncer in transaction mode can't keep prepared statements, so
+//     Supavisor/pgbouncer in transaction mode can't keep prepared statements, so
 //     `prepare: false`, and we keep the per-instance pool tiny.
-//   - VPS worker (long-lived) → *direct/session* connection (port 5432) with a
-//     normal pool.
-// The right mode is inferred from DATABASE_URL so both processes share this code.
-function isPooledUrl(url: string): boolean {
-  return /(?::6543\b)|(?:pooler\.)/.test(url);
+//   - VPS worker (long-lived) → *direct* or *session pooler* (port 5432), both
+//     of which support prepared statements, with a normal pool.
+// The signal is the PORT, not the host: the session pooler is also on a
+// `pooler.` host but runs on 5432 in session mode, so only :6543 means
+// transaction mode. Inferred from DATABASE_URL so both processes share this code.
+function isTransactionPooler(url: string): boolean {
+  return /:6543\b/.test(url);
 }
 
 export function createDb(connectionString: string | undefined = process.env.DATABASE_URL): Db {
   if (!connectionString) {
     throw new Error("DATABASE_URL is not set");
   }
-  const pooled = isPooledUrl(connectionString);
+  const txPooler = isTransactionPooler(connectionString);
   const client = postgres(connectionString, {
-    prepare: pooled ? false : undefined,
-    max: pooled ? 1 : 10,
+    prepare: txPooler ? false : undefined,
+    max: txPooler ? 1 : 10,
   });
   return drizzle(client, { schema });
 }
