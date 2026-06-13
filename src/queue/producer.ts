@@ -1,6 +1,6 @@
 import { Queue, type ConnectionOptions } from "bullmq";
 import IORedis, { type Redis } from "ioredis";
-import { QUEUE_NAME, type JobQueue, type QueueMessage } from "./messages";
+import { DEFAULT_JOB_OPTIONS, QUEUE_NAME, type JobQueue, type QueueMessage } from "./messages";
 
 // Producer side of the queue (runs on Vercel). API route handlers enqueue jobs
 // here; the VPS worker (worker/index.ts) consumes them. The connection is lazy
@@ -26,6 +26,7 @@ function getBullQueue(): Queue {
     // the instance is runtime-compatible.
     queue = new Queue(QUEUE_NAME, {
       connection: getRedisConnection() as unknown as ConnectionOptions,
+      defaultJobOptions: DEFAULT_JOB_OPTIONS,
     });
   }
   return queue;

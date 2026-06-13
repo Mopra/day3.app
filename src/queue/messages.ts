@@ -32,6 +32,16 @@ export const SEND_BATCH_SIZE = 25;
 // sides reference the same name without pulling in the driver.
 export const QUEUE_NAME = "day3-jobs";
 
+// Retry policy applied to every enqueued job (mirrors the old CF queue's
+// max_retries + backoff). Retries are safe because the handlers are idempotent
+// on DB status; exhausted jobs land in BullMQ's "failed" set (the DLQ).
+export const DEFAULT_JOB_OPTIONS = {
+  attempts: 5,
+  backoff: { type: "exponential" as const, delay: 5000 },
+  removeOnComplete: 1000,
+  removeOnFail: 5000,
+};
+
 // Port seam for the job queue. The proven handler bodies enqueue follow-up work
 // via `queue.send(msg)`. In production a BullMQ-backed adapter implements this
 // (Phase 4); the test FakeQueue implements it directly — so the handlers never
