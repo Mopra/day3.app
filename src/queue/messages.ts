@@ -27,6 +27,11 @@ export type QueueMessage =
 
 export const SEND_BATCH_SIZE = 25;
 
+// The single BullMQ queue both tiers share: the web tier (producer) adds jobs,
+// the VPS worker (consumer) processes them. Kept here (no bullmq import) so both
+// sides reference the same name without pulling in the driver.
+export const QUEUE_NAME = "day3-jobs";
+
 // Port seam for the job queue. The proven handler bodies enqueue follow-up work
 // via `queue.send(msg)`. In production a BullMQ-backed adapter implements this
 // (Phase 4); the test FakeQueue implements it directly — so the handlers never

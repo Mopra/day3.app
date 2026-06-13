@@ -1,0 +1,54 @@
+import type { NextRequest } from "next/server";
+import type { ZodType } from "zod";
+
+// Thrown anywhere inside a handler to produce a specific HTTP error; the `route`
+// wrapper turns it into a JSON response. Everything else becomes a 500.
+export class HttpError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
+
+export function json(data: unknown, status = 200): Response {
+  return Response.json(data, { status });
+}
+
+type RouteHandler<C> = (req: NextRequest, context: C) => Promise<Response>;
+
+// Wraps a Next route handler: HttpError → its JSON status, anything else → 500.
+// Mirrors the Hono app's onError behaviour.
+export function route<C = unknown>(handler: RouteHandler<C>): RouteHandler<C> {
+  return async (req, context) => {
+    try {
+      return await handler(req, context);
+    } catch (err) {
+      if (err instanceof HttpError) {
+        return Response.json({ error: err.message }, { status: err.status });
+      }
+      console.error("[api] unhandled error", err);
+      return Response.json({ error: "Internal error" }, { status: 500 });
+    }
+  };
+}
+
+// Parses + validates a JSON body, throwing HttpError(400) on bad JSON or a Zod
+// failure (same message shape the Hono `parseJson` produced).
+export async function parseJson<T>(req: NextRequest, schema: ZodType<T>): Promise<T> {
+  let raw: unknown;
+  try {
+    raw = await req.json();
+  } catch {
+    throw new HttpError(400, "Invalid JSON body");
+  }
+  const result = schema.safeParse(raw);
+  if (!result.success) {
+    const issue = result.error.issues[0];
+    const path = issue.path.join(".");
+    throw new HttpError(400, `${path ? `${path}: ` : ""}${issue.message}`);
+  }
+  return result.data;
+}
