@@ -12,7 +12,8 @@ export type IdPrefix =
   | "evt"
   | "sup"
   | "rsk"
-  | "job";
+  | "job"
+  | "dnsint";
 
 export function newId(prefix: IdPrefix): string {
   const bytes = new Uint8Array(20);

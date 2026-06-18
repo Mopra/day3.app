@@ -71,6 +71,12 @@ export const sendingDomains = pgTable(
     dkimStatus: text("dkim_status").notNull().default("pending"),
     dnsRecordsJson: text("dns_records_json"),
 
+    // Auto-DNS: when a customer connects Cloudflare and we write the records for
+    // them, we record the resolved zone and a write-error for the UI to surface.
+    dnsZoneId: text("dns_zone_id"),
+    dnsAutoConfigured: boolean("dns_auto_configured").notNull().default(false),
+    dnsWriteError: text("dns_write_error"),
+
     adminOverrideVerified: boolean("admin_override_verified").notNull().default(false),
 
     createdAt: tstz("created_at").notNull(),
@@ -80,6 +86,34 @@ export const sendingDomains = pgTable(
     uniqueIndex("uq_sending_domains_account_domain").on(t.accountId, t.domain),
     index("idx_sending_domains_account_id").on(t.accountId),
     index("idx_sending_domains_account_status").on(t.accountId, t.verificationStatus),
+  ],
+);
+
+// A customer's connected DNS provider (currently Cloudflare only), authorized via
+// OAuth. Tokens are AES-256-GCM encrypted at rest (see lib/crypto.ts) — they are
+// credentials to the customer's DNS. One connection per account.
+export const dnsIntegrations = pgTable(
+  "dns_integrations",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    provider: text("provider").notNull().default("cloudflare"),
+
+    accessTokenEnc: text("access_token_enc").notNull(),
+    refreshTokenEnc: text("refresh_token_enc").notNull(),
+    expiresAt: tstz("expires_at"),
+    scope: text("scope"),
+
+    // Display-only: who the connection is authorized as (e.g. CF account email).
+    cfAccountLabel: text("cf_account_label"),
+    status: text("status").notNull().default("connected"),
+
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_dns_integrations_account_provider").on(t.accountId, t.provider),
+    index("idx_dns_integrations_account_id").on(t.accountId),
   ],
 );
 
@@ -343,6 +377,7 @@ export const jobLogs = pgTable("job_logs", {
 export type Account = typeof accounts.$inferSelect;
 export type AccountUser = typeof accountUsers.$inferSelect;
 export type SendingDomain = typeof sendingDomains.$inferSelect;
+export type DnsIntegration = typeof dnsIntegrations.$inferSelect;
 export type Audience = typeof audiences.$inferSelect;
 export type Subscriber = typeof subscribers.$inferSelect;
 export type Import = typeof imports.$inferSelect;

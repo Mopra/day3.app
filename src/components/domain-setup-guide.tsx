@@ -1,16 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   ArrowRight,
   Check,
   CheckCircle2,
   ChevronDown,
+  Cloud,
   Copy,
   ExternalLink,
   Loader2,
   RefreshCw,
+  Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +30,8 @@ import {
 import type { DnsRecord, SendingDomain } from "@/lib/types";
 
 const POLL_MS = 12_000;
+// Tight early polling to catch SES the instant it verifies, then settle to POLL_MS.
+const POLL_BACKOFF_MS = [3_000, 3_000, 5_000, 5_000, 8_000];
 
 // Friendly DNS-host docs for the most common registrars non-technical users have.
 const PROVIDER_DOCS: { name: string; href: string }[] = [
@@ -61,6 +66,7 @@ export function DomainSetupGuide({
 
   const [checking, setChecking] = useState(false);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
+  const [dnsResolved, setDnsResolved] = useState(false);
   const [hostFormat, setHostFormat] = useState<"full" | "relative">("full");
   const prevState = useRef(state);
 
@@ -77,11 +83,12 @@ export function DomainSetupGuide({
     async (opts?: { manual?: boolean }) => {
       setChecking(true);
       try {
-        const res = await api.post<{ domain: SendingDomain }>(
+        const res = await api.post<{ domain: SendingDomain; dnsResolved?: boolean }>(
           `/api/domains/${domain.id}/check`,
           {},
         );
         if (res?.domain) onChange(res.domain);
+        setDnsResolved(Boolean(res?.dnsResolved));
         setLastChecked(new Date());
         if (opts?.manual && res?.domain) {
           const next = domainState(res.domain);
@@ -102,20 +109,38 @@ export function DomainSetupGuide({
     [api, domain.id, onChange],
   );
 
-  // Check once on open (fresh status, back-fills records if missing), then on a
-  // gentle interval while unverified and the tab is visible, plus when the user
-  // returns to the tab. Stops as soon as it's verified.
+  // Check once on open (fresh status, back-fills records if missing), then poll on
+  // a tightening-then-steady schedule while unverified and the tab is visible,
+  // plus when the user returns to the tab. The fast early ticks catch SES the
+  // moment it flips (records are usually live in seconds); it then settles to a
+  // gentle interval. Stops as soon as it's verified.
   useEffect(() => {
     if (verified) return;
-    check();
-    const tick = () => {
-      if (document.visibilityState === "visible") check();
+    let cancelled = false;
+    let attempt = 0;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const scheduleNext = () => {
+      if (cancelled) return;
+      const delay = attempt < POLL_BACKOFF_MS.length ? POLL_BACKOFF_MS[attempt] : POLL_MS;
+      timer = setTimeout(run, delay);
     };
-    const id = setInterval(tick, POLL_MS);
+    const run = async () => {
+      if (cancelled) return;
+      if (document.visibilityState === "visible") {
+        await check();
+        attempt += 1;
+      }
+      scheduleNext();
+    };
+
+    check(); // immediate, doesn't count against the backoff schedule
+    scheduleNext();
     const onFocus = () => check();
     window.addEventListener("focus", onFocus);
     return () => {
-      clearInterval(id);
+      cancelled = true;
+      clearTimeout(timer);
       window.removeEventListener("focus", onFocus);
     };
   }, [verified, check]);
@@ -127,8 +152,11 @@ export function DomainSetupGuide({
         state={state}
         checking={checking}
         lastChecked={lastChecked}
+        dnsResolved={dnsResolved}
         onCheck={() => check({ manual: true })}
       />
+
+      {!verified && <CloudflareAutoConfig domain={domain} onChange={onChange} onConfigured={check} />}
 
       {!verified && <Steps />}
 
@@ -149,17 +177,152 @@ export function DomainSetupGuide({
 
 /* ----------------------------------------------------------------------------- */
 
+type CfConnection = { status: string; label: string | null; scope: string | null; connectedAt: string };
+type CfWriteResult = {
+  record: { name: string; type: string };
+  action: "created" | "updated" | "skipped" | "error";
+  error?: string;
+};
+
+// One-click DNS for Cloudflare users: connect via OAuth, then we write the
+// records into their zone. Falls back to the manual record cards below for
+// everyone else. After a fresh connect we auto-run the write so it's truly
+// one-click (the connect redirect lands back here with ?cf_connected=1).
+function CloudflareAutoConfig({
+  domain,
+  onChange,
+  onConfigured,
+}: {
+  domain: SendingDomain;
+  onChange: (d: SendingDomain) => void;
+  onConfigured: () => void;
+}) {
+  const api = useApi();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [connection, setConnection] = useState<CfConnection | null | undefined>(undefined);
+  const [configuring, setConfiguring] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const loadConnection = useCallback(async () => {
+    try {
+      const res = await api.get<{ connection: CfConnection | null }>("/api/integrations/cloudflare");
+      setConnection(res.connection);
+      return res.connection;
+    } catch {
+      setConnection(null);
+      return null;
+    }
+  }, [api]);
+
+  const configure = useCallback(async () => {
+    setConfiguring(true);
+    try {
+      const res = await api.post<{ domain: SendingDomain; results: CfWriteResult[] }>(
+        `/api/domains/${domain.id}/auto-configure`,
+        {},
+      );
+      if (res?.domain) onChange(res.domain);
+      const errors = res.results.filter((r) => r.action === "error");
+      if (errors.length) {
+        toast.error(`Some records couldn't be written: ${errors[0].error}`);
+        return;
+      }
+      const written = res.results.filter((r) => r.action !== "skipped").length;
+      toast.success(
+        written > 0
+          ? `Added ${written} DNS record${written === 1 ? "" : "s"} to Cloudflare — verifying now.`
+          : "Your Cloudflare DNS is already set up — verifying now.",
+      );
+      setDone(true);
+      onConfigured();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't configure Cloudflare");
+    } finally {
+      setConfiguring(false);
+    }
+  }, [api, domain.id, onChange, onConfigured]);
+
+  useEffect(() => {
+    loadConnection();
+  }, [loadConnection]);
+
+  // Handle the redirect back from Cloudflare's consent screen.
+  const handledReturn = useRef(false);
+  useEffect(() => {
+    if (handledReturn.current) return;
+    const error = searchParams.get("cf_error");
+    const connected = searchParams.get("cf_connected");
+    if (!error && !connected) return;
+    handledReturn.current = true;
+    router.replace(`/domains/${domain.id}`); // drop the query so a refresh doesn't re-fire
+    if (error) {
+      toast.error(error);
+      return;
+    }
+    toast.success("Cloudflare connected.");
+    loadConnection().then((conn) => {
+      if (conn) configure();
+    });
+  }, [searchParams, router, domain.id, loadConnection, configure]);
+
+  if (connection === undefined) return null; // avoid a flash before we know the state
+
+  const connectHref = `/api/integrations/cloudflare/connect?returnTo=${encodeURIComponent(`/domains/${domain.id}`)}`;
+
+  return (
+    <div className="rounded-xl border border-primary/20 bg-primary/5 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <Cloud className="size-6 shrink-0 text-primary" />
+          <div>
+            <h3 className="font-medium">
+              {connection ? "Configure DNS automatically" : "On Cloudflare? Skip the copy-paste"}
+            </h3>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {connection
+                ? `Connected${connection.label ? ` as ${connection.label}` : ""}. We'll add the records below to your Cloudflare zone for you.`
+                : "Connect your Cloudflare account and we'll add these DNS records for you — no manual entry."}
+            </p>
+          </div>
+        </div>
+        <div className="shrink-0">
+          {connection ? (
+            <Button onClick={configure} disabled={configuring || done}>
+              {configuring ? <Loader2 className="animate-spin" /> : <Zap />}
+              {done ? "Records added" : configuring ? "Configuring…" : "Configure automatically"}
+            </Button>
+          ) : (
+            <Button
+              render={
+                <a href={connectHref}>
+                  <Cloud />
+                  Connect Cloudflare
+                </a>
+              }
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------- */
+
 function StatusHero({
   domain,
   state,
   checking,
   lastChecked,
+  dnsResolved,
   onCheck,
 }: {
   domain: SendingDomain;
   state: "verified" | "pending" | "failed";
   checking: boolean;
   lastChecked: Date | null;
+  dnsResolved: boolean;
   onCheck: () => void;
 }) {
   if (state === "verified") {
@@ -183,26 +346,41 @@ function StatusHero({
   }
 
   const failed = state === "failed";
+  // DNS records are live in public DNS but SES hasn't flipped to verified yet —
+  // the part we control is done, so say so instead of a generic "waiting".
+  const confirmed = !failed && dnsResolved;
   return (
     <div
       className={cn(
         "flex flex-col gap-4 rounded-xl border p-5 sm:flex-row sm:items-start",
-        failed ? "border-destructive/30 bg-destructive/5" : "bg-muted/40",
+        failed
+          ? "border-destructive/30 bg-destructive/5"
+          : confirmed
+            ? "border-primary/20 bg-primary/5"
+            : "bg-muted/40",
       )}
     >
       {failed ? (
         <AlertCircle className="size-8 shrink-0 text-destructive" />
+      ) : confirmed ? (
+        <CheckCircle2 className="size-8 shrink-0 text-primary" />
       ) : (
         <Loader2 className="size-8 shrink-0 animate-spin text-muted-foreground" />
       )}
       <div className="flex-1 space-y-1">
         <h2 className="font-medium">
-          {failed ? "We couldn't verify this domain yet" : "Waiting for your DNS records"}
+          {failed
+            ? "We couldn't verify this domain yet"
+            : confirmed
+              ? "DNS records confirmed — finalizing"
+              : "Waiting for your DNS records"}
         </h2>
         <p className="text-sm text-muted-foreground">
           {failed
             ? "The records below may be missing or mistyped. Fix them at your DNS host and we'll keep checking automatically."
-            : "Add the DNS records below at your domain host. We check automatically every few minutes — most domains verify within an hour, though DNS can take up to 48 hours."}
+            : confirmed
+              ? "Your DNS records are live. We're finalizing verification with your email provider — this usually takes a few minutes, and we're checking continuously."
+              : "Add the DNS records below at your domain host. We check automatically every few minutes — most domains verify within an hour, though DNS can take up to 48 hours."}
         </p>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
           {checking ? (

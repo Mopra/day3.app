@@ -1,12 +1,15 @@
-import { and, eq, lt, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, lt, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { accounts, campaignRecipients, campaigns } from "../db/schema";
+import { accounts, campaignRecipients, campaigns, sendingDomains } from "../db/schema";
 import { nowIso } from "../lib/ids";
 import { logJob } from "../lib/job-log";
 import { enforceAccountHealth } from "../services/health";
+import { getDomainIdentity, type DomainIdentityState } from "../services/ses-identity";
 import { SEND_BATCH_SIZE, type JobQueue } from "./messages";
 
 const STUCK_LOCK_MINUTES = 15;
+const DOMAIN_RECHECK_MAX = 50; // bound SES calls per sweep
+const DOMAIN_RECHECK_WINDOW_DAYS = 14; // stop re-checking domains stale this long
 
 // Recipients stuck in "sending" belong to a crashed batch. The email may or
 // may not have left — re-sending could duplicate, so they become "failed",
@@ -74,6 +77,65 @@ async function reconcileSendingCampaigns(db: Db, jobsQueue: JobQueue): Promise<v
   }
 }
 
+// Pull the SES identity for a domain. Injected so the sweep is testable without
+// AWS, and so a process without SES configured (no AWS_REGION) cleanly skips.
+export type DomainIdentityFetcher = (domain: string) => Promise<DomainIdentityState>;
+
+// Sync domains still waiting on SES verification into our DB, so a domain
+// verifies even if the user closed the setup page (the send gate reads
+// verificationStatus). SES verifies in the background regardless; this is the
+// safety net for the client-side poll. Bounded per run, skips long-stale
+// pending domains, and only writes when something actually changed.
+export async function recheckPendingDomains(
+  db: Db,
+  fetchIdentity: DomainIdentityFetcher | null,
+): Promise<number> {
+  if (!fetchIdentity) return 0; // SES not configured in this process
+
+  const cutoff = new Date(
+    Date.now() - DOMAIN_RECHECK_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
+  const pending = await db
+    .select()
+    .from(sendingDomains)
+    .where(
+      and(
+        eq(sendingDomains.verificationStatus, "pending"),
+        eq(sendingDomains.provider, "ses"),
+        isNotNull(sendingDomains.dnsRecordsJson),
+        gt(sendingDomains.updatedAt, cutoff),
+      ),
+    )
+    .limit(DOMAIN_RECHECK_MAX);
+
+  let verified = 0;
+  for (const domain of pending) {
+    try {
+      const state = await fetchIdentity(domain.domain);
+      if (
+        state.verificationStatus !== domain.verificationStatus ||
+        state.dkimStatus !== domain.dkimStatus
+      ) {
+        await db
+          .update(sendingDomains)
+          .set({
+            verificationStatus: state.verificationStatus,
+            dkimStatus: state.dkimStatus,
+            dnsRecordsJson: JSON.stringify(state.records),
+            updatedAt: nowIso(),
+          })
+          .where(eq(sendingDomains.id, domain.id));
+        if (state.verificationStatus === "verified") verified += 1;
+      }
+    } catch (err) {
+      // One bad domain must not abort the sweep.
+      console.error(`[cron] domain re-check failed for ${domain.domain}:`, err);
+    }
+  }
+  return verified;
+}
+
 async function dailyHealthChecks(db: Db): Promise<void> {
   const rows = await db
     .select({ id: accounts.id })
@@ -104,6 +166,11 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
   const failed = await failStuckRecipients(db);
   await reconcileSendingCampaigns(db, queue);
 
+  // SES re-check only when this process has SES configured.
+  const region = process.env.AWS_REGION;
+  const fetchIdentity = region ? (domain: string) => getDomainIdentity(domain, region) : null;
+  const domainsVerified = await recheckPendingDomains(db, fetchIdentity);
+
   const isDaily = now.getUTCHours() === 3 && now.getUTCMinutes() < 15;
   if (isDaily) {
     await dailyHealthChecks(db);
@@ -115,6 +182,6 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
   await logJob(db, {
     jobType: "cron",
     status: "completed",
-    payload: { stuckFailed: failed, daily: isDaily },
+    payload: { stuckFailed: failed, domainsVerified, daily: isDaily },
   });
 }
