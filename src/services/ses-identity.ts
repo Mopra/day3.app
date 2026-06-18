@@ -5,12 +5,16 @@ import {
 } from "@aws-sdk/client-sesv2";
 
 // The DNS records a customer adds at their own DNS host to verify a sending
-// domain. For Easy DKIM these are 3 CNAMEs; a DMARC TXT is recommended in the UI.
+// domain. For Easy DKIM these are 3 required CNAMEs; a DMARC TXT is recommended
+// (it improves deliverability but isn't needed for verification).
 export type DnsRecord = {
   type: "CNAME" | "TXT" | "MX";
   name: string;
   value: string;
+  // Shown to the user as a short label, e.g. "DKIM" or "DMARC (recommended)".
   description?: string;
+  // false ⇒ recommended-but-optional (does not block verification).
+  required: boolean;
 };
 
 export type DomainIdentityState = {
@@ -32,7 +36,20 @@ function dkimRecords(domain: string, tokens: string[]): DnsRecord[] {
     name: `${token}._domainkey.${domain}`,
     value: `${token}.dkim.amazonses.com`,
     description: "DKIM",
+    required: true,
   }));
+}
+
+// Recommended DMARC policy for the sending domain. p=none only monitors, so it's
+// safe to publish and improves inbox placement without risking legitimate mail.
+function dmarcRecord(domain: string): DnsRecord {
+  return {
+    type: "TXT",
+    name: `_dmarc.${domain}`,
+    value: "v=DMARC1; p=none;",
+    description: "DMARC (recommended)",
+    required: false,
+  };
 }
 
 function toState(
@@ -42,11 +59,14 @@ function toState(
   tokens: string[] | undefined,
 ): DomainIdentityState {
   const dkim = (dkimStatus ?? "PENDING").toUpperCase();
+  const dkimCnames = dkimRecords(domain, tokens ?? []);
   return {
     verified: !!verified,
     verificationStatus: verified ? "verified" : dkim === "FAILED" ? "failed" : "pending",
     dkimStatus: dkim.toLowerCase(),
-    records: dkimRecords(domain, tokens ?? []),
+    // Only surface records once SES has issued DKIM tokens; an empty array means
+    // "not configured yet" to the UI.
+    records: dkimCnames.length ? [...dkimCnames, dmarcRecord(domain)] : [],
   };
 }
 

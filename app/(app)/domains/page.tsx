@@ -1,14 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronRight,
+  Clock,
+  Globe,
+  Loader2,
+} from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -25,16 +35,47 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useApi } from "@/lib/api";
+import { domainState } from "@/lib/domain";
 import { formatDate } from "@/lib/format";
-import type { SendingDomain } from "@/lib/types";
+import type { DomainState, SendingDomain } from "@/lib/types";
 
 type DomainForm = { domain: string; fromName: string; fromEmail: string };
 
+// Pull a bare hostname out of whatever the user pastes (URLs, trailing slashes…).
+function cleanDomain(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/.*$/, "")
+    .replace(/^www\./, "");
+}
+
+const STATUS_UI: Record<DomainState, { label: string; icon: typeof CheckCircle2; className: string }> = {
+  verified: { label: "Verified", icon: CheckCircle2, className: "text-primary" },
+  pending: { label: "Verifying…", icon: Clock, className: "text-muted-foreground" },
+  failed: { label: "Action needed", icon: AlertCircle, className: "text-destructive" },
+};
+
+function StatusCell({ domain }: { domain: SendingDomain }) {
+  const state = domainState(domain);
+  const ui = STATUS_UI[state];
+  const Icon = ui.icon;
+  return (
+    <span className={`inline-flex items-center gap-1.5 text-sm ${ui.className}`}>
+      <Icon className="size-4" />
+      {ui.label}
+    </span>
+  );
+}
+
 export default function DomainsPage() {
   const api = useApi();
+  const router = useRouter();
   const [domains, setDomains] = useState<SendingDomain[] | null>(null);
   const [open, setOpen] = useState(false);
-  const { register, handleSubmit, reset, formState } = useForm<DomainForm>();
+  const [autoEmail, setAutoEmail] = useState(true);
+  const { register, handleSubmit, reset, watch, setValue, formState } = useForm<DomainForm>();
 
   const load = useCallback(() => {
     api
@@ -46,42 +87,100 @@ export default function DomainsPage() {
 
   useEffect(load, [load]);
 
-  const onSubmit = handleSubmit(async (values) => {
-    try {
-      await api.post("/api/domains", values);
-      toast.success("Domain added. It needs verification before real sends.");
-      setOpen(false);
+  // Suggest a sensible from-address (news@domain) until the user edits it.
+  const domainValue = watch("domain");
+  useEffect(() => {
+    if (!autoEmail) return;
+    const d = cleanDomain(domainValue ?? "");
+    setValue("fromEmail", d ? `news@${d}` : "");
+  }, [domainValue, autoEmail, setValue]);
+
+  const fromEmailReg = register("fromEmail", { required: true });
+
+  function openChange(next: boolean) {
+    setOpen(next);
+    if (!next) {
       reset();
-      load();
+      setAutoEmail(true);
+    }
+  }
+
+  const onSubmit = handleSubmit(async (values) => {
+    const domain = cleanDomain(values.domain);
+    const fromEmail = values.fromEmail.trim().toLowerCase();
+    if (!fromEmail.endsWith(`@${domain}`)) {
+      toast.error(`From email must end in @${domain}`);
+      return;
+    }
+    try {
+      const res = await api.post<{ domain: SendingDomain }>("/api/domains", {
+        domain,
+        fromName: values.fromName.trim(),
+        fromEmail,
+      });
+      toast.success("Domain added — let's verify it.");
+      openChange(false);
+      // Take the user straight to the setup guide; that's where the work is.
+      if (res?.domain?.id) router.push(`/domains/${res.domain.id}`);
+      else load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to add domain");
     }
   });
 
+  const previewDomain = cleanDomain(domainValue ?? "");
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Sending domains</h1>
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog open={open} onOpenChange={openChange}>
           <DialogTrigger render={<Button>Add domain</Button>} />
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Add sending domain</DialogTitle>
+              <DialogTitle>Add a sending domain</DialogTitle>
+              <DialogDescription>
+                Use a domain you own. We&apos;ll show you the DNS records to add next.
+              </DialogDescription>
             </DialogHeader>
             <form onSubmit={onSubmit} className="space-y-4">
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <Label htmlFor="domain">Domain</Label>
-                <Input id="domain" placeholder="updates.yourcompany.com" {...register("domain", { required: true })} />
+                <Input
+                  id="domain"
+                  placeholder="news.yourcompany.com"
+                  autoFocus
+                  {...register("domain", { required: true })}
+                />
+                <p className="text-xs text-muted-foreground">
+                  A subdomain like <span className="font-medium">news.yourcompany.com</span> is
+                  recommended — it keeps newsletter sending separate from your main email.
+                </p>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <Label htmlFor="fromName">From name</Label>
                 <Input id="fromName" placeholder="Your Company" {...register("fromName", { required: true })} />
+                <p className="text-xs text-muted-foreground">The sender name people see in their inbox.</p>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <Label htmlFor="fromEmail">From email</Label>
-                <Input id="fromEmail" placeholder="news@updates.yourcompany.com" {...register("fromEmail", { required: true })} />
+                <Input
+                  id="fromEmail"
+                  placeholder="news@news.yourcompany.com"
+                  {...fromEmailReg}
+                  onChange={(e) => {
+                    setAutoEmail(false);
+                    fromEmailReg.onChange(e);
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {previewDomain
+                    ? `Must be an address at @${previewDomain}.`
+                    : "Must be an address at your domain."}
+                </p>
               </div>
               <Button type="submit" disabled={formState.isSubmitting} className="w-full">
+                {formState.isSubmitting && <Loader2 className="animate-spin" />}
                 Add domain
               </Button>
             </form>
@@ -94,37 +193,61 @@ export default function DomainsPage() {
           {domains === null ? (
             <Skeleton className="h-24 w-full" />
           ) : domains.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              Add the domain you will send newsletters from. Real campaigns require a verified
-              domain (or an admin override while onboarding).
-            </p>
+            <div className="flex flex-col items-center py-10 text-center">
+              <div className="flex size-11 items-center justify-center rounded-full bg-muted">
+                <Globe className="size-5 text-muted-foreground" />
+              </div>
+              <p className="mt-3 font-medium">Add your first sending domain</p>
+              <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                This is the domain your newsletters are sent from. After adding it, you&apos;ll add a
+                few DNS records so inboxes trust your email — we guide you through it.
+              </p>
+              <Button className="mt-4" onClick={() => setOpen(true)}>
+                Add domain
+              </Button>
+            </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Domain</TableHead>
                   <TableHead>From</TableHead>
-                  <TableHead>Verification</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead>Added</TableHead>
+                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {domains.map((d) => (
-                  <TableRow key={d.id}>
-                    <TableCell className="font-medium">{d.domain}</TableCell>
+                  <TableRow
+                    key={d.id}
+                    onClick={() => router.push(`/domains/${d.id}`)}
+                    className="cursor-pointer"
+                  >
+                    <TableCell className="font-medium">
+                      <Link
+                        href={`/domains/${d.id}`}
+                        className="hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {d.domain}
+                      </Link>
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       {d.fromName} &lt;{d.fromEmail}&gt;
                     </TableCell>
                     <TableCell>
-                      {d.adminOverrideVerified ? (
-                        <Badge>verified (override)</Badge>
-                      ) : (
-                        <Badge variant={d.verificationStatus === "verified" ? "default" : "secondary"}>
-                          {d.verificationStatus}
-                        </Badge>
-                      )}
+                      <StatusCell domain={d} />
                     </TableCell>
                     <TableCell>{formatDate(d.createdAt)}</TableCell>
+                    <TableCell className="text-right">
+                      <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
+                        {domainState(d) !== "verified" && (
+                          <span className="hidden sm:inline">Finish setup</span>
+                        )}
+                        <ChevronRight className="size-4" />
+                      </span>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

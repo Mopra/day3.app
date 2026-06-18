@@ -1,12 +1,18 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { audiences, campaigns } from "../db/schema";
+import { audiences, campaigns, sendingDomains } from "../db/schema";
 
 // Account-scoped lookups used across route handlers. The accountId always comes
 // from requireAccount() (server-resolved from the Clerk org), never the client.
 export function findAudience(db: Db, accountId: string, id: string) {
   return db.query.audiences.findFirst({
     where: and(eq(audiences.id, id), eq(audiences.accountId, accountId)),
+  });
+}
+
+export function findDomain(db: Db, accountId: string, id: string) {
+  return db.query.sendingDomains.findFirst({
+    where: and(eq(sendingDomains.id, id), eq(sendingDomains.accountId, accountId)),
   });
 }
 

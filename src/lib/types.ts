@@ -35,7 +35,21 @@ export type SendingDomain = {
   dnsRecordsJson?: string | null;
   adminOverrideVerified: boolean;
   createdAt: string;
+  updatedAt?: string;
 };
+
+// A DNS record the user must publish to verify a sending domain. Mirrors the
+// server shape in services/ses-identity.ts.
+export type DnsRecord = {
+  type: "CNAME" | "TXT" | "MX";
+  name: string;
+  value: string;
+  description?: string;
+  required: boolean;
+};
+
+// Convenience view of a domain's verification state, derived in lib/domain.ts.
+export type DomainState = "verified" | "pending" | "failed";
 
 export type Audience = {
   id: string;

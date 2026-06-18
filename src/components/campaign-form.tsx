@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Controller, useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApi } from "@/lib/api";
+import { domainState } from "@/lib/domain";
 import type { Audience, Campaign, SendingDomain } from "@/lib/types";
 
 export type CampaignFormValues = {
@@ -149,15 +151,38 @@ export function CampaignForm({
                     <SelectValue placeholder="Select domain" />
                   </SelectTrigger>
                   <SelectContent>
-                    {domains.map((d) => (
-                      <SelectItem key={d.id} value={d.id}>
-                        {d.domain}
-                      </SelectItem>
-                    ))}
+                    {domains.map((d) => {
+                      const verified = domainState(d) === "verified";
+                      return (
+                        <SelectItem key={d.id} value={d.id} disabled={!verified}>
+                          <span>{d.domain}</span>
+                          {!verified && (
+                            <span className="text-xs text-muted-foreground">needs setup</span>
+                          )}
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               )}
             />
+            {domains.length > 0 && domains.every((d) => domainState(d) !== "verified") ? (
+              <p className="text-xs text-muted-foreground">
+                You can only send from a verified domain.{" "}
+                <Link href="/domains" className="underline underline-offset-2 hover:text-foreground">
+                  Finish domain setup
+                </Link>
+                .
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Don&apos;t see your domain?{" "}
+                <Link href="/domains" className="underline underline-offset-2 hover:text-foreground">
+                  Add or verify a domain
+                </Link>
+                .
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <Label htmlFor="fromName">From name</Label>
