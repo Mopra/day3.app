@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,7 @@ import type { Audience } from "@/lib/types";
 
 export default function AudiencesPage() {
   const api = useApi();
+  const router = useRouter();
   const [audiences, setAudiences] = useState<Audience[] | null>(null);
   const [open, setOpen] = useState(false);
   const { register, handleSubmit, reset, formState } = useForm<{ name: string }>();
@@ -98,9 +100,17 @@ export default function AudiencesPage() {
               </TableHeader>
               <TableBody>
                 {audiences.map((a) => (
-                  <TableRow key={a.id}>
+                  <TableRow
+                    key={a.id}
+                    onClick={() => router.push(`/audiences/${a.id}`)}
+                    className="cursor-pointer"
+                  >
                     <TableCell>
-                      <Link href={`/audiences/${a.id}`} className="font-medium hover:underline">
+                      <Link
+                        href={`/audiences/${a.id}`}
+                        className="font-medium hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {a.name}
                       </Link>
                     </TableCell>
