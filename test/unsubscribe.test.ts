@@ -1,13 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import {
-  signUnsubscribeToken,
-  verifyUnsubscribeToken,
-} from "../src/worker/services/unsubscribe";
-import { api } from "../src/worker/api";
-import { subscribers, suppressionEntries } from "../src/worker/db/schema";
-import { getSuppressedEmails } from "../src/worker/services/suppression";
-import { seedAccount, seedAudience, seedSubscribers, testDb, testEnv } from "./helpers";
+import { signUnsubscribeToken, verifyUnsubscribeToken } from "../src/services/unsubscribe";
+import { applyUnsubscribe } from "../src/services/unsubscribe-action";
+import { subscribers, suppressionEntries } from "../src/db/schema";
+import { getSuppressedEmails } from "../src/services/suppression";
+import { seedAccount, seedAudience, seedSubscribers, testDb } from "./helpers";
 
 const SECRET = "test-secret";
 
@@ -37,32 +34,20 @@ describe("unsubscribe tokens", () => {
 
 describe("public unsubscribe flow", () => {
   it("unsubscribes the subscriber, adds suppression, and excludes from future sends", async () => {
-    const db = testDb();
+    const db = await testDb();
     const account = await seedAccount(db);
     const audience = await seedAudience(db, account.id);
-    const [subscriber] = await seedSubscribers(db, account.id, audience.id, [
-      "alice@example.com",
-    ]);
+    const [subscriber] = await seedSubscribers(db, account.id, audience.id, ["alice@example.com"]);
 
+    // The route verifies the token then runs applyUnsubscribe — exercise the
+    // same path the handler does.
     const token = await signUnsubscribeToken(
-      {
-        accountId: account.id,
-        subscriberId: subscriber.id,
-        email: subscriber.email,
-      },
-      // The route verifies with env.UNSUBSCRIBE_SECRET from the test env.
-      testEnv.UNSUBSCRIBE_SECRET,
+      { accountId: account.id, subscriberId: subscriber.id, email: subscriber.email },
+      SECRET,
     );
-
-    const res = await api.fetch(
-      new Request("http://test.local/api/public/unsubscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      }),
-      testEnv,
-    );
-    expect(res.status).toBe(200);
+    const payload = await verifyUnsubscribeToken(token, SECRET);
+    expect(payload).toBeTruthy();
+    await applyUnsubscribe(db, payload!);
 
     const fresh = await db.query.subscribers.findFirst({
       where: eq(subscribers.id, subscriber.id),
@@ -80,14 +65,6 @@ describe("public unsubscribe flow", () => {
   });
 
   it("rejects an invalid token", async () => {
-    const res = await api.fetch(
-      new Request("http://test.local/api/public/unsubscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: "bogus" }),
-      }),
-      testEnv,
-    );
-    expect(res.status).toBe(400);
+    expect(await verifyUnsubscribeToken("bogus", SECRET)).toBeNull();
   });
 });

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { sendCampaignBatch } from "../src/worker/queue/handlers/send-batch";
-import { generateCampaignRecipients } from "../src/worker/queue/handlers/generate-recipients";
-import { campaignRecipients, campaigns, accounts } from "../src/worker/db/schema";
-import { addSuppression } from "../src/worker/services/suppression";
+import { sendCampaignBatch } from "../src/queue/handlers/send-batch";
+import { generateCampaignRecipients } from "../src/queue/handlers/generate-recipients";
+import { campaignRecipients, campaigns, accounts } from "../src/db/schema";
+import { addSuppression } from "../src/services/suppression";
 import {
   FakeQueue,
   RecordingProvider,
@@ -18,7 +18,7 @@ import {
 } from "./helpers";
 
 async function setupSendingCampaign(opts: { limit?: number; sentCount?: number } = {}) {
-  const db = testDb();
+  const db = await testDb();
   const account = await seedAccount(db, {
     monthlyEmailLimit: opts.limit ?? 10_000,
     monthlyEmailSentCount: opts.sentCount ?? 0,

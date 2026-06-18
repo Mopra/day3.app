@@ -1,19 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { processImport } from "../src/worker/queue/handlers/process-import";
-import { imports, subscribers } from "../src/worker/db/schema";
-import { newId, nowIso } from "../src/worker/lib/ids";
-import { addSuppression } from "../src/worker/services/suppression";
-import { seedAccount, seedAudience, seedSubscribers, testDb, testEnv } from "./helpers";
+import { processImport } from "../src/queue/handlers/process-import";
+import { imports, subscribers } from "../src/db/schema";
+import { newId, nowIso } from "../src/lib/ids";
+import { addSuppression } from "../src/services/suppression";
+import { FakeStore, seedAccount, seedAudience, seedSubscribers, testDb } from "./helpers";
 
 async function createImport(csv: string) {
-  const db = testDb();
+  const db = await testDb();
+  const store = new FakeStore();
   const account = await seedAccount(db);
   const audience = await seedAudience(db, account.id);
 
   const importId = newId("imp");
   const r2Key = `imports/${account.id}/${importId}.csv`;
-  await testEnv.IMPORTS_BUCKET.put(r2Key, csv);
+  store.put(r2Key, csv);
 
   const now = nowIso();
   await db.insert(imports).values({
@@ -26,7 +27,7 @@ async function createImport(csv: string) {
     createdAt: now,
     updatedAt: now,
   });
-  return { db, account, audience, importId };
+  return { db, store, account, audience, importId };
 }
 
 describe("process_import", () => {
@@ -40,14 +41,14 @@ describe("process_import", () => {
       "suppressed@example.com,Sup,",
     ].join("\n");
 
-    const { db, account, audience, importId } = await createImport(csv);
+    const { db, store, account, audience, importId } = await createImport(csv);
     await addSuppression(db, {
       accountId: account.id,
       email: "suppressed@example.com",
       reason: "unsubscribe",
     });
 
-    await processImport({ importId, accountId: account.id }, db, testEnv.IMPORTS_BUCKET);
+    await processImport({ importId, accountId: account.id }, db, store);
 
     const importRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
     expect(importRow?.status).toBe("completed");
@@ -64,10 +65,10 @@ describe("process_import", () => {
 
   it("does not duplicate existing audience members", async () => {
     const csv = "email\nalice@example.com\nnew@example.com";
-    const { db, account, audience, importId } = await createImport(csv);
+    const { db, store, account, audience, importId } = await createImport(csv);
     await seedSubscribers(db, account.id, audience.id, ["alice@example.com"]);
 
-    await processImport({ importId, accountId: account.id }, db, testEnv.IMPORTS_BUCKET);
+    await processImport({ importId, accountId: account.id }, db, store);
 
     const subs = await db
       .select()
@@ -81,10 +82,10 @@ describe("process_import", () => {
 
   it("is idempotent: a retried message does not re-import a completed import", async () => {
     const csv = "email\nalice@example.com";
-    const { db, account, importId } = await createImport(csv);
+    const { db, store, account, importId } = await createImport(csv);
 
-    await processImport({ importId, accountId: account.id }, db, testEnv.IMPORTS_BUCKET);
-    await processImport({ importId, accountId: account.id }, db, testEnv.IMPORTS_BUCKET);
+    await processImport({ importId, accountId: account.id }, db, store);
+    await processImport({ importId, accountId: account.id }, db, store);
 
     const importRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
     expect(importRow?.importedRows).toBe(1);

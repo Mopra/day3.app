@@ -1,5 +1,7 @@
-import { env } from "cloudflare:workers";
-import { createDb, type Db } from "../src/worker/db/client";
+import { PGlite } from "@electric-sql/pglite";
+import { drizzle } from "drizzle-orm/pglite";
+import * as schema from "../src/db/schema";
+import type { Db } from "../src/db/client";
 import {
   accounts,
   audiences,
@@ -11,33 +13,42 @@ import {
   type Campaign,
   type SendingDomain,
   type Subscriber,
-} from "../src/worker/db/schema";
-import { newId, nowIso } from "../src/worker/lib/ids";
-import type { QueueMessage } from "../src/worker/queue/messages";
-import type {
-  EmailProvider,
-  SendEmailInput,
-  SendEmailResult,
-} from "../src/worker/email/provider";
+} from "../src/db/schema";
+import { newId, nowIso } from "../src/lib/ids";
+import type { JobQueue, QueueMessage } from "../src/queue/messages";
+import type { ObjectStore, StoredObject } from "../src/lib/storage";
+import type { EmailProvider, SendEmailInput, SendEmailResult } from "../src/email/provider";
+import { applyMigrations } from "./apply-migrations";
 
-export const testEnv = env as unknown as Env;
-
-export function testDb(): Db {
-  return createDb(testEnv.DB);
+// Fresh in-memory Postgres (pglite) per call → full test isolation.
+export async function testDb(): Promise<Db> {
+  const pg = new PGlite();
+  await applyMigrations(pg);
+  return drizzle(pg, { schema }) as unknown as Db;
 }
 
-export class FakeQueue {
+export class FakeQueue implements JobQueue {
   messages: QueueMessage[] = [];
   async send(message: QueueMessage): Promise<void> {
     this.messages.push(message);
   }
-  async sendBatch(batch: Iterable<{ body: QueueMessage }>): Promise<void> {
-    for (const m of batch) this.messages.push(m.body);
-  }
 }
 
-export function asQueue(q: FakeQueue): Queue<QueueMessage> {
-  return q as unknown as Queue<QueueMessage>;
+export function asQueue(q: FakeQueue): JobQueue {
+  return q;
+}
+
+// In-memory object store standing in for Supabase Storage (the import handler's
+// ObjectStore seam).
+export class FakeStore implements ObjectStore {
+  private files = new Map<string, string>();
+  put(key: string, content: string): void {
+    this.files.set(key, content);
+  }
+  async get(key: string): Promise<StoredObject | null> {
+    const content = this.files.get(key);
+    return content === undefined ? null : { text: async () => content };
+  }
 }
 
 export class RecordingProvider implements EmailProvider {
@@ -53,13 +64,7 @@ export class RecordingProvider implements EmailProvider {
       throw new Error("provider exploded");
     }
     this.sent.push(input);
-    return (
-      this.results.get(call) ?? {
-        provider: "mock",
-        messageId: `m_${call}`,
-        status: "sent",
-      }
-    );
+    return this.results.get(call) ?? { provider: "mock", messageId: `m_${call}`, status: "sent" };
   }
 }
 
@@ -74,15 +79,13 @@ export async function seedAccount(db: Db, overrides: Partial<Account> = {}): Pro
     subscriptionStatus: "active",
     monthlyEmailLimit: 10_000,
     monthlyEmailSentCount: 0,
-    sendingEnabled: 1,
+    sendingEnabled: true,
     riskStatus: "normal",
     createdAt: now,
     updatedAt: now,
     ...overrides,
   });
-  return (await db.query.accounts.findFirst({
-    where: (t, { eq }) => eq(t.id, id),
-  }))!;
+  return (await db.query.accounts.findFirst({ where: (t, { eq }) => eq(t.id, id) }))!;
 }
 
 export async function seedDomain(

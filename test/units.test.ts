@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseSubscriberCsv, isValidEmail } from "../src/worker/lib/csv";
-import { runDeterministicRiskChecks } from "../src/worker/services/risk";
-import { renderCampaignEmail } from "../src/worker/services/render";
-import { checkSendEligibility } from "../src/worker/services/plans";
-import type { Account } from "../src/worker/db/schema";
+import { parseSubscriberCsv, isValidEmail } from "../src/lib/csv";
+import { runDeterministicRiskChecks } from "../src/services/risk";
+import { renderCampaignEmail } from "../src/services/render";
+import { checkSendEligibility } from "../src/services/plans";
+import type { Account } from "../src/db/schema";
 
 describe("csv parsing", () => {
   it("requires an email column", () => {
@@ -113,7 +113,7 @@ describe("email rendering", () => {
 describe("send eligibility", () => {
   const account = {
     subscriptionStatus: "active",
-    sendingEnabled: 1,
+    sendingEnabled: true,
     monthlyEmailSentCount: 0,
     monthlyEmailLimit: 100,
     pausedReason: null,
@@ -132,7 +132,7 @@ describe("send eligibility", () => {
   });
 
   it("blocks when sending disabled or over quota", () => {
-    expect(checkSendEligibility({ ...account, sendingEnabled: 0 } as Account).allowed).toBe(false);
+    expect(checkSendEligibility({ ...account, sendingEnabled: false } as Account).allowed).toBe(false);
     expect(
       checkSendEligibility({ ...account, monthlyEmailSentCount: 100 } as Account).allowed,
     ).toBe(false);

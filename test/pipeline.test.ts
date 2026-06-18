@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { reviewCampaign } from "../src/worker/queue/handlers/review-campaign";
-import { generateCampaignRecipients } from "../src/worker/queue/handlers/generate-recipients";
-import { campaignRecipients, campaigns, riskReviews } from "../src/worker/db/schema";
-import { addSuppression } from "../src/worker/services/suppression";
+import { reviewCampaign } from "../src/queue/handlers/review-campaign";
+import { generateCampaignRecipients } from "../src/queue/handlers/generate-recipients";
+import { campaignRecipients, campaigns, riskReviews } from "../src/db/schema";
+import { addSuppression } from "../src/services/suppression";
 import {
   FakeQueue,
   TEST_EMAILS,
@@ -17,7 +17,7 @@ import {
 } from "./helpers";
 
 async function setup(htmlBody?: string, subject?: string) {
-  const db = testDb();
+  const db = await testDb();
   const account = await seedAccount(db);
   const domain = await seedDomain(db, account.id);
   const audience = await seedAudience(db, account.id);
@@ -106,7 +106,7 @@ describe("generate_campaign_recipients", () => {
       reason: "complaint",
     });
     // One unsubscribed member must be excluded too.
-    const { subscribers: subsTable } = await import("../src/worker/db/schema");
+    const { subscribers: subsTable } = await import("../src/db/schema");
     await db
       .update(subsTable)
       .set({ status: "unsubscribed" })
