@@ -27,7 +27,7 @@ export default function LandingPage() {
           ) : (
             <>
               <Link href="/sign-up">
-                <Button size="lg">Get started — $9/mo</Button>
+                <Button size="lg">Get started — $5/mo</Button>
               </Link>
               <Link href="/sign-in">
                 <Button variant="outline" size="lg">
