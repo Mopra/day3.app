@@ -13,10 +13,10 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <ClerkProvider afterSignOutUrl="/">
-      <html lang="en" suppressHydrationWarning>
+      <html lang="en" className="dark" suppressHydrationWarning>
         <body className="antialiased">
           {children}
-          <Toaster richColors position="bottom-right" />
+          <Toaster theme="dark" richColors position="bottom-right" />
         </body>
       </html>
     </ClerkProvider>
