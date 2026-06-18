@@ -1,5 +1,6 @@
 import type { EmailProvider } from "./provider";
 import { MockEmailProvider } from "./mock";
+import { SesEmailProvider } from "./ses";
 
 export type EmailProviderConfig = {
   // EMAIL_PROVIDER: "mock" (default) | "ses"
@@ -12,11 +13,13 @@ export type EmailProviderConfig = {
 
 export function createEmailProvider(config: EmailProviderConfig = {}): EmailProvider {
   if (config.provider === "ses") {
-    // Wired in Phase 5 (SesEmailProvider over @aws-sdk/client-sesv2). Until then
-    // fail loudly rather than silently mocking — mock must be chosen explicitly.
-    throw new Error(
-      "EMAIL_PROVIDER=ses is not wired yet (Phase 5). Use EMAIL_PROVIDER=mock for now.",
-    );
+    if (!config.ses?.region) {
+      throw new Error("EMAIL_PROVIDER=ses requires AWS_REGION");
+    }
+    return new SesEmailProvider({
+      region: config.ses.region,
+      configurationSet: config.ses.configurationSet,
+    });
   }
   return new MockEmailProvider();
 }

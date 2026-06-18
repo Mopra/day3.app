@@ -5,6 +5,7 @@ import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { sendingDomains } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
+import { createDomainIdentity } from "@/services/ses-identity";
 
 export const GET = route(async () => {
   const { db, account } = await requireAccount();
@@ -54,6 +55,29 @@ export const POST = route(async (req: NextRequest) => {
   } catch {
     throw new HttpError(409, "That domain is already added");
   }
+
+  // Headline feature: register the domain with SES (Easy DKIM) and store the
+  // CNAME records to show the customer. Best-effort — if SES isn't configured or
+  // errors, the domain stays "pending" and /check (or admin override) resolves it.
+  const region = process.env.AWS_REGION;
+  if (region) {
+    try {
+      const state = await createDomainIdentity(domain, region, process.env.SES_CONFIGURATION_SET);
+      await db
+        .update(sendingDomains)
+        .set({
+          providerIdentityId: domain,
+          verificationStatus: state.verificationStatus,
+          dkimStatus: state.dkimStatus,
+          dnsRecordsJson: JSON.stringify(state.records),
+          updatedAt: nowIso(),
+        })
+        .where(eq(sendingDomains.id, id));
+    } catch (err) {
+      console.error("[domains] SES CreateEmailIdentity failed:", err);
+    }
+  }
+
   const row = await db.query.sendingDomains.findFirst({ where: eq(sendingDomains.id, id) });
   return json({ domain: row }, 201);
 });
