@@ -115,16 +115,13 @@ export async function recheckPendingDomains(
       const state = await fetchIdentity(domain.domain);
       if (
         state.verificationStatus !== domain.verificationStatus ||
-        state.dkimStatus !== domain.dkimStatus ||
-        state.mailFromStatus !== domain.mailFromStatus
+        state.dkimStatus !== domain.dkimStatus
       ) {
         await db
           .update(sendingDomains)
           .set({
             verificationStatus: state.verificationStatus,
             dkimStatus: state.dkimStatus,
-            mailFromDomain: state.mailFromDomain,
-            mailFromStatus: state.mailFromStatus,
             dnsRecordsJson: JSON.stringify(state.records),
             updatedAt: nowIso(),
           })
