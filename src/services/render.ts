@@ -140,7 +140,21 @@ function buildAttrs(tag: string, rawAttrs: string): string {
     const name = m[1].toLowerCase();
     if (!allowed.has(name)) continue;
     const value = m[3] ?? m[4] ?? m[5] ?? "";
-    if ((name === "href" || name === "src") && !isSafeUrl(value)) continue;
+    if (name === "href" || name === "src") {
+      // isSafeUrl runs HERE, during sanitization, BEFORE substitute() injects
+      // attacker-controlled merge values (first_name/last_name/email from CSV).
+      // A template like <a href="{{first_name}}"> passes isSafeUrl now (it looks
+      // like a relative URL) but becomes href="javascript:..." after the merge
+      // value is substituted — and escapeHtml() does not encode ':' so the
+      // scheme survives, yielding a live javascript:/data:/etc. URL in the
+      // delivered email. We cannot safely re-validate post-substitution because
+      // values are merged into the whole HTML string at once, so we refuse any
+      // href/src whose value still contains a {{...}} placeholder. The only
+      // dynamic URL we support is the trusted unsubscribe_url, which is injected
+      // by the canonical footer (not by user templates).
+      if (/\{\{/.test(value)) continue;
+      if (!isSafeUrl(value)) continue;
+    }
     out += ` ${name}="${escapeHtml(value)}"`;
   }
   return out;

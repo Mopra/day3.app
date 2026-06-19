@@ -222,8 +222,10 @@ export function CampaignForm({
                 For deliverability, emails support a limited set of tags
                 (headings, paragraphs, lists, links, images, bold/italic,
                 tables). Other tags and inline <code>style</code> attributes are
-                removed before sending — the Preview tab shows exactly what
-                subscribers receive.
+                removed before sending — the Preview tab shows how your email
+                will be formatted after unsupported tags and styles are removed.
+                Merge tags like <code>{"{{first_name}}"}</code> appear as-is, and
+                the unsubscribe footer is added automatically on send.
               </p>
             </TabsContent>
             <TabsContent value="text">
