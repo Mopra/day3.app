@@ -11,14 +11,32 @@ export function isVerified(d: SendingDomain): boolean {
   return domainState(d) === "verified";
 }
 
-// Safe-parse the stored records. Legacy rows predate the `required` flag, so we
-// default it to true (those were DKIM CNAMEs, which are required).
+// The cron stops re-checking a pending domain once its row has been untouched
+// for this long (see queue/cron.ts), to bound SES calls on abandoned domains.
+// Kept here so the UI and the cron agree on the same window.
+export const DOMAIN_RECHECK_WINDOW_DAYS = 14;
+
+// A pending domain whose last update is older than the recheck window: the cron
+// has quietly stopped polling it, so the UI must surface a "needs attention,
+// re-check now" state instead of an endless spinner. Verified/failed domains and
+// rows without a usable timestamp are never considered stale.
+export function recheckWindowExpired(d: SendingDomain, now: number = Date.now()): boolean {
+  if (domainState(d) !== "pending") return false;
+  const updated = d.updatedAt ?? d.createdAt;
+  const ts = Date.parse(updated);
+  if (Number.isNaN(ts)) return false;
+  return now - ts > DOMAIN_RECHECK_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+}
+
+// Safe-parse the stored records. Legacy rows predate the `required` and `group`
+// flags, so we default them (those were DKIM CNAMEs — required, verify group).
+// Stored values override the defaults via the spread.
 export function parseDnsRecords(json?: string | null): DnsRecord[] {
   if (!json) return [];
   try {
     const parsed = JSON.parse(json);
     if (!Array.isArray(parsed)) return [];
-    return parsed.map((r) => ({ required: true, ...r }));
+    return parsed.map((r) => ({ required: true, group: "verify" as const, ...r }));
   } catch {
     return [];
   }

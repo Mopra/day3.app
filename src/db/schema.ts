@@ -71,6 +71,12 @@ export const sendingDomains = pgTable(
     dkimStatus: text("dkim_status").notNull().default("pending"),
     dnsRecordsJson: text("dns_records_json"),
 
+    // Custom Return-Path (SES custom MAIL FROM). The subdomain we point SES at
+    // (send.<domain>) and SES's reported status for it. Deliverability-only:
+    // never gates verificationStatus (BehaviorOnMxFailure=USE_DEFAULT_VALUE).
+    mailFromDomain: text("mail_from_domain"),
+    mailFromStatus: text("mail_from_status").notNull().default("pending"),
+
     // Auto-DNS: when a customer connects Cloudflare and we write the records for
     // them, we record the resolved zone and a write-error for the UI to surface.
     dnsZoneId: text("dns_zone_id"),

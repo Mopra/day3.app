@@ -37,6 +37,8 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
         .set({
           verificationStatus: state.verificationStatus,
           dkimStatus: state.dkimStatus,
+          mailFromDomain: state.mailFromDomain,
+          mailFromStatus: state.mailFromStatus,
           dnsRecordsJson: JSON.stringify(state.records),
           updatedAt: nowIso(),
         })

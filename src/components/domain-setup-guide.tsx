@@ -1,10 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
-  ArrowRight,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -24,6 +23,7 @@ import { cn } from "@/lib/utils";
 import {
   domainState,
   parseDnsRecords,
+  recheckWindowExpired,
   registrableRoot,
   relativeHost,
 } from "@/lib/domain";
@@ -40,6 +40,14 @@ const PROVIDER_DOCS: { name: string; href: string }[] = [
   { name: "Cloudflare", href: "https://developers.cloudflare.com/dns/manage-dns-records/how-to/create-dns-records/" },
   { name: "Google / Squarespace", href: "https://support.google.com/domains/answer/3290350" },
 ];
+
+// Live per-record DNS status as reported by /check (DoH lookups).
+type DnsStatus = {
+  records: { name: string; type: string; resolved: boolean }[];
+  requiredResolved: boolean;
+};
+
+const recordKey = (r: { type: string; name: string }) => `${r.type}:${r.name}`;
 
 function ago(date: Date | null): string {
   if (!date) return "";
@@ -61,14 +69,24 @@ export function DomainSetupGuide({
   const api = useApi();
   const state = domainState(domain);
   const verified = state === "verified";
+  // Pending past the cron's recheck window: the background sweep has stopped, so
+  // the page must show a "needs attention" state with a manual re-check instead
+  // of an indefinite spinner. We still poll while open (a manual signal of life).
+  const stale = recheckWindowExpired(domain);
   const records = parseDnsRecords(domain.dnsRecordsJson);
   const root = registrableRoot(domain.domain);
 
   const [checking, setChecking] = useState(false);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
-  const [dnsResolved, setDnsResolved] = useState(false);
+  const [dns, setDns] = useState<DnsStatus>({ records: [], requiredResolved: false });
   const [hostFormat, setHostFormat] = useState<"full" | "relative">("full");
   const prevState = useRef(state);
+
+  const resolvedByKey = useMemo(() => {
+    const m = new Map<string, boolean>();
+    for (const r of dns.records) m.set(recordKey(r), r.resolved);
+    return m;
+  }, [dns]);
 
   // Toast once when the domain flips to verified (from either polling or a manual
   // check), so the moment of success is unmistakable.
@@ -83,12 +101,12 @@ export function DomainSetupGuide({
     async (opts?: { manual?: boolean }) => {
       setChecking(true);
       try {
-        const res = await api.post<{ domain: SendingDomain; dnsResolved?: boolean }>(
+        const res = await api.post<{ domain: SendingDomain; dns?: DnsStatus }>(
           `/api/domains/${domain.id}/check`,
           {},
         );
         if (res?.domain) onChange(res.domain);
-        setDnsResolved(Boolean(res?.dnsResolved));
+        if (res?.dns) setDns(res.dns);
         setLastChecked(new Date());
         if (opts?.manual && res?.domain) {
           const next = domainState(res.domain);
@@ -109,19 +127,17 @@ export function DomainSetupGuide({
     [api, domain.id, onChange],
   );
 
-  // Check once on open (fresh status, back-fills records if missing), then poll on
-  // a tightening-then-steady schedule while unverified and the tab is visible,
-  // plus when the user returns to the tab. The fast early ticks catch SES the
-  // moment it flips (records are usually live in seconds); it then settles to a
-  // gentle interval. Stops as soon as it's verified.
+  // Check once on open — even when already verified — to populate per-record
+  // status (so verified domains show "Found", and we back-fill the Return-Path).
+  // While unverified, poll on a tightening-then-steady schedule and on tab focus;
+  // the fast early ticks catch SES the moment it flips. Stops once verified.
   useEffect(() => {
-    if (verified) return;
     let cancelled = false;
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout>;
 
     const scheduleNext = () => {
-      if (cancelled) return;
+      if (cancelled || verified) return;
       const delay = attempt < POLL_BACKOFF_MS.length ? POLL_BACKOFF_MS[attempt] : POLL_MS;
       timer = setTimeout(run, delay);
     };
@@ -134,7 +150,13 @@ export function DomainSetupGuide({
       scheduleNext();
     };
 
-    check(); // immediate, doesn't count against the backoff schedule
+    check(); // immediate, once — doesn't count against the backoff schedule
+    if (verified) {
+      return () => {
+        cancelled = true;
+        clearTimeout(timer);
+      };
+    }
     scheduleNext();
     const onFocus = () => check();
     window.addEventListener("focus", onFocus);
@@ -145,30 +167,68 @@ export function DomainSetupGuide({
     };
   }, [verified, check]);
 
+  const verifyRecords = records.filter((r) => (r.group ?? "verify") === "verify");
+  const deliverabilityRecords = records.filter((r) => (r.group ?? "verify") === "deliverability");
+  const dmarcRecords = deliverabilityRecords.filter((r) => r.name.startsWith("_dmarc"));
+  const returnPathRecords = deliverabilityRecords.filter((r) => !r.name.startsWith("_dmarc"));
+
+  // The optional Return-Path is "done" once SES confirms it; until then there's
+  // still DNS to add, so keep the one-click helper around (it writes every record
+  // including the Return-Path), even for an otherwise-verified domain.
+  const fullyConfigured = verified && domain.mailFromStatus === "success";
+  const displayName = (name: string) =>
+    hostFormat === "relative" ? relativeHost(name, root) : name;
+
   return (
     <div className="space-y-6">
       <StatusHero
         domain={domain}
         state={state}
+        stale={stale}
         checking={checking}
         lastChecked={lastChecked}
-        dnsResolved={dnsResolved}
+        dnsResolved={dns.requiredResolved}
         onCheck={() => check({ manual: true })}
       />
 
-      {!verified && <CloudflareAutoConfig domain={domain} onChange={onChange} onConfigured={check} />}
+      {domain.dnsWriteError && !verified && <DnsWriteErrorNotice error={domain.dnsWriteError} />}
 
-      {!verified && <Steps />}
+      {!fullyConfigured && (
+        <CloudflareAutoConfig domain={domain} onChange={onChange} onConfigured={check} />
+      )}
 
-      <RecordsSection
-        records={records}
-        root={root}
-        hostFormat={hostFormat}
-        setHostFormat={setHostFormat}
-        verified={verified}
-        checking={checking}
-        onCheck={() => check({ manual: true })}
-      />
+      {verifyRecords.length === 0 ? (
+        <RecordsNotReady checking={checking} onCheck={() => check({ manual: true })} />
+      ) : (
+        <>
+          <HostFormatToggle root={root} value={hostFormat} onChange={setHostFormat} />
+
+          <ChecklistSection
+            title={verified ? "Domain verification" : "Verify your domain"}
+            subtitle={
+              <>
+                These DKIM records prove you own{" "}
+                <span className="font-medium text-foreground">{root}</span> and let inboxes trust
+                your mail. You don&apos;t need to understand them — just copy each value across.
+              </>
+            }
+            records={verifyRecords}
+            resolvedByKey={resolvedByKey}
+            displayName={displayName}
+            showCopyAll
+          />
+
+          {deliverabilityRecords.length > 0 && (
+            <DeliverabilitySection
+              returnPath={returnPathRecords}
+              dmarc={dmarcRecords}
+              resolvedByKey={resolvedByKey}
+              displayName={displayName}
+              mailFromStatus={domain.mailFromStatus}
+            />
+          )}
+        </>
+      )}
 
       <HelpSection root={root} />
     </div>
@@ -281,7 +341,7 @@ function CloudflareAutoConfig({
             </h3>
             <p className="mt-0.5 text-sm text-muted-foreground">
               {connection
-                ? `Connected${connection.label ? ` as ${connection.label}` : ""}. We'll add the records below to your Cloudflare zone for you.`
+                ? `Connected${connection.label ? ` as ${connection.label}` : ""}. We'll add every record below to your Cloudflare zone for you.`
                 : "Connect your Cloudflare account and we'll add these DNS records for you — no manual entry."}
             </p>
           </div>
@@ -310,9 +370,31 @@ function CloudflareAutoConfig({
 
 /* ----------------------------------------------------------------------------- */
 
+// Surfaced when a Cloudflare auto-configure write failed (dnsWriteError persisted
+// on the row). The toast at write time is transient; this keeps the failure and
+// its manual fallback visible until the records actually verify.
+function DnsWriteErrorNotice({ error }: { error: string }) {
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-5 sm:flex-row sm:items-start">
+      <AlertCircle className="size-6 shrink-0 text-amber-500" />
+      <div className="space-y-1">
+        <h3 className="font-medium">Automatic DNS setup didn&apos;t finish</h3>
+        <p className="text-sm text-muted-foreground">
+          We couldn&apos;t write every record to Cloudflare automatically
+          {error ? <> — {error}.</> : "."} You can retry the one-click setup below, or add the
+          records yourself using the values further down. Either path verifies the domain.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------- */
+
 function StatusHero({
   domain,
   state,
+  stale,
   checking,
   lastChecked,
   dnsResolved,
@@ -320,6 +402,7 @@ function StatusHero({
 }: {
   domain: SendingDomain;
   state: "verified" | "pending" | "failed";
+  stale: boolean;
   checking: boolean;
   lastChecked: Date | null;
   dnsResolved: boolean;
@@ -345,8 +428,41 @@ function StatusHero({
     );
   }
 
+  // Pending and past the automatic recheck window: the background sweep has
+  // stopped, so this domain would otherwise spin forever. Tell the user plainly
+  // and give them the manual re-check that restarts the cycle (a successful
+  // re-check bumps updatedAt back inside the window).
+  if (stale) {
+    return (
+      <div className="flex flex-col gap-4 rounded-xl border border-amber-500/40 bg-amber-500/5 p-5 sm:flex-row sm:items-start">
+        <AlertCircle className="size-8 shrink-0 text-amber-500" />
+        <div className="flex-1 space-y-1">
+          <h2 className="font-medium">This domain needs your attention</h2>
+          <p className="text-sm text-muted-foreground">
+            It&apos;s been pending for more than two weeks, so we&apos;ve paused the automatic
+            checks. If you&apos;ve since added the DNS records below, run a re-check now and
+            we&apos;ll pick verification back up. Otherwise, add the records and re-check.
+          </p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
+            {checking ? (
+              <span className="flex items-center gap-1.5">
+                <Loader2 className="size-3 animate-spin" /> Checking now…
+              </span>
+            ) : lastChecked ? (
+              <span>Last checked {ago(lastChecked)}</span>
+            ) : null}
+          </div>
+        </div>
+        <Button onClick={onCheck} disabled={checking} className="shrink-0">
+          {checking ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          Re-check now
+        </Button>
+      </div>
+    );
+  }
+
   const failed = state === "failed";
-  // DNS records are live in public DNS but SES hasn't flipped to verified yet —
+  // DKIM records are live in public DNS but SES hasn't flipped to verified yet —
   // the part we control is done, so say so instead of a generic "waiting".
   const confirmed = !failed && dnsResolved;
   return (
@@ -379,7 +495,7 @@ function StatusHero({
           {failed
             ? "The records below may be missing or mistyped. Fix them at your DNS host and we'll keep checking automatically."
             : confirmed
-              ? "Your DNS records are live. We're finalizing verification with your email provider — this usually takes a few minutes, and we're checking continuously."
+              ? "Your DKIM records are live. We're finalizing verification with your email provider — this usually takes a few minutes, and we're checking continuously."
               : "Add the DNS records below at your domain host. We check automatically every few minutes — most domains verify within an hour, though DNS can take up to 48 hours."}
         </p>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
@@ -404,124 +520,238 @@ function StatusHero({
 
 /* ----------------------------------------------------------------------------- */
 
-function Steps() {
-  const items = [
-    { n: 1, label: "Domain added", done: true, active: false },
-    { n: 2, label: "Add the DNS records", done: false, active: true },
-    { n: 3, label: "We verify automatically", done: false, active: false },
-  ];
+// Records aren't available yet (provider not configured, or just added).
+function RecordsNotReady({ checking, onCheck }: { checking: boolean; onCheck: () => void }) {
   return (
-    <ol className="flex flex-col gap-2 sm:flex-row sm:items-center">
-      {items.map((s, i) => (
-        <li key={s.n} className="flex items-center gap-2 sm:flex-1">
-          <span
-            className={cn(
-              "flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-medium",
-              s.done && "bg-primary text-primary-foreground",
-              s.active && "bg-primary/15 text-primary ring-2 ring-primary/30",
-              !s.done && !s.active && "bg-muted text-muted-foreground",
-            )}
-          >
-            {s.done ? <CheckCircle2 className="size-4" /> : s.n}
-          </span>
-          <span
-            className={cn(
-              "text-sm",
-              s.active ? "font-medium text-foreground" : "text-muted-foreground",
-            )}
-          >
-            {s.label}
-          </span>
-          {i < items.length - 1 && (
-            <ArrowRight className="hidden size-4 shrink-0 text-muted-foreground/50 sm:ml-auto sm:block" />
-          )}
-        </li>
-      ))}
-    </ol>
+    <div className="rounded-xl border border-dashed p-6 text-center">
+      <p className="text-sm font-medium">DNS records aren&apos;t ready yet</p>
+      <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+        We&apos;re still fetching the records for this domain from the email provider.
+        This usually takes a moment.
+      </p>
+      <Button variant="outline" onClick={onCheck} disabled={checking} className="mt-3">
+        {checking ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+        Refresh
+      </Button>
+    </div>
   );
 }
 
 /* ----------------------------------------------------------------------------- */
 
-function RecordsSection({
+// A status-led checklist of DNS records. The header shows running progress
+// ("X of Y found") so a non-technical user always knows what's left.
+function ChecklistSection({
+  title,
+  subtitle,
   records,
-  root,
-  hostFormat,
-  setHostFormat,
-  verified,
-  checking,
-  onCheck,
+  resolvedByKey,
+  displayName,
+  showCopyAll,
 }: {
+  title: string;
+  subtitle?: ReactNode;
   records: DnsRecord[];
-  root: string;
-  hostFormat: "full" | "relative";
-  setHostFormat: (f: "full" | "relative") => void;
-  verified: boolean;
-  checking: boolean;
-  onCheck: () => void;
+  resolvedByKey: Map<string, boolean>;
+  displayName: (name: string) => string;
+  showCopyAll?: boolean;
 }) {
-  const displayName = (name: string) =>
-    hostFormat === "relative" ? relativeHost(name, root) : name;
-
-  // Records aren't available yet (provider not configured, or just added).
-  if (records.length === 0) {
-    return (
-      <div className="rounded-xl border border-dashed p-6 text-center">
-        <p className="text-sm font-medium">DNS records aren&apos;t ready yet</p>
-        <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-          We&apos;re still fetching the records for this domain from the email provider.
-          This usually takes a moment.
-        </p>
-        <Button variant="outline" onClick={onCheck} disabled={checking} className="mt-3">
-          {checking ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-          Refresh
-        </Button>
-      </div>
-    );
-  }
-
-  const required = records.filter((r) => r.required);
-  const recommended = records.filter((r) => !r.required);
-  const allAsText = records
-    .map((r) => `${r.type}\t${displayName(r.name)}\t${r.value}`)
-    .join("\n");
-
+  const found = records.filter((r) => resolvedByKey.get(recordKey(r))).length;
   return (
-    <div className="space-y-4">
-      <div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-medium">{verified ? "DNS records" : "Add these DNS records"}</h3>
-          {!verified && <CopyButton value={allAsText} label="Copy all" variant="outline" />}
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="font-medium">{title}</h3>
+          {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
         </div>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Add each record at your DNS host for{" "}
-          <span className="font-medium text-foreground">{root}</span>. You don&apos;t need to
-          understand them — just copy each value across.
-          {required.length > 1 &&
-            ` DKIM uses ${required.length} similar records, so add all ${required.length}.`}
-        </p>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            {found} of {records.length} found
+          </span>
+          {showCopyAll && (
+            <CopyButton value={copyAllText(records, displayName)} label="Copy all" variant="outline" />
+          )}
+        </div>
       </div>
-
-      <HostFormatToggle root={root} value={hostFormat} onChange={setHostFormat} />
-
       <div className="space-y-3">
-        {required.map((r, i) => (
-          <RecordCard
-            key={`req-${i}`}
+        {records.map((r) => (
+          <RecordRow
+            key={recordKey(r)}
             record={r}
             displayName={displayName(r.name)}
-            index={i + 1}
-            total={required.length}
+            resolved={!!resolvedByKey.get(recordKey(r))}
           />
         ))}
       </div>
+    </section>
+  );
+}
 
-      {recommended.length > 0 && (
-        <RecommendedRecords records={recommended} displayName={displayName} />
+// The optional deliverability group: the custom Return-Path (MX + SPF) shown up
+// front, with DMARC tucked into a collapsible so the required steps stay the
+// focus. The header carries SES's own Return-Path status.
+function DeliverabilitySection({
+  returnPath,
+  dmarc,
+  resolvedByKey,
+  displayName,
+  mailFromStatus,
+}: {
+  returnPath: DnsRecord[];
+  dmarc: DnsRecord[];
+  resolvedByKey: Map<string, boolean>;
+  displayName: (name: string) => string;
+  mailFromStatus?: string;
+}) {
+  return (
+    <section className="space-y-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="flex items-center gap-2 font-medium">
+            Improve deliverability
+            <Badge variant="secondary">Optional</Badge>
+          </h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            A custom Return-Path and DMARC strengthen SPF/DMARC alignment, so more of your mail
+            lands in the inbox. Add these now or come back later.
+          </p>
+        </div>
+        {returnPath.length > 0 && <ReturnPathStatus status={mailFromStatus} />}
+      </div>
+
+      {returnPath.length > 0 && (
+        <div className="space-y-3">
+          {returnPath.map((r) => (
+            <RecordRow
+              key={recordKey(r)}
+              record={r}
+              displayName={displayName(r.name)}
+              resolved={!!resolvedByKey.get(recordKey(r))}
+            />
+          ))}
+        </div>
       )}
+
+      {dmarc.length > 0 && (
+        <details className="group rounded-lg border bg-card">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-sm">
+            <span className="flex items-center gap-2">
+              <span className="font-medium">Add a DMARC record</span>
+              <Badge variant="secondary">Recommended</Badge>
+            </span>
+            <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="space-y-3 border-t p-3">
+            <p className="text-xs text-muted-foreground">
+              Recommended — it improves inbox placement. You can add it now or come back later.
+            </p>
+            {dmarc.map((r) => (
+              <RecordRow
+                key={recordKey(r)}
+                record={r}
+                displayName={displayName(r.name)}
+                resolved={!!resolvedByKey.get(recordKey(r))}
+              />
+            ))}
+          </div>
+        </details>
+      )}
+    </section>
+  );
+}
+
+function ReturnPathStatus({ status }: { status?: string }) {
+  const ok = status === "success";
+  const broken = status === "failed" || status === "temporary_failure";
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium",
+        ok
+          ? "border-primary/30 bg-primary/10 text-primary"
+          : broken
+            ? "border-destructive/30 bg-destructive/5 text-destructive"
+            : "text-muted-foreground",
+      )}
+    >
+      {ok ? (
+        <Check className="size-3.5" />
+      ) : broken ? (
+        <AlertCircle className="size-3.5" />
+      ) : (
+        <Loader2 className="size-3.5 animate-spin" />
+      )}
+      Return-Path {ok ? "active" : broken ? "needs attention" : "pending"}
+    </span>
+  );
+}
+
+// A single record as a checklist item: status pill first, then the big
+// click-to-copy Name and Value. MX rows surface their priority.
+function RecordRow({
+  record,
+  displayName,
+  resolved,
+}: {
+  record: DnsRecord;
+  displayName: string;
+  resolved: boolean;
+}) {
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="mb-2.5 flex flex-wrap items-center gap-2">
+        <StatusPill resolved={resolved} />
+        <Badge variant="outline" className="font-mono">
+          {record.type}
+        </Badge>
+        {record.description && (
+          <span className="text-sm text-muted-foreground">{record.description}</span>
+        )}
+        {record.type === "MX" && record.priority != null && (
+          <Badge variant="secondary">Priority {record.priority}</Badge>
+        )}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <CopyField label="Name / Host" value={displayName} />
+        <CopyField label="Value" value={record.value} />
+      </div>
     </div>
   );
 }
+
+function StatusPill({ resolved }: { resolved: boolean }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium",
+        resolved
+          ? "border-primary/30 bg-primary/10 text-primary"
+          : "text-muted-foreground",
+      )}
+    >
+      {resolved ? (
+        <Check className="size-3.5" />
+      ) : (
+        <Loader2 className="size-3.5 animate-spin" />
+      )}
+      {resolved ? "Found" : "Waiting"}
+    </span>
+  );
+}
+
+// Tab-separated dump of every record for the "Copy all" button. Includes MX
+// priority so DNS hosts that ask for it as a separate field get the value.
+function copyAllText(records: DnsRecord[], displayName: (name: string) => string): string {
+  return records
+    .map((r) => {
+      const parts = [r.type, displayName(r.name), r.value];
+      if (r.type === "MX" && r.priority != null) parts.push(String(r.priority));
+      return parts.join("\t");
+    })
+    .join("\n");
+}
+
+/* ----------------------------------------------------------------------------- */
 
 function HostFormatToggle({
   root,
@@ -556,68 +786,6 @@ function HostFormatToggle({
         ))}
       </div>
     </div>
-  );
-}
-
-function RecordCard({
-  record,
-  displayName,
-  index,
-  total,
-}: {
-  record: DnsRecord;
-  displayName: string;
-  index: number;
-  total: number;
-}) {
-  return (
-    <div className="rounded-lg border p-3">
-      <div className="mb-2.5 flex items-center justify-between">
-        <span className="text-sm font-medium">
-          {total > 1 ? `Record ${index} of ${total}` : "DNS record"}
-        </span>
-        <Badge variant="outline" className="font-mono">
-          {record.type}
-        </Badge>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <CopyField label="Name / Host" value={displayName} />
-        <CopyField label="Value" value={record.value} />
-      </div>
-    </div>
-  );
-}
-
-// DMARC is optional, so it's collapsed by default to keep the required steps the
-// focus — non-technical users aren't faced with an extra record up front.
-function RecommendedRecords({
-  records,
-  displayName,
-}: {
-  records: DnsRecord[];
-  displayName: (name: string) => string;
-}) {
-  return (
-    <details className="group rounded-lg border bg-card">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-sm">
-        <span className="flex items-center gap-2">
-          <span className="font-medium">Add a DMARC record</span>
-          <Badge variant="secondary">Optional</Badge>
-        </span>
-        <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
-      </summary>
-      <div className="space-y-3 border-t p-3">
-        <p className="text-xs text-muted-foreground">
-          Recommended — it improves inbox placement. You can add it now or come back later.
-        </p>
-        {records.map((r, i) => (
-          <div key={i} className="grid gap-3 sm:grid-cols-2">
-            <CopyField label="Name / Host" value={displayName(r.name)} />
-            <CopyField label="Value" value={r.value} />
-          </div>
-        ))}
-      </div>
-    </details>
   );
 }
 
@@ -704,7 +872,11 @@ function HelpSection({ root }: { root: string }) {
               <span className="font-medium text-foreground">Subdomain only</span> above so the
               name isn&apos;t duplicated (e.g. <code>…_domainkey.{root}.{root}</code>).
             </li>
-            <li>Make sure the record Type matches (CNAME vs TXT) and there are no extra spaces.</li>
+            <li>Make sure the record Type matches (CNAME, TXT, or MX) and there are no extra spaces.</li>
+            <li>
+              The Return-Path uses a <span className="font-medium text-foreground">send</span> host
+              and an MX record — that&apos;s expected, and it&apos;s what improves deliverability.
+            </li>
             <li>Don&apos;t add quotes around CNAME values — only some TXT records use them.</li>
           </ul>
         </div>

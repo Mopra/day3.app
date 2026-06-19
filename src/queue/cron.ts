@@ -2,6 +2,7 @@ import { and, eq, gt, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { accounts, campaignRecipients, campaigns, sendingDomains } from "../db/schema";
 import { nowIso } from "../lib/ids";
+import { DOMAIN_RECHECK_WINDOW_DAYS } from "../lib/domain";
 import { logJob } from "../lib/job-log";
 import { enforceAccountHealth } from "../services/health";
 import { getDomainIdentity, type DomainIdentityState } from "../services/ses-identity";
@@ -9,7 +10,9 @@ import { SEND_BATCH_SIZE, type JobQueue } from "./messages";
 
 const STUCK_LOCK_MINUTES = 15;
 const DOMAIN_RECHECK_MAX = 50; // bound SES calls per sweep
-const DOMAIN_RECHECK_WINDOW_DAYS = 14; // stop re-checking domains stale this long
+// DOMAIN_RECHECK_WINDOW_DAYS: stop re-checking domains stale this long. Shared
+// with the setup-guide UI (lib/domain) so both agree on when a domain has gone
+// stale and needs a manual re-check.
 
 // Recipients stuck in "sending" belong to a crashed batch. The email may or
 // may not have left — re-sending could duplicate, so they become "failed",
@@ -113,15 +116,21 @@ export async function recheckPendingDomains(
   for (const domain of pending) {
     try {
       const state = await fetchIdentity(domain.domain);
+      // Persist on any meaningful change — verification/DKIM (the gate) or the
+      // optional Return-Path (mailFromStatus), so the setup guide reflects the
+      // latest SES state even when only deliverability moved.
       if (
         state.verificationStatus !== domain.verificationStatus ||
-        state.dkimStatus !== domain.dkimStatus
+        state.dkimStatus !== domain.dkimStatus ||
+        state.mailFromStatus !== domain.mailFromStatus
       ) {
         await db
           .update(sendingDomains)
           .set({
             verificationStatus: state.verificationStatus,
             dkimStatus: state.dkimStatus,
+            mailFromDomain: state.mailFromDomain,
+            mailFromStatus: state.mailFromStatus,
             dnsRecordsJson: JSON.stringify(state.records),
             updatedAt: nowIso(),
           })
