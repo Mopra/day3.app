@@ -3,11 +3,16 @@ import type { ClerkClient } from "@clerk/backend";
 import type { Db } from "../db/client";
 import { accountUsers, accounts, type Account } from "../db/schema";
 import { newId, nowIso } from "../lib/ids";
-import { PLANS, type PlanKey } from "./plans";
+import {
+  PAID_PLAN_SLUG,
+  entitlementsFor,
+  isPlanKey,
+  planFromSlug,
+  type PlanKey,
+  type SubscriptionLifecycle,
+} from "./plans";
 
-// The Clerk Billing plan slug for the paid plan. Must match the plan
-// configured in the Clerk dashboard.
-export const PAID_PLAN_SLUG = "tiny";
+export { PAID_PLAN_SLUG };
 
 // Local membership roles. Clerk org roles arrive prefixed (e.g. "org:admin");
 // anything that is not an admin is recorded as a plain member.
@@ -92,16 +97,16 @@ export async function getAccountByClerkOrgId(db: Db, clerkOrgId: string): Promis
   return db.query.accounts.findFirst({ where: eq(accounts.clerkOrgId, clerkOrgId) });
 }
 
-// Applies plan entitlements to an account row. Never re-enables sending on a
-// risk-paused account.
-function entitlementFields(account: Pick<Account, "riskStatus">, plan: PlanKey, active: boolean) {
-  const planDef = PLANS[plan];
-  return {
-    plan,
-    subscriptionStatus: active ? "active" : "inactive",
-    monthlyEmailLimit: planDef.monthlyEmailLimit,
-    sendingEnabled: planDef.sendingEnabled && active && account.riskStatus !== "paused",
-  };
+// Applies plan entitlements to an account row. Delegates the (plan, lifecycle)
+// -> status/limit/sendingEnabled decision to the centralized entitlementsFor so
+// the session sync and the webhook stay in lockstep. Never re-enables sending on
+// a risk-paused account.
+function entitlementFields(
+  account: Pick<Account, "riskStatus">,
+  plan: PlanKey,
+  lifecycle: SubscriptionLifecycle,
+) {
+  return entitlementsFor(plan, lifecycle, { riskPaused: account.riskStatus === "paused" });
 }
 
 // Resolves the local account for a Clerk organization, creating it on first
@@ -114,8 +119,14 @@ export async function syncCurrentOrganization(
   if (!auth.userId) throw new Error("not signed in");
   if (!auth.orgId) throw new Error("no active organization");
 
+  // The session's billing claim only tells us whether the org currently holds an
+  // active paid plan. A past_due / ended subscription is carried by the webhook
+  // (which has the lifecycle); the session claim drops to no-plan, which we treat
+  // as "ended" here. We never downgrade an active row to past_due from the
+  // session — only the webhook moves an account into past_due.
   const hasPaidPlan = auth.has ? auth.has({ plan: `org:${PAID_PLAN_SLUG}` }) : false;
   const plan: PlanKey = hasPaidPlan ? "tiny" : "none";
+  const lifecycle: SubscriptionLifecycle = hasPaidPlan ? "active" : "ended";
 
   let account = await getAccountByClerkOrgId(db, auth.orgId);
   const now = nowIso();
@@ -129,7 +140,7 @@ export async function syncCurrentOrganization(
         id,
         clerkOrgId: auth.orgId,
         name: org.name,
-        ...entitlementFields({ riskStatus: "normal" }, plan, hasPaidPlan),
+        ...entitlementFields({ riskStatus: "normal" }, plan, lifecycle),
         createdAt: now,
         updatedAt: now,
       })
@@ -138,9 +149,23 @@ export async function syncCurrentOrganization(
     account = await getAccountByClerkOrgId(db, auth.orgId);
     if (!account) throw new Error("failed to create account");
   } else {
+    // Never re-activate a stored past_due row from the session. Clerk keeps the
+    // plan entitlement assigned during the past_due dunning/grace window, so
+    // auth.has({plan}) stays true until the subscription transitions to "ended".
+    // If we let an active session claim flip a past_due row back to active here,
+    // /api/account/sync (hit on every dashboard/billing load) would silently set
+    // sendingEnabled:true and let an unpaid org resume sending. Re-activation is
+    // deferred to the authoritative subscriptionItem.active webhook, which carries
+    // the real lifecycle. We keep the recorded past_due plan/limit so the user
+    // still sees the "fix payment" CTA for the plan they owe for.
+    const keepPastDue = account.subscriptionStatus === "past_due";
+    const effectivePlan: PlanKey = keepPastDue
+      ? (isPlanKey(account.plan) ? account.plan : "none")
+      : plan;
+    const effectiveLifecycle: SubscriptionLifecycle = keepPastDue ? "past_due" : lifecycle;
     await db
       .update(accounts)
-      .set({ ...entitlementFields(account, plan, hasPaidPlan), updatedAt: now })
+      .set({ ...entitlementFields(account, effectivePlan, effectiveLifecycle), updatedAt: now })
       .where(eq(accounts.id, account.id));
     account = (await getAccountByClerkOrgId(db, auth.orgId))!;
   }
@@ -165,13 +190,18 @@ export async function syncCurrentOrganization(
   return account;
 }
 
-// Webhook-driven entitlement update (subscriptionItem.* events).
+// Webhook-driven entitlement update (subscriptionItem.* events). The lifecycle
+// maps deterministically to subscriptionStatus + sendingEnabled via
+// entitlementsFor; the plan slug maps to monthlyEmailLimit via planFromSlug. This
+// is idempotent: applying the same event twice converges on the same row, and
+// out-of-order delivery is tolerated (the only order-sensitive effect — zeroing
+// usage on a new period — is guarded by the period-start boundary below).
 export async function applySubscriptionEvent(
   db: Db,
   input: {
     clerkOrgId: string;
     planSlug: string | undefined;
-    active: boolean;
+    lifecycle: SubscriptionLifecycle;
     periodStart?: string | null;
     periodEnd?: string | null;
   },
@@ -179,7 +209,17 @@ export async function applySubscriptionEvent(
   const account = await getAccountByClerkOrgId(db, input.clerkOrgId);
   if (!account) return; // Account is created lazily on first dashboard load.
 
-  const plan: PlanKey = input.active && input.planSlug === PAID_PLAN_SLUG ? "tiny" : "none";
+  // An "ended" subscription drops to the no-plan tier (limit 0). active/past_due
+  // keep the plan from the event's slug (falling back to the recorded plan when
+  // the slug is absent on a pastDue/ended payload) so a past_due account still
+  // shows the plan it owes for.
+  const recordedPlan: PlanKey = isPlanKey(account.plan) ? account.plan : "none";
+  const plan: PlanKey =
+    input.lifecycle === "ended"
+      ? "none"
+      : input.planSlug
+        ? planFromSlug(input.planSlug)
+        : recordedPlan;
 
   // This webhook is the primary period source: when Clerk reports a period
   // start later than the one we have, a new billing period has begun, so we zero
@@ -189,7 +229,10 @@ export async function applySubscriptionEvent(
   // Compare as instants, not strings: Postgres surfaces the stored timestamptz
   // in its own textual format ("2026-06-01 00:00:00+00"), which does not order
   // lexically against an ISO-8601 input.
+  // Only an active event starts a fresh billing period; a pastDue/ended event
+  // carries the same period and must never zero usage.
   const periodAdvanced =
+    input.lifecycle === "active" &&
     !!input.periodStart &&
     (!account.currentPeriodStart ||
       Date.parse(input.periodStart) > Date.parse(account.currentPeriodStart));
@@ -197,7 +240,7 @@ export async function applySubscriptionEvent(
   await db
     .update(accounts)
     .set({
-      ...entitlementFields(account, plan, input.active),
+      ...entitlementFields(account, plan, input.lifecycle),
       currentPeriodStart: input.periodStart ?? account.currentPeriodStart,
       currentPeriodEnd: input.periodEnd ?? account.currentPeriodEnd,
       ...(periodAdvanced ? { monthlyEmailSentCount: 0 } : {}),

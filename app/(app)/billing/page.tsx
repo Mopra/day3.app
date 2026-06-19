@@ -1,14 +1,49 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { PricingTable } from "@clerk/nextjs";
 import { toast } from "sonner";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useApi } from "@/lib/api";
+import { formatDate, statusLabel, statusVariant } from "@/lib/format";
 import type { Account } from "@/lib/types";
+
+// Surfaces a clear, actionable banner for the two states that block sending and
+// need the user to act: a past-due payment and an ended subscription.
+//
+// The CTA points at where the user can actually resolve each state. A past-due
+// card is fixed in the organization billing settings (Clerk's
+// <OrganizationProfile>), not the plan picker on this page, so it links to
+// Settings. An ended subscription is reactivated by picking a plan from the
+// <PricingTable> rendered below, so its CTA scrolls there.
+type BillingNotice = {
+  title: string;
+  body: string;
+  cta: { label: string } & ({ href: string } | { scrollTo: string });
+};
+
+function billingNotice(status: string): BillingNotice | null {
+  if (status === "past_due") {
+    return {
+      title: "Payment past due",
+      body: "Your last payment failed, so sending is paused. Update your payment method to resume.",
+      cta: { label: "Update payment method", href: "/settings" },
+    };
+  }
+  if (status !== "active") {
+    return {
+      title: "No active subscription",
+      body: "Choose a plan to activate your account and start sending.",
+      cta: { label: "Choose a plan", scrollTo: "plans" },
+    };
+  }
+  return null;
+}
 
 export default function BillingPage() {
   const api = useApi();
@@ -25,9 +60,42 @@ export default function BillingPage() {
 
   useEffect(sync, [sync]);
 
+  const notice = account ? billingNotice(account.subscriptionStatus) : null;
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">Billing</h1>
+
+      {notice && (
+        <Alert variant={account?.subscriptionStatus === "past_due" ? "destructive" : "default"}>
+          <AlertTitle>{notice.title}</AlertTitle>
+          <AlertDescription className="flex flex-col items-start gap-3">
+            <span>{notice.body}</span>
+            {(() => {
+              const { cta } = notice;
+              return "href" in cta ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  render={<Link href={cta.href}>{cta.label}</Link>}
+                />
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    document
+                      .getElementById(cta.scrollTo)
+                      ?.scrollIntoView({ behavior: "smooth" })
+                  }
+                >
+                  {cta.label}
+                </Button>
+              );
+            })()}
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardHeader>
@@ -38,14 +106,20 @@ export default function BillingPage() {
             <div className="flex flex-wrap items-center gap-6 text-sm">
               <div className="flex items-center gap-2">
                 <span className="text-xl font-semibold capitalize">{account.plan}</span>
-                <Badge variant={account.subscriptionStatus === "active" ? "default" : "outline"}>
-                  {account.subscriptionStatus}
+                <Badge variant={statusVariant(account.subscriptionStatus)}>
+                  {statusLabel(account.subscriptionStatus)}
                 </Badge>
               </div>
               <div className="text-muted-foreground">
                 {account.monthlyEmailSentCount.toLocaleString()} /{" "}
-                {account.monthlyEmailLimit.toLocaleString()} emails this month
+                {account.monthlyEmailLimit.toLocaleString()} emails this period
               </div>
+              {account.subscriptionStatus === "active" &&
+                account.currentPeriodEnd && (
+                  <div className="text-muted-foreground">
+                    Renews {formatDate(account.currentPeriodEnd)}
+                  </div>
+                )}
               <Button
                 variant="outline"
                 size="sm"
@@ -72,7 +146,7 @@ export default function BillingPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="plans">
         <CardHeader>
           <CardTitle className="text-base">Plans</CardTitle>
         </CardHeader>

@@ -42,6 +42,7 @@ export function statusVariant(
     case "bounced":
     case "complained":
     case "paused":
+    case "past_due":
       return "destructive";
     default:
       return "outline";

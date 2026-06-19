@@ -12,6 +12,7 @@ import {
   removeMembership,
   roleFromClerk,
 } from "@/services/accounts";
+import type { SubscriptionLifecycle } from "@/services/plans";
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec => (typeof v === "object" && v !== null ? (v as Rec) : {});
@@ -85,19 +86,28 @@ export async function POST(req: NextRequest) {
       }
       break;
     }
-    // Billing lifecycle. "active" grants the plan; "ended"/"pastDue" revoke it.
-    // Accounts are created lazily on first dashboard load, so a missing account
-    // here is fine.
+    // Billing lifecycle. "active" grants the plan and enables sending; "pastDue"
+    // keeps the plan visible but blocks sending (payment owed); "ended" revokes
+    // the plan. Each maps deterministically to subscriptionStatus + sendingEnabled
+    // inside applySubscriptionEvent. Accounts are created lazily on first
+    // dashboard load, so a missing account here is fine. Handling is idempotent,
+    // so a duplicate or out-of-order redelivery converges on the same row.
     case "subscriptionItem.active":
     case "subscriptionItem.pastDue":
     case "subscriptionItem.ended": {
       const orgId = str(rec(data.payer).organization_id);
       const planSlug = str(rec(data.plan).slug);
+      const lifecycle: SubscriptionLifecycle =
+        evt.type === "subscriptionItem.active"
+          ? "active"
+          : evt.type === "subscriptionItem.pastDue"
+            ? "past_due"
+            : "ended";
       if (orgId) {
         await applySubscriptionEvent(db, {
           clerkOrgId: orgId,
           planSlug,
-          active: evt.type === "subscriptionItem.active",
+          lifecycle,
           periodStart: epochToIso(data.period_start),
           periodEnd: epochToIso(data.period_end),
         });
