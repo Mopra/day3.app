@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "uq_email_events_provider_message_event" ON "email_events" USING btree ("provider_message_id","event_type");

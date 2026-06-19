@@ -105,18 +105,23 @@ async function recordEvent(
   rawMessage: string,
   now: string,
 ): Promise<void> {
-  await db.insert(emailEvents).values({
-    id: newId("evt"),
-    accountId: recipient.accountId,
-    campaignId: recipient.campaignId,
-    campaignRecipientId: recipient.id,
-    eventType,
-    email: recipient.email,
-    provider: "ses",
-    providerMessageId: messageId,
-    payloadJson: rawMessage,
-    createdAt: now,
-  });
+  // SNS is at-least-once: a redelivered notification must not insert a second
+  // row. The unique index on (providerMessageId, eventType) makes this a no-op.
+  await db
+    .insert(emailEvents)
+    .values({
+      id: newId("evt"),
+      accountId: recipient.accountId,
+      campaignId: recipient.campaignId,
+      campaignRecipientId: recipient.id,
+      eventType,
+      email: recipient.email,
+      provider: "ses",
+      providerMessageId: messageId,
+      payloadJson: rawMessage,
+      createdAt: now,
+    })
+    .onConflictDoNothing();
 }
 
 // Mirrors the old provider webhook: mark the recipient + subscriber, suppress the
@@ -128,6 +133,11 @@ async function applyHardFailure(
   reason: "hard_bounce" | "complaint",
   now: string,
 ): Promise<void> {
+  // Idempotent under SNS redelivery: once the recipient is already in the target
+  // terminal status, suppression and health enforcement have already run, so
+  // re-running them would only re-trigger health recomputation. Bail early.
+  if (recipient.status === kind) return;
+
   await db
     .update(campaignRecipients)
     .set(
