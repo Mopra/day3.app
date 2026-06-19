@@ -6,10 +6,11 @@ import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema";
 import { verifyUnsubscribeToken } from "@/services/unsubscribe";
 import { applyUnsubscribe } from "@/services/unsubscribe-action";
+import { requireUnsubscribeSecret } from "@/lib/env";
 
 export const GET = route(async (req: NextRequest) => {
   const token = req.nextUrl.searchParams.get("token") ?? "";
-  const payload = await verifyUnsubscribeToken(token, process.env.UNSUBSCRIBE_SECRET ?? "");
+  const payload = await verifyUnsubscribeToken(token, requireUnsubscribeSecret());
   if (!payload) throw new HttpError(400, "Invalid or expired link");
 
   const db = getDb();
@@ -32,7 +33,7 @@ export const POST = route(async (req: NextRequest) => {
     }
   }
 
-  const payload = await verifyUnsubscribeToken(token, process.env.UNSUBSCRIBE_SECRET ?? "");
+  const payload = await verifyUnsubscribeToken(token, requireUnsubscribeSecret());
   if (!payload) throw new HttpError(400, "Invalid or expired link");
 
   await applyUnsubscribe(getDb(), payload);

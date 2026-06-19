@@ -26,9 +26,9 @@ organizations, and billing.
 ```bash
 npm install
 
-# 1. Env: client + worker secrets
-cp .env.example .env.local          # VITE_CLERK_PUBLISHABLE_KEY
-cp .dev.vars.example .dev.vars      # Clerk keys, UNSUBSCRIBE_SECRET, ADMIN_EMAILS
+# 1. Env: web tier + worker secrets (see "Required environment variables" below)
+cp .env.example .env.local          # Next.js web tier
+cp .env.worker.example .env.worker  # BullMQ worker
 
 # 2. Database (local SQLite under .wrangler/state)
 npm run db:migrate:local
@@ -49,6 +49,30 @@ Useful:
 - `npm run typecheck` / `npm run lint` / `npm run build`
 - `npm run db:generate` — new Drizzle migration after schema changes
 - Trigger cron locally: `curl "http://localhost:5173/cdn-cgi/handler/scheduled?cron=*+*+*+*+*"`
+
+## Required environment variables
+
+Both processes validate their environment at startup (`src/lib/env.ts`) and
+**refuse to boot** if a required variable is missing or a secret is too short
+(min 16 chars). This prevents the empty-key failure mode where an unset
+`UNSUBSCRIBE_SECRET` would sign HMAC tokens with `""` (forgeable unsubscribe /
+one-click links) or an unset `OAUTH_STATE_SECRET` would void OAuth CSRF
+protection. The Next web tier validates on first server module load
+(`instrumentation.ts`); the worker validates in `worker/index.ts` before it
+starts consuming.
+
+| Variable | Web | Worker | Notes / generation |
+| --- | :-: | :-: | --- |
+| `DATABASE_URL` | ✓ | ✓ | Postgres connection string. |
+| `UNSUBSCRIBE_SECRET` | ✓ | ✓ | HMAC key for unsubscribe / one-click tokens; MUST match across both tiers. `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `OAUTH_STATE_SECRET` | ✓ | — | HMAC key for the Cloudflare OAuth state cookie (CSRF). `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `DNS_TOKEN_ENC_KEY` | ✓ | — | base64 of 32 raw bytes (AES-256) encrypting Cloudflare DNS tokens at rest. `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `CLERK_WEBHOOK_SIGNING_SECRET` | ✓ | — | Verifies Clerk webhooks. Use a ≥16-char placeholder locally. |
+| `AWS_REGION` | ✓* | ✓* | *Required only when `EMAIL_PROVIDER=ses`. |
+
+See `.env.example` (web) and `.env.worker.example` (worker) for the full list
+including non-secret config (Clerk publishable/secret keys, Redis, Supabase
+Storage, SES credentials).
 
 ## Going to production (first deploy checklist)
 

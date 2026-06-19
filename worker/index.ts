@@ -15,6 +15,11 @@ import { runScheduledSweeps } from "../src/queue/cron";
 import { getDb } from "../src/db/client";
 import { emailProviderFromEnv } from "../src/email/factory";
 import { createSupabaseObjectStore } from "../src/lib/supabase-storage";
+import { requireUnsubscribeSecret, validateEnv } from "../src/lib/env";
+
+// Fail fast before the worker begins consuming: a missing/weak secret here would
+// otherwise sign unsubscribe links with an empty HMAC key.
+validateEnv("worker");
 
 const SWEEP_JOB = "scheduled_sweep";
 const SWEEP_SCHEDULER = "cron-15min";
@@ -50,7 +55,7 @@ const deps: QueueDeps = {
   emailProvider: emailProviderFromEnv(),
   store: createSupabaseObjectStore(),
   appUrl: process.env.APP_URL ?? "",
-  unsubscribeSecret: process.env.UNSUBSCRIBE_SECRET ?? "",
+  unsubscribeSecret: requireUnsubscribeSecret(),
   aiReviewMode: process.env.AI_REVIEW_MODE,
 };
 

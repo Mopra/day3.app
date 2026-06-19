@@ -6,6 +6,7 @@ import { findCampaign } from "@/api/finders";
 import { signUnsubscribeToken, unsubscribeUrl } from "@/services/unsubscribe";
 import { renderCampaignEmail } from "@/services/render";
 import { emailProviderFromEnv } from "@/email/factory";
+import { requireUnsubscribeSecret } from "@/lib/env";
 
 const TestEmailSchema = z.object({ toEmail: z.email().toLowerCase() });
 
@@ -30,7 +31,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
 
   const token = await signUnsubscribeToken(
     { accountId: account.id, subscriberId: "test", email: toEmail, campaignId: campaign.id },
-    process.env.UNSUBSCRIBE_SECRET ?? "",
+    requireUnsubscribeSecret(),
   );
   const rendered = renderCampaignEmail({
     campaign,
