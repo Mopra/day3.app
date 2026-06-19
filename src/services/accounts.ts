@@ -107,12 +107,27 @@ export async function applySubscriptionEvent(
   if (!account) return; // Account is created lazily on first dashboard load.
 
   const plan: PlanKey = input.active && input.planSlug === PAID_PLAN_SLUG ? "tiny" : "none";
+
+  // This webhook is the primary period source: when Clerk reports a period
+  // start later than the one we have, a new billing period has begun, so we zero
+  // usage here. The monthly cron is only a fallback for accounts that never get
+  // this event. Guarding on the start boundary keeps a redelivered webhook (or a
+  // webhook racing the cron on the 1st) from resetting the same period twice.
+  // Compare as instants, not strings: Postgres surfaces the stored timestamptz
+  // in its own textual format ("2026-06-01 00:00:00+00"), which does not order
+  // lexically against an ISO-8601 input.
+  const periodAdvanced =
+    !!input.periodStart &&
+    (!account.currentPeriodStart ||
+      Date.parse(input.periodStart) > Date.parse(account.currentPeriodStart));
+
   await db
     .update(accounts)
     .set({
       ...entitlementFields(account, plan, input.active),
       currentPeriodStart: input.periodStart ?? account.currentPeriodStart,
       currentPeriodEnd: input.periodEnd ?? account.currentPeriodEnd,
+      ...(periodAdvanced ? { monthlyEmailSentCount: 0 } : {}),
       updatedAt: nowIso(),
     })
     .where(eq(accounts.id, account.id));
