@@ -5,8 +5,8 @@ import { sendingDomains } from "@/db/schema";
 
 // Lets the admin see (and override-verify) any account's domains.
 export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
-  const { id } = await params;
   const { db } = await requireAdmin();
+  const { id } = await params;
   const rows = await db
     .select()
     .from(sendingDomains)

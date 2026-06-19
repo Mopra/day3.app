@@ -5,8 +5,8 @@ import { accounts, campaigns, riskReviews, subscribers } from "@/db/schema";
 import { computeAccountHealth } from "@/services/health";
 
 export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
-  const { id } = await params;
   const { db } = await requireAdmin();
+  const { id } = await params;
   const account = await db.query.accounts.findFirst({ where: eq(accounts.id, id) });
   if (!account) throw new HttpError(404, "Not found");
 
