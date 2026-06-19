@@ -1,6 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { route, json, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
+import { findDomain } from "@/api/finders";
 import { sendingDomains } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 import { parseDnsRecords } from "@/lib/domain";
@@ -21,9 +22,7 @@ async function dnsResolvedFor(domain: { verificationStatus: string; dnsRecordsJs
 export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
   const { id } = await params;
   const { db, account } = await requireAccount();
-  const row = await db.query.sendingDomains.findFirst({
-    where: and(eq(sendingDomains.id, id), eq(sendingDomains.accountId, account.id)),
-  });
+  const row = await findDomain(db, account.id, id);
   if (!row) throw new HttpError(404, "Not found");
 
   const region = process.env.AWS_REGION;
@@ -39,9 +38,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
           updatedAt: nowIso(),
         })
         .where(eq(sendingDomains.id, row.id));
-      const fresh = await db.query.sendingDomains.findFirst({
-        where: eq(sendingDomains.id, row.id),
-      });
+      const fresh = await findDomain(db, account.id, row.id);
       return json({ domain: fresh, dnsResolved: fresh ? await dnsResolvedFor(fresh) : false });
     } catch (err) {
       console.error("[domains] SES GetEmailIdentity failed:", err);

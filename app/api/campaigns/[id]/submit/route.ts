@@ -1,8 +1,8 @@
 import { and, eq, sql } from "drizzle-orm";
 import { route, json, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
-import { findCampaign } from "@/api/finders";
-import { campaigns, sendingDomains, subscribers } from "@/db/schema";
+import { findCampaign, findDomain } from "@/api/finders";
+import { campaigns, subscribers } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 import { checkSendEligibility } from "@/services/plans";
 import { getQueue } from "@/queue/producer";
@@ -20,9 +20,9 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
     throw new HttpError(409, `Campaign cannot be submitted from status "${campaign.status}"`);
   }
 
-  const domain = await db.query.sendingDomains.findFirst({
-    where: eq(sendingDomains.id, campaign.sendingDomainId),
-  });
+  // Re-fetch the sending domain scoped to the account (never by primary id
+  // alone) so a cross-tenant id can never satisfy the verified check.
+  const domain = await findDomain(db, account.id, campaign.sendingDomainId);
   const domainVerified =
     domain && (domain.verificationStatus === "verified" || domain.adminOverrideVerified);
   if (!domainVerified) {

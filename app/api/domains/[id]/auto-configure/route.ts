@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { route, json, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
+import { findDomain } from "@/api/finders";
 import { dnsIntegrations, sendingDomains } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 import { logJob } from "@/lib/job-log";
@@ -17,9 +18,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
   const { id } = await params;
   const { db, account } = await requireAccount();
 
-  const domain = await db.query.sendingDomains.findFirst({
-    where: and(eq(sendingDomains.id, id), eq(sendingDomains.accountId, account.id)),
-  });
+  const domain = await findDomain(db, account.id, id);
   if (!domain) throw new HttpError(404, "Not found");
 
   const integration = await db.query.dnsIntegrations.findFirst({
@@ -84,6 +83,6 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
     payload: { zoneId: zone.id, actions: results.map((r) => ({ name: r.record.name, action: r.action })) },
   });
 
-  const fresh = await db.query.sendingDomains.findFirst({ where: eq(sendingDomains.id, domain.id) });
+  const fresh = await findDomain(db, account.id, domain.id);
   return json({ domain: fresh, results });
 });
