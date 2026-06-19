@@ -11,6 +11,56 @@ export type CsvParseResult = {
 };
 
 export const MAX_IMPORT_ROWS = 5000;
+export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+
+// Content types browsers/clients actually send for a .csv: real CSV, generic
+// binary, or plain text. We also accept an empty content-type (some clients omit
+// it) as long as the filename ends in .csv — see validateCsvUpload.
+const ALLOWED_CSV_CONTENT_TYPES = new Set([
+  "text/csv",
+  "application/csv",
+  "application/vnd.ms-excel",
+  "text/plain",
+  "application/octet-stream",
+]);
+
+export type CsvUploadError = { status: 400 | 413; message: string };
+
+// Edge validation for an uploaded CSV File, before it is stored or enqueued.
+// Pure (no I/O) so it can be unit-tested and reused. Returns an error object on
+// rejection, or null when the upload is acceptable.
+export function validateCsvUpload(file: {
+  name: string;
+  size: number;
+  type: string;
+}): CsvUploadError | null {
+  const name = (file.name ?? "").trim();
+  if (!name) {
+    return { status: 400, message: "The uploaded file is missing a filename" };
+  }
+  if (!name.toLowerCase().endsWith(".csv")) {
+    return { status: 400, message: "Upload a .csv file" };
+  }
+  const contentType = (file.type ?? "").split(";")[0].trim().toLowerCase();
+  if (contentType && !ALLOWED_CSV_CONTENT_TYPES.has(contentType)) {
+    return { status: 400, message: "File must be a CSV (text/csv)" };
+  }
+  if (file.size <= 0) {
+    return { status: 400, message: "The uploaded file is empty" };
+  }
+  if (file.size > MAX_IMPORT_BYTES) {
+    return { status: 413, message: "CSV too large (max 5 MB)" };
+  }
+  return null;
+}
+
+// Number of non-blank data rows (excludes the header). Used to enforce
+// MAX_IMPORT_ROWS at the edge before enqueueing the import job, so an oversized
+// file never becomes a job that only fails inside the worker.
+export function countCsvDataRows(content: string): number {
+  const lines = parseCsvLines(content);
+  return lines.length === 0 ? 0 : lines.length - 1;
+}
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

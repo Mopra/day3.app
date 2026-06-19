@@ -3,7 +3,7 @@ import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
 import { imports } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
-import { MAX_IMPORT_ROWS } from "@/lib/csv";
+import { MAX_IMPORT_ROWS, countCsvDataRows, validateCsvUpload } from "@/lib/csv";
 import { putImportObject } from "@/lib/supabase-storage";
 import { getQueue } from "@/queue/producer";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -22,13 +22,27 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
   if (!(file instanceof File)) {
     throw new HttpError(400, "Upload a CSV file in the 'file' field");
   }
-  if (file.size > 5 * 1024 * 1024) {
-    throw new HttpError(400, "CSV too large (max 5 MB)");
+  // Validate filename, content-type, emptiness, and size cap before reading the
+  // body or touching storage/the queue.
+  const uploadError = validateCsvUpload(file);
+  if (uploadError) {
+    throw new HttpError(uploadError.status, uploadError.message);
+  }
+
+  const bytes = await file.arrayBuffer();
+  // Enforce the row cap at the edge: a file over the limit must never become a
+  // queued job that only fails inside the worker.
+  const rowCount = countCsvDataRows(new TextDecoder().decode(bytes));
+  if (rowCount === 0) {
+    throw new HttpError(400, "The CSV has no data rows");
+  }
+  if (rowCount > MAX_IMPORT_ROWS) {
+    throw new HttpError(400, `CSV has ${rowCount} rows; the maximum is ${MAX_IMPORT_ROWS}`);
   }
 
   const importId = newId("imp");
   const key = `imports/${account.id}/${importId}.csv`;
-  await putImportObject(key, await file.arrayBuffer(), "text/csv");
+  await putImportObject(key, bytes, "text/csv");
 
   const now = nowIso();
   await db.insert(imports).values({

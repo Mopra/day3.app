@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseSubscriberCsv, isValidEmail } from "../src/lib/csv";
+import {
+  parseSubscriberCsv,
+  isValidEmail,
+  validateCsvUpload,
+  countCsvDataRows,
+  MAX_IMPORT_BYTES,
+} from "../src/lib/csv";
 import { runDeterministicRiskChecks } from "../src/services/risk";
 import { renderCampaignEmail } from "../src/services/render";
 import { checkSendEligibility } from "../src/services/plans";
@@ -34,6 +40,52 @@ describe("csv parsing", () => {
     expect(isValidEmail("a@b.co")).toBe(true);
     expect(isValidEmail("a b@c.co")).toBe(false);
     expect(isValidEmail("nope")).toBe(false);
+  });
+});
+
+describe("csv upload validation", () => {
+  const ok = { name: "subs.csv", size: 100, type: "text/csv" };
+
+  it("accepts a real csv upload", () => {
+    expect(validateCsvUpload(ok)).toBeNull();
+    expect(validateCsvUpload({ ...ok, type: "application/octet-stream" })).toBeNull();
+    expect(validateCsvUpload({ ...ok, type: "text/csv; charset=utf-8" })).toBeNull();
+    expect(validateCsvUpload({ ...ok, type: "" })).toBeNull();
+  });
+
+  it("rejects a missing filename", () => {
+    expect(validateCsvUpload({ ...ok, name: "" })).toEqual({
+      status: 400,
+      message: expect.stringMatching(/filename/i),
+    });
+  });
+
+  it("rejects a non-csv extension", () => {
+    expect(validateCsvUpload({ ...ok, name: "subs.xlsx" })?.status).toBe(400);
+  });
+
+  it("rejects a disallowed content-type", () => {
+    expect(validateCsvUpload({ ...ok, type: "application/pdf" })).toEqual({
+      status: 400,
+      message: expect.stringMatching(/csv/i),
+    });
+  });
+
+  it("rejects an empty file before storing", () => {
+    expect(validateCsvUpload({ ...ok, size: 0 })).toEqual({
+      status: 400,
+      message: expect.stringMatching(/empty/i),
+    });
+  });
+
+  it("rejects an oversized file with 413", () => {
+    expect(validateCsvUpload({ ...ok, size: MAX_IMPORT_BYTES + 1 })?.status).toBe(413);
+  });
+
+  it("counts data rows excluding the header", () => {
+    expect(countCsvDataRows("email\na@x.co\nb@x.co")).toBe(2);
+    expect(countCsvDataRows("email")).toBe(0);
+    expect(countCsvDataRows("")).toBe(0);
   });
 });
 
