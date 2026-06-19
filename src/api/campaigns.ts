@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../db/client";
 import { audiences, campaignRecipients, sendingDomains } from "../db/schema";
@@ -49,5 +49,28 @@ export async function campaignStats(db: Db, campaignId: string) {
     .groupBy(campaignRecipients.status);
   const byStatus = Object.fromEntries(rows.map((r) => [r.status, Number(r.count)]));
   const total = rows.reduce((sum, r) => sum + Number(r.count), 0);
-  return { total, ...byStatus };
+  // Breakdown of why recipients did not receive the email, grouped by the stored
+  // error. Lets the campaign UI distinguish suppressed (status=skipped, e.g.
+  // "suppressed"/provider suppression) from hard-failed (status=failed, e.g. a
+  // bad address or provider error) instead of showing a bare count.
+  const reasonRows = await db
+    .select({
+      status: campaignRecipients.status,
+      reason: campaignRecipients.error,
+      count: sql<number>`count(*)`.as("count"),
+    })
+    .from(campaignRecipients)
+    .where(
+      and(
+        eq(campaignRecipients.campaignId, campaignId),
+        inArray(campaignRecipients.status, ["skipped", "failed"]),
+      ),
+    )
+    .groupBy(campaignRecipients.status, campaignRecipients.error);
+  const undeliverable = reasonRows.map((r) => ({
+    status: r.status,
+    reason: r.reason ?? "unknown",
+    count: Number(r.count),
+  }));
+  return { total, ...byStatus, undeliverable };
 }

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Dialog,
   DialogContent,
@@ -60,6 +61,10 @@ export default function AudienceDetailPage() {
   const [status, setStatus] = useState("all");
   const [addOpen, setAddOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Holds the import id awaiting a re-uploaded CSV when the user clicks "Retry"
+  // on a failed import; the same hidden picker is reused for the corrected file.
+  const retryRef = useRef<HTMLInputElement>(null);
+  const [retryImportId, setRetryImportId] = useState<string | null>(null);
   const { register, handleSubmit, reset, formState } = useForm<AddForm>();
 
   const loadAudience = useCallback(() => {
@@ -138,6 +143,20 @@ export default function AudienceDetailPage() {
     }
   }
 
+  // Re-upload a corrected CSV for a previously failed import. Re-running the same
+  // import row is dedup-safe, so already-imported subscribers are never doubled.
+  async function onRetryUpload(importId: string, file: File) {
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      await api.upload(`/api/audiences/${id}/imports/${importId}/retry`, form);
+      toast.success("Retrying import");
+      loadImports();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Retry failed");
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -192,25 +211,58 @@ export default function AudienceDetailPage() {
         </div>
       </div>
 
+      {/* Hidden picker reused for re-uploading a corrected CSV on retry. */}
+      <input
+        ref={retryRef}
+        type="file"
+        accept=".csv,text/csv"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file && retryImportId) onRetryUpload(retryImportId, file);
+          setRetryImportId(null);
+          e.target.value = "";
+        }}
+      />
+
       {imports.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Imports</CardTitle>
+            <CardTitle className="text-base">Import history</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            {imports.slice(0, 3).map((imp) => (
+          <CardContent className="space-y-4">
+            {imports.slice(0, 5).map((imp) => (
               <div key={imp.id} className="space-y-1">
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex items-center justify-between gap-2 text-sm">
                   <span className="truncate">{imp.filename}</span>
-                  <span className="flex items-center gap-2 text-muted-foreground">
-                    {imp.status === "completed" &&
-                      `${imp.importedRows} imported, ${imp.skippedRows} skipped`}
-                    {imp.status === "failed" && (imp.error ?? "failed")}
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground">
+                      {imp.totalRows > 0
+                        ? `${imp.importedRows} imported · ${imp.skippedRows} skipped · ${imp.totalRows} total`
+                        : null}
+                    </span>
                     <Badge variant={statusVariant(imp.status)}>{imp.status}</Badge>
-                  </span>
+                  </div>
                 </div>
                 {(imp.status === "pending" || imp.status === "processing") && (
                   <Progress value={imp.status === "pending" ? 5 : 50} />
+                )}
+                {imp.status === "failed" && (
+                  <Alert variant="destructive">
+                    <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
+                      <span>{imp.error ?? "The import failed."}</span>
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={() => {
+                          setRetryImportId(imp.id);
+                          retryRef.current?.click();
+                        }}
+                      >
+                        Re-upload &amp; retry
+                      </Button>
+                    </AlertDescription>
+                  </Alert>
                 )}
               </div>
             ))}

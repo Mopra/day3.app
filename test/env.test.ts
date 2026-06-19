@@ -25,6 +25,8 @@ const SECRET_KEYS = [
 const saved: Record<string, string | undefined> = {};
 const ALL_KEYS = [
   ...Object.keys(VALID),
+  "DNS_TOKEN_ENC_KEYS",
+  "DNS_TOKEN_ENC_ACTIVE_KEY_ID",
   "EMAIL_PROVIDER",
   "AWS_REGION",
   "SES_SNS_TOPIC_ARN",
@@ -118,6 +120,25 @@ describe("validateEnv", () => {
       AWS_REGION: SES_OK.AWS_REGION,
     });
     expect(() => validateEnv("worker")).not.toThrow();
+  });
+
+  it("accepts the rotation keyring (DNS_TOKEN_ENC_KEYS) in place of DNS_TOKEN_ENC_KEY", () => {
+    const key = Buffer.alloc(32, 7).toString("base64");
+    const env = { ...VALID } as Record<string, string | undefined>;
+    delete env.DNS_TOKEN_ENC_KEY;
+    applyEnv({
+      ...env,
+      DNS_TOKEN_ENC_KEYS: `v1:${key},v2:${key}`,
+      DNS_TOKEN_ENC_ACTIVE_KEY_ID: "v2",
+    });
+    expect(() => validateEnv()).not.toThrow();
+  });
+
+  it("rejects the web tier with neither DNS key form configured", () => {
+    const env = { ...VALID } as Record<string, string | undefined>;
+    delete env.DNS_TOKEN_ENC_KEY;
+    applyEnv(env);
+    expect(() => validateEnv()).toThrow(/DNS_TOKEN_ENC_KEY/);
   });
 
   it("aggregates multiple problems into one error", () => {

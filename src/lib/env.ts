@@ -39,7 +39,13 @@ const fullSchema = z.object({
   DATABASE_URL: required("DATABASE_URL"),
   UNSUBSCRIBE_SECRET: secret("UNSUBSCRIBE_SECRET"),
   OAUTH_STATE_SECRET: secret("OAUTH_STATE_SECRET"),
-  DNS_TOKEN_ENC_KEY: secret("DNS_TOKEN_ENC_KEY"),
+  // DNS token encryption accepts either the single-key form (DNS_TOKEN_ENC_KEY)
+  // or the rotation-aware keyring (DNS_TOKEN_ENC_KEYS + DNS_TOKEN_ENC_ACTIVE_KEY_ID);
+  // the cross-field check below requires at least one. Both are validated for
+  // length/shape when present (the exact 32-byte decode is enforced at import).
+  DNS_TOKEN_ENC_KEY: secret("DNS_TOKEN_ENC_KEY").optional(),
+  DNS_TOKEN_ENC_KEYS: secret("DNS_TOKEN_ENC_KEYS").optional(),
+  DNS_TOKEN_ENC_ACTIVE_KEY_ID: z.string().optional(),
   CLERK_WEBHOOK_SIGNING_SECRET: secret("CLERK_WEBHOOK_SIGNING_SECRET"),
   EMAIL_PROVIDER: z.string().optional(),
   AWS_REGION: z.string().optional(), // required only when EMAIL_PROVIDER=ses
@@ -87,8 +93,27 @@ function sesTopicRefinement(
   }
 }
 
+// The web tier must be able to decrypt DNS tokens, so it needs at least one of
+// the two key forms configured. (The exact key bytes and the active-id presence
+// are validated when the keyring is resolved — see src/lib/crypto.ts.)
+function dnsKeyRefinement(
+  env: { DNS_TOKEN_ENC_KEY?: string; DNS_TOKEN_ENC_KEYS?: string },
+  ctx: z.RefinementCtx,
+) {
+  if (!env.DNS_TOKEN_ENC_KEY && !env.DNS_TOKEN_ENC_KEYS) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["DNS_TOKEN_ENC_KEY"],
+      message: "Set DNS_TOKEN_ENC_KEY, or DNS_TOKEN_ENC_KEYS (+ DNS_TOKEN_ENC_ACTIVE_KEY_ID) for key rotation",
+    });
+  }
+}
+
 const schemas = {
-  web: fullSchema.superRefine(sesRegionRefinement).superRefine(sesTopicRefinement),
+  web: fullSchema
+    .superRefine(sesRegionRefinement)
+    .superRefine(sesTopicRefinement)
+    .superRefine(dnsKeyRefinement),
   worker: workerSchema.superRefine(sesRegionRefinement),
 } as const;
 

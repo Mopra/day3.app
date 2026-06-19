@@ -195,6 +195,44 @@ When a domain is unverified and records exist:
 
 ---
 
+## Key rotation (encrypt-at-rest)
+
+DNS tokens are AES-256-GCM ciphertext tagged with the **key id** that produced
+them: stored as `<keyId>.<base64(iv||ct+tag)>` (see `src/lib/crypto.ts`). The id
+prefix lets multiple keys coexist, so the encryption key can be rotated — which
+is mandatory after any suspected exposure — **without downtime and without
+forcing customers to reconnect**.
+
+Configure keys as a keyring (either form works; the keyring form enables
+rotation):
+
+- `DNS_TOKEN_ENC_KEY` — single key. Treated as key id `v1`. Pre-versioning
+  ciphertext (no prefix) is also read as `v1`.
+- `DNS_TOKEN_ENC_KEYS` — comma-separated `id:base64key` pairs (e.g.
+  `v1:<base64>,v2:<base64>`). **Every listed key can decrypt.**
+- `DNS_TOKEN_ENC_ACTIVE_KEY_ID` — which id **encrypts** new tokens.
+
+Decryption selects the key by the ciphertext's id and **fails closed**: an
+unknown id throws a clear error and never returns plaintext, so a key that was
+retired too early surfaces loudly instead of leaking.
+
+### Rotation procedure (zero downtime)
+
+1. Generate a new key:
+   `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
+2. Add it to `DNS_TOKEN_ENC_KEYS` **alongside the old one**, e.g.
+   `DNS_TOKEN_ENC_KEYS=v1:<old>,v2:<new>`. Both keys are now live, so every
+   existing row still decrypts.
+3. Set `DNS_TOKEN_ENC_ACTIVE_KEY_ID=v2` and deploy. New writes use `v2`; old
+   rows are still read with `v1`.
+4. Re-encrypt existing rows: `npm run keys:rotate-dns`. It decrypts each row with
+   whichever key it carries and rewrites it under the active key. Idempotent —
+   re-run until it reports `rotated=0`.
+5. Once nothing is left on `v1`, drop it: `DNS_TOKEN_ENC_KEYS=v2:<new>` (and set
+   the active id to `v2`), then deploy. The old key is now fully retired.
+
+---
+
 ## Phase 6 — Security checklist
 
 - Tokens encrypted at rest (AES-GCM), key in secrets, never in the DB plaintext
