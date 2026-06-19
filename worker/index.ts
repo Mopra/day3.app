@@ -18,6 +18,7 @@ import { getDb } from "../src/db/client";
 import { emailProviderFromEnv } from "../src/email/factory";
 import { createSupabaseObjectStore } from "../src/lib/supabase-storage";
 import { requireUnsubscribeSecret, validateEnv } from "../src/lib/env";
+import { writeHeartbeat, HEARTBEAT_INTERVAL_MS } from "../src/lib/heartbeat";
 
 // Fail fast before the worker begins consuming: a missing/weak secret here would
 // otherwise sign unsubscribe links with an empty HMAC key.
@@ -122,8 +123,26 @@ await queue.upsertJobScheduler(
 );
 logger.info("cron sweep scheduled", { scheduler: SWEEP_SCHEDULER, pattern: "every 15 min" });
 
+// Worker liveness signal: write a Redis heartbeat now and on an interval. The
+// /api/health endpoint on the web tier reads this key to detect a dead worker
+// (campaigns would silently stop sending) within ~90s, far faster than the
+// 15-min cron staleness signal. Best-effort — a Redis blip must never crash the
+// worker, and the interval is unref'd so it can't keep the process alive on its
+// own during shutdown.
+async function beat(): Promise<void> {
+  try {
+    await writeHeartbeat(queueConnection);
+  } catch (err) {
+    logger.warn("heartbeat write failed", { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+await beat();
+const heartbeatTimer = setInterval(() => void beat(), HEARTBEAT_INTERVAL_MS);
+heartbeatTimer.unref();
+
 async function shutdown(signal: string): Promise<void> {
   logger.info("worker shutting down", { signal });
+  clearInterval(heartbeatTimer);
   try {
     await worker.close();
     await queue.close();
