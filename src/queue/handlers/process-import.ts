@@ -3,7 +3,7 @@ import type { Db } from "../../db/client";
 import { imports, subscribers } from "../../db/schema";
 import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
-import { MAX_IMPORT_ROWS, parseSubscriberCsv } from "../../lib/csv";
+import { canonicalizeEmail, MAX_IMPORT_ROWS, parseSubscriberCsv } from "../../lib/csv";
 import { getSuppressedEmails } from "../../services/suppression";
 import type { ObjectStore } from "../../lib/storage";
 
@@ -66,7 +66,9 @@ export async function processImport(
       parsed.rows.map((r) => r.email),
     );
 
-    const candidates = parsed.rows.filter((r) => !suppressed.has(r.email));
+    // parseSubscriberCsv already canonicalizes r.email; canonicalize here too so
+    // the suppression filter never compares a raw against a canonical value.
+    const candidates = parsed.rows.filter((r) => !suppressed.has(canonicalizeEmail(r.email)));
 
     const now = nowIso();
     let imported = 0;
@@ -79,7 +81,7 @@ export async function processImport(
             id: newId("sub"),
             accountId: importRow.accountId,
             audienceId: importRow.audienceId,
-            email: row.email,
+            email: canonicalizeEmail(row.email),
             firstName: row.firstName ?? null,
             lastName: row.lastName ?? null,
             status: "subscribed" as const,
