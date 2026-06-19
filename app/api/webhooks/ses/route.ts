@@ -6,6 +6,7 @@ import { campaignRecipients, emailEvents, subscribers, type CampaignRecipient } 
 import { newId, nowIso } from "@/lib/ids";
 import { addSuppression } from "@/services/suppression";
 import { enforceAccountHealth } from "@/services/health";
+import { logger } from "@/lib/logger";
 
 // SES → configuration set → SNS topic → HTTPS subscription posts here. The
 // validator verifies the SNS signature (SigV1/SigV2) against the AWS signing
@@ -34,8 +35,10 @@ const str = (v: unknown): string | undefined => (typeof v === "string" ? v : und
 
 // Structured rejection log. Never includes signature, secret, or body material —
 // only coarse, non-sensitive metadata useful for spotting abuse in aggregate.
+// Routed through the shared logger so rejections share the JSON shape +
+// redaction the rest of the service uses.
 function warnReject(reason: string, fields: Record<string, string | undefined> = {}): void {
-  console.warn(JSON.stringify({ level: "warn", at: "ses-webhook", reason, ...fields }));
+  logger.warn("ses-webhook rejected", { reason, ...fields });
 }
 
 function isAllowedSubscribeUrl(rawUrl: string): boolean {
@@ -89,7 +92,7 @@ export async function POST(req: NextRequest) {
       try {
         await fetch(payload.SubscribeURL);
       } catch (err) {
-        console.error("[ses-webhook] subscription confirm failed:", err);
+        void logger.reportError("ses-webhook subscription confirm failed", err);
       }
     }
     return new Response("OK", { status: 200 });

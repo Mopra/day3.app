@@ -4,6 +4,7 @@ import { verifyWebhook } from "@clerk/nextjs/webhooks";
 import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
+import { logger } from "@/lib/logger";
 import { applySubscriptionEvent } from "@/services/accounts";
 
 type Rec = Record<string, unknown>;
@@ -18,6 +19,9 @@ export async function POST(req: NextRequest) {
   try {
     evt = (await verifyWebhook(req)) as { type: string; data: unknown };
   } catch {
+    // Unverifiable signature — log a non-sensitive rejection marker (never the
+    // body or the signing secret).
+    logger.warn("clerk-webhook rejected", { reason: "invalid_signature" });
     return new Response("Webhook verification failed", { status: 400 });
   }
 

@@ -184,7 +184,9 @@ describe("SES/SNS webhook abuse hardening", () => {
   });
 
   it("rejects a forged signature with 403 and a structured warn log (no secrets)", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Webhook rejections route through the shared structured logger, which emits
+    // warn-level lines on stderr (console.error) as a single JSON object.
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const forged = { ...snsNotification(bouncePayload("x@example.com")), __forgeSignature: true };
     const res = await post(forged);
@@ -193,7 +195,7 @@ describe("SES/SNS webhook abuse hardening", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     const logged = warn.mock.calls[0][0] as string;
     const parsed = JSON.parse(logged);
-    expect(parsed.at).toBe("ses-webhook");
+    expect(parsed.msg).toBe("ses-webhook rejected");
     expect(parsed.reason).toBe("invalid_signature");
     // No signature/secret/body material leaks into the log line.
     expect(logged).not.toContain("__forgeSignature");
@@ -202,7 +204,7 @@ describe("SES/SNS webhook abuse hardening", () => {
 
   it("rejects a wrong-topic message with 403 and a structured warn log", async () => {
     process.env.SES_SNS_TOPIC_ARN = "arn:aws:sns:eu-west-1:123456789012:expected-topic";
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
 
     // snsNotification uses TopicArn "...:ses-events", which won't match.
     const res = await post(snsNotification(bouncePayload("x@example.com")));
@@ -210,14 +212,14 @@ describe("SES/SNS webhook abuse hardening", () => {
 
     expect(warn).toHaveBeenCalledTimes(1);
     const parsed = JSON.parse(warn.mock.calls[0][0] as string);
-    expect(parsed.at).toBe("ses-webhook");
+    expect(parsed.msg).toBe("ses-webhook rejected");
     expect(parsed.reason).toBe("topic_mismatch");
     // The expected (configured) ARN must never be echoed back into the log.
     expect(warn.mock.calls[0][0]).not.toContain("expected-topic");
   });
 
   it("rejects an oversized body before parsing", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
     // Build a >256 KiB body. It need not be valid JSON — the size check runs
     // before the validator.
     const huge = "a".repeat(256 * 1024 + 1);
@@ -242,7 +244,7 @@ describe("SES/SNS webhook abuse hardening", () => {
 
   it("refuses to fetch a SubscribeURL pointed at a non-SNS host (SSRF guard)", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("ok"));
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const evil = {
       Type: "SubscriptionConfirmation",

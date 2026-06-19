@@ -2,6 +2,7 @@ import type { Db } from "../db/client";
 import type { EmailProvider } from "../email/provider";
 import type { ObjectStore } from "../lib/storage";
 import { logJob } from "../lib/job-log";
+import { logger, newCorrelationId } from "../lib/logger";
 import type { JobQueue, QueueMessage } from "./messages";
 import { processImport } from "./handlers/process-import";
 import { reviewCampaign } from "./handlers/review-campaign";
@@ -22,7 +23,40 @@ export type QueueDeps = {
   aiReviewMode?: string;
 };
 
+// The entity a job acts on, for log correlation. Most messages carry an
+// account-scoped entity; the entity id lets a single campaign / import be traced
+// across the jobs it spawns. (process_email_event carries only an event id.)
+function jobContext(message: QueueMessage): { entityType: string; entityId: string; accountId?: string } {
+  switch (message.type) {
+    case "process_import":
+      return { entityType: "import", entityId: message.importId, accountId: message.accountId };
+    case "review_campaign":
+    case "generate_campaign_recipients":
+    case "send_campaign_batch":
+      return { entityType: "campaign", entityId: message.campaignId, accountId: message.accountId };
+    case "process_email_event":
+      return { entityType: "email_event", entityId: message.eventId };
+  }
+}
+
+// Wraps the dispatch with start/finish/duration logging and a per-job
+// correlation id. Errors are reported (stack + safe context) and re-thrown so
+// BullMQ still applies its retry/dead-letter policy unchanged.
 export async function handleQueueMessage(message: QueueMessage, deps: QueueDeps): Promise<void> {
+  const ctx = jobContext(message);
+  const log = logger.child({ jobId: newCorrelationId("job"), jobType: message.type, ...ctx });
+  const startedAt = Date.now();
+  log.info("job started");
+  try {
+    await dispatchQueueMessage(message, deps);
+    log.info("job finished", { durationMs: Date.now() - startedAt });
+  } catch (err) {
+    await log.reportError("job failed", err, { durationMs: Date.now() - startedAt });
+    throw err;
+  }
+}
+
+async function dispatchQueueMessage(message: QueueMessage, deps: QueueDeps): Promise<void> {
   const { db } = deps;
 
   switch (message.type) {

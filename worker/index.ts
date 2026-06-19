@@ -13,6 +13,7 @@ import {
 import { handleQueueMessage, type QueueDeps } from "../src/queue/consumer";
 import { runScheduledSweeps } from "../src/queue/cron";
 import { recordDeadLetter } from "../src/lib/job-log";
+import { logger } from "../src/lib/logger";
 import { getDb } from "../src/db/client";
 import { emailProviderFromEnv } from "../src/email/factory";
 import { createSupabaseObjectStore } from "../src/lib/supabase-storage";
@@ -79,13 +80,13 @@ const worker = new Worker(
 );
 
 worker.on("ready", () =>
-  console.log(`[worker] ready — queue=${QUEUE_NAME} concurrency=${CONCURRENCY}`),
+  logger.info("worker ready", { queue: QUEUE_NAME, concurrency: CONCURRENCY }),
 );
 worker.on("failed", (job, err) => {
-  console.error(
-    `[worker] job ${job?.name ?? "?"} (${job?.id ?? "?"}) failed:`,
-    err?.message ?? err,
-  );
+  logger.child({ jobName: job?.name, jobId: job?.id }).warn("job attempt failed", {
+    attemptsMade: job?.attemptsMade,
+    error: err?.message ?? String(err),
+  });
   // BullMQ fires "failed" on every attempt. Only the final, retries-exhausted
   // failure is dead-lettered (mirrored to job_logs) so transient retries don't
   // spam the table; `attemptsMade` reaches the configured `attempts` cap on the
@@ -95,16 +96,22 @@ worker.on("failed", (job, err) => {
     job.name !== SWEEP_JOB &&
     job.attemptsMade >= (job.opts.attempts ?? DEFAULT_JOB_OPTIONS.attempts)
   ) {
+    const dlLog = logger.child({ jobName: job.name, jobId: job.id });
+    void dlLog
+      .reportError("job dead-lettered (retries exhausted)", err, {
+        attemptsMade: job.attemptsMade,
+      })
+      .catch((logErr) => dlLog.error("error-report for dead-letter failed", { error: String(logErr) }));
     void recordDeadLetter(deps.db, {
       jobType: job.name,
       jobId: job.id,
       attemptsMade: job.attemptsMade,
       error: err?.message ?? String(err),
       payload: job.data,
-    }).catch((logErr) => console.error("[worker] dead-letter record failed:", logErr));
+    }).catch((logErr) => dlLog.error("dead-letter record failed", { error: String(logErr) }));
   }
 });
-worker.on("error", (err) => console.error("[worker] error:", err));
+worker.on("error", (err) => void logger.reportError("worker error", err));
 
 // Repeatable cron sweep every 15 minutes (replaces the CF `scheduled` trigger):
 // stuck-lock recovery, sending-campaign reconcile, daily health, monthly reset.
@@ -113,10 +120,10 @@ await queue.upsertJobScheduler(
   { pattern: "0 */15 * * * *" },
   { name: SWEEP_JOB, data: {} },
 );
-console.log(`[worker] cron sweep scheduled (${SWEEP_SCHEDULER}: every 15 min)`);
+logger.info("cron sweep scheduled", { scheduler: SWEEP_SCHEDULER, pattern: "every 15 min" });
 
 async function shutdown(signal: string): Promise<void> {
-  console.log(`[worker] ${signal} — closing...`);
+  logger.info("worker shutting down", { signal });
   try {
     await worker.close();
     await queue.close();
