@@ -35,7 +35,32 @@ You are receiving this email because you subscribed to updates from {{company_na
 Unsubscribe: {{unsubscribe_url}}
 `;
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Substitutes {{merge_tag}} placeholders. Merge values are attacker-controllable
+// (imported from CSV with no HTML escaping) and substitution runs AFTER the body
+// is sanitized, so every value MUST be HTML-escaped to prevent injecting live
+// markup/handlers into the already-sanitized output. The only exception is the
+// trusted, server-generated unsubscribe_url, which we control and which must
+// remain usable as a real href.
 function substitute(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_, name: string) => {
+    const key = name.toLowerCase();
+    if (!(key in vars)) return "";
+    const value = vars[key];
+    return key === "unsubscribe_url" ? value : escapeHtml(value);
+  });
+}
+
+// Like substitute() but for the plain-text body, where HTML escaping is wrong.
+function substituteText(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_, name: string) => {
     const key = name.toLowerCase();
     return key in vars ? vars[key] : "";
@@ -59,12 +84,48 @@ const ALLOWED_ATTRS: Record<string, Set<string>> = {
   img: new Set(["src", "alt", "width", "height"]),
 };
 
+// Decodes HTML character references (named + numeric, decimal and hex) so the
+// scheme check below sees the same string the email client will after it parses
+// the attribute. Without this, `&#106;avascript:` slips through as a "relative"
+// URL but a decoding client runs javascript:.
+function decodeHtmlEntities(value: string): string {
+  const named: Record<string, string> = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+    "#39": "'",
+    colon: ":",
+    tab: "\t",
+    newline: "\n",
+  };
+  return value.replace(/&(#x?[0-9a-f]+|[a-z]+);?/gi, (match, body: string) => {
+    const lower = body.toLowerCase();
+    if (lower[0] === "#") {
+      const code =
+        lower[1] === "x"
+          ? Number.parseInt(lower.slice(2), 16)
+          : Number.parseInt(lower.slice(1), 10);
+      if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return match;
+      try {
+        return String.fromCodePoint(code);
+      } catch {
+        return match;
+      }
+    }
+    return lower in named ? named[lower] : match;
+  });
+}
+
 // URL schemes we permit in href/src. Blocks javascript:, data:, vbscript:, etc.
-// Protocol-relative ("//host") and relative URLs are allowed.
+// Protocol-relative ("//host") and relative URLs are allowed. The value is
+// HTML-entity-decoded first so entity-encoded schemes (e.g. &#106;avascript:)
+// are evaluated as the client will see them, not as a harmless relative URL.
 function isSafeUrl(value: string): boolean {
-  const trimmed = value.trim();
+  const decoded = decodeHtmlEntities(value).trim();
   // eslint-disable-next-line no-control-regex
-  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(trimmed.replace(/[\x00-\x20]/g, ""));
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(decoded.replace(/[\x00-\x20]/g, ""));
   if (!scheme) return true; // relative or anchor URL
   return ["http", "https", "mailto"].includes(scheme[1].toLowerCase());
 }
@@ -80,7 +141,7 @@ function buildAttrs(tag: string, rawAttrs: string): string {
     if (!allowed.has(name)) continue;
     const value = m[3] ?? m[4] ?? m[5] ?? "";
     if ((name === "href" || name === "src") && !isSafeUrl(value)) continue;
-    out += ` ${name}="${value.replace(/"/g, "&quot;")}"`;
+    out += ` ${name}="${escapeHtml(value)}"`;
   }
   return out;
 }
@@ -97,8 +158,13 @@ export function sanitizeHtml(html: string): string {
     // Unclosed dangerous tags: strip from the opening tag to end of input.
     .replace(/<(script|style|iframe|object|embed|noscript|template)\b[\s\S]*$/gi, "");
 
+  // The attribute portion is matched as a sequence of quoted strings and
+  // unquoted runs so that a '>' inside a quoted attribute value does NOT
+  // terminate the tag early. A naive [^>]* stops at the first '>', which lets
+  // input like <img alt="x>" onerror=...> leak a live handler that the client
+  // re-parses as part of the tag.
   return cleaned.replace(
-    /<\s*(\/?)([a-z][a-z0-9]*)\b([^>]*)>/gi,
+    /<\s*(\/?)([a-z][a-z0-9]*)\b((?:"[^"]*"|'[^']*'|[^>"'])*)>/gi,
     (_match, slash: string, name: string, rawAttrs: string) => {
       const tag = name.toLowerCase();
       if (!ALLOWED_TAGS.has(tag)) return "";
@@ -162,8 +228,12 @@ export function renderCampaignEmail(input: RenderInput): RenderedEmail {
   text += FOOTER_TEXT;
 
   return {
-    subject: substitute(input.campaign.subject, vars),
+    // subject is plain text in the email header, not HTML — do not escape.
+    subject: substituteText(input.campaign.subject, vars),
+    // html substitution HTML-escapes attacker-controlled merge values (Fix 3),
+    // closing the bypass where unsanitized merge vars were injected into the
+    // already-sanitized body.
     html: substitute(html, vars),
-    text: substitute(text, vars),
+    text: substituteText(text, vars),
   };
 }

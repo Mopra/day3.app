@@ -179,6 +179,64 @@ describe("email rendering", () => {
     expect(out.text).not.toContain("alert(1)");
   });
 
+  it("strips on* handlers hidden behind a '>' inside a quoted attribute", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody:
+          '<img alt="x>" src=y onerror=alert(document.cookie)>',
+      },
+    });
+    expect(out.html).not.toMatch(/onerror/i);
+    expect(out.html).not.toContain("alert(document.cookie)");
+  });
+
+  it("rejects javascript: URLs that are HTML-entity-encoded", () => {
+    const decimal = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody: '<a href="&#106;avascript:alert(1)">x</a>',
+      },
+    });
+    const hex = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody: '<a href="&#x6a;avascript:alert(1)">x</a>',
+      },
+    });
+    expect(decimal.html).not.toMatch(/javascript/i);
+    expect(decimal.html).not.toContain("alert(1)");
+    expect(hex.html).not.toMatch(/javascript/i);
+    expect(hex.html).not.toContain("alert(1)");
+  });
+
+  it("HTML-escapes attacker-controlled merge values so they cannot inject markup", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        subject: "Hi {{first_name}}",
+        htmlBody: "<p>Hello {{first_name}}</p>",
+        textBody: null,
+      },
+      subscriber: {
+        email: "e@x.co",
+        firstName: "<img src=x onerror=alert(1)>",
+        lastName: null,
+      },
+    });
+    // The dangerous markup must be neutralized into inert escaped text, never a
+    // live <img> tag with an onerror handler.
+    expect(out.html).not.toContain("<img src=x");
+    expect(out.html).not.toMatch(/<img[^>]*onerror/i);
+    expect(out.html).toContain("&lt;img src=x");
+    // Subject is a plain-text header, not HTML, so it is not escaped there.
+    expect(out.subject).toBe("Hi <img src=x onerror=alert(1)>");
+  });
+
   it("guarantees exactly one functioning unsubscribe link", () => {
     const out = renderCampaignEmail({
       ...input,
