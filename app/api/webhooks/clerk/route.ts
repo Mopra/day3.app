@@ -5,7 +5,13 @@ import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 import { logger } from "@/lib/logger";
-import { applySubscriptionEvent } from "@/services/accounts";
+import {
+  applySubscriptionEvent,
+  reconcileMembershipByOrg,
+  removeAllMemberships,
+  removeMembership,
+  roleFromClerk,
+} from "@/services/accounts";
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec => (typeof v === "object" && v !== null ? (v as Rec) : {});
@@ -47,6 +53,35 @@ export async function POST(req: NextRequest) {
           .update(accounts)
           .set({ subscriptionStatus: "inactive", sendingEnabled: false, updatedAt: nowIso() })
           .where(eq(accounts.clerkOrgId, orgId));
+        // Drop the local members so a deactivated account has no dangling roster.
+        await removeAllMemberships(db, orgId);
+      }
+      break;
+    }
+    // Membership lifecycle: keep account_users in sync with the org roster and
+    // each member's role. The account is created lazily on first dashboard load,
+    // so a membership event arriving before that is a no-op.
+    case "organizationMembership.created":
+    case "organizationMembership.updated": {
+      const orgId = str(rec(data.organization).id);
+      const userData = rec(data.public_user_data);
+      const userId = str(userData.user_id);
+      const email = str(userData.identifier) ?? "";
+      if (orgId && userId) {
+        await reconcileMembershipByOrg(db, {
+          clerkOrgId: orgId,
+          clerkUserId: userId,
+          email,
+          role: roleFromClerk(str(data.role)),
+        });
+      }
+      break;
+    }
+    case "organizationMembership.deleted": {
+      const orgId = str(rec(data.organization).id);
+      const userId = str(rec(data.public_user_data).user_id);
+      if (orgId && userId) {
+        await removeMembership(db, orgId, userId);
       }
       break;
     }
