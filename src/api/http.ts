@@ -3,10 +3,13 @@ import type { ZodType } from "zod";
 
 // Thrown anywhere inside a handler to produce a specific HTTP error; the `route`
 // wrapper turns it into a JSON response. Everything else becomes a 500.
+// `headers` lets a specific error attach response headers (e.g. Retry-After on a
+// 429 from the rate limiter).
 export class HttpError extends Error {
   constructor(
     public status: number,
     message: string,
+    public headers?: Record<string, string>,
   ) {
     super(message);
     this.name = "HttpError";
@@ -27,7 +30,7 @@ export function route<C = unknown>(handler: RouteHandler<C>): RouteHandler<C> {
       return await handler(req, context);
     } catch (err) {
       if (err instanceof HttpError) {
-        return Response.json({ error: err.message }, { status: err.status });
+        return Response.json({ error: err.message }, { status: err.status, headers: err.headers });
       }
       console.error("[api] unhandled error", err);
       return Response.json({ error: "Internal error" }, { status: 500 });

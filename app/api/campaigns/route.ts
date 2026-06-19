@@ -4,6 +4,7 @@ import { requireAccount } from "@/api/context";
 import { CampaignFieldsSchema, validateOwnershipAndSender } from "@/api/campaigns";
 import { campaigns } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export const GET = route(async () => {
   const { db, account } = await requireAccount();
@@ -32,6 +33,7 @@ export const GET = route(async () => {
 
 export const POST = route(async (req) => {
   const { db, account } = await requireAccount();
+  await enforceRateLimit("campaign_create", account.id);
   const data = await parseJson(req, CampaignFieldsSchema);
   const error = await validateOwnershipAndSender(db, account.id, data);
   if (error) throw new HttpError(400, error);

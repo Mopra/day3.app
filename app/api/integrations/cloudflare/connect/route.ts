@@ -10,6 +10,7 @@ import {
   signState,
 } from "@/services/cloudflare-oauth";
 import { requireOAuthStateSecret } from "@/lib/env";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 // Only allow same-origin relative paths as the post-connect destination, so the
 // returnTo param can't be turned into an open redirect.
@@ -25,6 +26,19 @@ export async function GET(req: NextRequest) {
   const returnTo = safeReturnTo(req.nextUrl.searchParams.get("returnTo"));
   try {
     const { account } = await requireAccount();
+
+    // Throttle OAuth starts per account so the consent-redirect flow can't be
+    // hammered. This is a browser navigation, so on exceed we redirect back with
+    // a clear message + Retry-After rather than emitting raw JSON.
+    const limit = await checkRateLimit("oauth_connect", account.id);
+    if (!limit.allowed) {
+      const dest = new URL(returnTo, req.nextUrl.origin);
+      dest.searchParams.set("cf_error", "Too many connection attempts. Please wait a moment.");
+      const res = NextResponse.redirect(dest);
+      res.headers.set("Retry-After", String(limit.retryAfterSeconds));
+      return res;
+    }
+
     const config = getCloudflareOAuthConfig();
 
     const state = randomToken();

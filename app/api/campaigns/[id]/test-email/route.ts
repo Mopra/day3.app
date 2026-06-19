@@ -7,6 +7,7 @@ import { signUnsubscribeToken, unsubscribeUrl } from "@/services/unsubscribe";
 import { renderCampaignEmail } from "@/services/render";
 import { emailProviderFromEnv } from "@/email/factory";
 import { requireUnsubscribeSecret } from "@/lib/env";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 const TestEmailSchema = z.object({ toEmail: z.email().toLowerCase() });
 
@@ -15,6 +16,7 @@ const TestEmailSchema = z.object({ toEmail: z.email().toLowerCase() });
 export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { params }) => {
   const { id } = await params;
   const { db, account, auth } = await requireAccount();
+  await enforceRateLimit("test_email", account.id);
   const campaign = await findCampaign(db, account.id, id);
   if (!campaign) throw new HttpError(404, "Not found");
 
