@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { PricingTable } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -14,21 +15,31 @@ import type { Account } from "@/lib/types";
 
 // Surfaces a clear, actionable banner for the two states that block sending and
 // need the user to act: a past-due payment and an ended subscription.
-function billingNotice(
-  status: string,
-): { title: string; body: string; cta: string } | null {
+//
+// The CTA points at where the user can actually resolve each state. A past-due
+// card is fixed in the organization billing settings (Clerk's
+// <OrganizationProfile>), not the plan picker on this page, so it links to
+// Settings. An ended subscription is reactivated by picking a plan from the
+// <PricingTable> rendered below, so its CTA scrolls there.
+type BillingNotice = {
+  title: string;
+  body: string;
+  cta: { label: string } & ({ href: string } | { scrollTo: string });
+};
+
+function billingNotice(status: string): BillingNotice | null {
   if (status === "past_due") {
     return {
       title: "Payment past due",
-      body: "Your last payment failed, so sending is paused. Update your payment method below to resume.",
-      cta: "Update payment method",
+      body: "Your last payment failed, so sending is paused. Update your payment method to resume.",
+      cta: { label: "Update payment method", href: "/settings" },
     };
   }
   if (status !== "active") {
     return {
       title: "No active subscription",
-      body: "Choose a plan below to activate your account and start sending.",
-      cta: "Choose a plan",
+      body: "Choose a plan to activate your account and start sending.",
+      cta: { label: "Choose a plan", scrollTo: "plans" },
     };
   }
   return null;
@@ -58,8 +69,30 @@ export default function BillingPage() {
       {notice && (
         <Alert variant={account?.subscriptionStatus === "past_due" ? "destructive" : "default"}>
           <AlertTitle>{notice.title}</AlertTitle>
-          <AlertDescription>
-            {notice.body} {notice.cta} below.
+          <AlertDescription className="flex flex-col items-start gap-3">
+            <span>{notice.body}</span>
+            {(() => {
+              const { cta } = notice;
+              return "href" in cta ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  render={<Link href={cta.href}>{cta.label}</Link>}
+                />
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    document
+                      .getElementById(cta.scrollTo)
+                      ?.scrollIntoView({ behavior: "smooth" })
+                  }
+                >
+                  {cta.label}
+                </Button>
+              );
+            })()}
           </AlertDescription>
         </Alert>
       )}
@@ -113,7 +146,7 @@ export default function BillingPage() {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="plans">
         <CardHeader>
           <CardTitle className="text-base">Plans</CardTitle>
         </CardHeader>
