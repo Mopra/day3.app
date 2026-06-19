@@ -70,6 +70,8 @@ export const POST = route(async (req: NextRequest) => {
           providerIdentityId: domain,
           verificationStatus: state.verificationStatus,
           dkimStatus: state.dkimStatus,
+          mailFromDomain: state.mailFromDomain,
+          mailFromStatus: state.mailFromStatus,
           dnsRecordsJson: JSON.stringify(state.records),
           updatedAt: nowIso(),
         })

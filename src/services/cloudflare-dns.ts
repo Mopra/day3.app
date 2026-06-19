@@ -67,6 +67,7 @@ type CfDnsRecord = {
   content: string;
   proxied?: boolean;
   ttl?: number;
+  priority?: number; // present on MX records
 };
 
 export type RecordAction = "created" | "updated" | "skipped" | "error";
@@ -85,10 +86,11 @@ function normalizeContent(type: string, content: string): string {
 }
 
 // proxied:false is CRITICAL — a proxied (orange-cloud) DKIM CNAME silently breaks
-// mail authentication. ttl:1 means "automatic".
+// mail authentication. ttl:1 means "automatic". MX records require a priority.
 function toCfPayload(record: DnsRecord) {
   const content = record.type === "TXT" ? quoteTxt(record.value) : record.value;
-  return { type: record.type, name: record.name, content, ttl: 1, proxied: false };
+  const base = { type: record.type, name: record.name, content, ttl: 1, proxied: false };
+  return record.type === "MX" ? { ...base, priority: record.priority ?? 10 } : base;
 }
 
 // Idempotent single-record write: skip an identical existing record, patch one
@@ -111,7 +113,10 @@ export async function upsertRecord(
     // Only CNAME/A/AAAA are proxiable; for TXT/MX, Cloudflare omits `proxied`, so
     // don't let that force a needless rewrite.
     const proxiedOk = record.type !== "CNAME" || match.proxied === false;
-    if (sameContent && proxiedOk) {
+    // MX records also carry a priority — a right-host/wrong-priority record must
+    // be patched, not skipped.
+    const samePriority = record.type !== "MX" || match.priority === (record.priority ?? 10);
+    if (sameContent && proxiedOk && samePriority) {
       return { record, action: "skipped" };
     }
     await cfFetch(token, `/zones/${zoneId}/dns_records/${match.id}`, {

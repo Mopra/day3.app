@@ -46,19 +46,33 @@ export type SendingDomain = {
   verificationStatus: string;
   dkimStatus?: string;
   dnsRecordsJson?: string | null;
+  mailFromDomain?: string | null;
+  mailFromStatus?: string;
+  // Auto-DNS (Cloudflare) bookkeeping the setup guide surfaces: whether we wrote
+  // the records for the customer, and the error to show with a manual fallback
+  // when that write failed.
+  dnsZoneId?: string | null;
+  dnsAutoConfigured?: boolean;
+  dnsWriteError?: string | null;
   adminOverrideVerified: boolean;
   createdAt: string;
   updatedAt?: string;
 };
 
 // A DNS record the user must publish to verify a sending domain. Mirrors the
-// server shape in services/ses-identity.ts.
+// server shape in services/ses-identity.ts — keep the two in lockstep.
 export type DnsRecord = {
   type: "CNAME" | "TXT" | "MX";
   name: string;
   value: string;
   description?: string;
   required: boolean;
+  // MX records carry a priority (e.g. 10); omitted for CNAME/TXT.
+  priority?: number;
+  // Which checklist section the record belongs to. "verify" (DKIM) gates the
+  // domain's verified state; "deliverability" (Return-Path MX/SPF + DMARC) is
+  // optional polish. Optional + defaulted to "verify" for legacy rows.
+  group?: "verify" | "deliverability";
 };
 
 // Convenience view of a domain's verification state, derived in lib/domain.ts.

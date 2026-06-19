@@ -222,6 +222,54 @@ describe("upsertRecord — TXT records", () => {
   });
 });
 
+const mx: DnsRecord = {
+  type: "MX",
+  name: "send.updates.acme.com",
+  value: "feedback-smtp.eu-west-1.amazonses.com",
+  priority: 10,
+  required: false,
+  group: "deliverability",
+};
+
+describe("upsertRecord — MX records", () => {
+  it("creates an MX with its priority in the payload", async () => {
+    const { calls } = mockCloudflare([
+      { match: (c) => c.method === "GET", result: [] },
+      { match: (c) => c.method === "POST", result: { id: "rec1" } },
+    ]);
+    const res = await upsertRecord("tok", "zone1", mx);
+    expect(res.action).toBe("created");
+    const post = calls.find((c) => c.method === "POST");
+    expect(post?.body).toMatchObject({ type: "MX", name: mx.name, content: mx.value, priority: 10 });
+  });
+
+  it("skips an identical MX (same host and priority)", async () => {
+    const { calls } = mockCloudflare([
+      {
+        match: (c) => c.method === "GET",
+        result: [{ id: "rec1", type: "MX", name: mx.name, content: mx.value, priority: 10 }],
+      },
+    ]);
+    const res = await upsertRecord("tok", "zone1", mx);
+    expect(res.action).toBe("skipped");
+    expect(calls.every((c) => c.method === "GET")).toBe(true); // no write issued
+  });
+
+  it("patches an MX whose host matches but priority is wrong", async () => {
+    const { calls } = mockCloudflare([
+      {
+        match: (c) => c.method === "GET",
+        result: [{ id: "rec1", type: "MX", name: mx.name, content: mx.value, priority: 5 }],
+      },
+      { match: (c) => c.method === "PATCH", result: { id: "rec1" } },
+    ]);
+    const res = await upsertRecord("tok", "zone1", mx);
+    expect(res.action).toBe("updated");
+    const patch = calls.find((c) => c.method === "PATCH");
+    expect(patch?.body).toMatchObject({ type: "MX", priority: 10 });
+  });
+});
+
 describe("writeRecords", () => {
 
   it("isolates per-record failures and still writes the rest", async () => {

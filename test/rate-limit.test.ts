@@ -144,6 +144,20 @@ describe("env-configurable rule", () => {
   });
 });
 
+describe("domain_recheck limit (manual domain re-check)", () => {
+  it("allows a burst up to the default then rejects further re-checks in the window", async () => {
+    const store = new FakeRedis();
+    // Default is 12/60 — every one of the first 12 must be allowed.
+    for (let i = 0; i < 12; i++) {
+      const r = await checkRateLimit("domain_recheck", "acc_1", store);
+      expect(r.allowed).toBe(true);
+    }
+    const rejected = await checkRateLimit("domain_recheck", "acc_1", store);
+    expect(rejected.allowed).toBe(false);
+    expect(rejected.retryAfterSeconds).toBeGreaterThan(0);
+  });
+});
+
 describe("clientIp", () => {
   it("prefers the first x-forwarded-for entry", () => {
     const req = {
