@@ -44,6 +44,9 @@ serves the UI and the API routes; a separate long-running Node worker
   ID-only so the worker re-reads content from Postgres.
 - `drizzle.config.ts` points `migrate`/`push`/`studio` at `DATABASE_URL` — use the
   Supabase direct/session connection (port 5432) when running migrations.
+- Liveness: `GET /api/health` (200 healthy / 503 if DB down) reports DB, cron-sweep
+  freshness, and the worker's Redis heartbeat (`day3:worker:heartbeat`, written every
+  30s by `worker/index.ts`). Wire monitors/supervisor per `docs/health-monitoring.md`.
 
 ## Commands
 
