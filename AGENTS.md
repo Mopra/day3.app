@@ -39,6 +39,12 @@ serves the UI and the API routes; a separate long-running Node worker
   Billing APIs are beta — pin versions.
 - Recipients stuck in `sending` (crashed batch) are swept to `failed` by cron,
   never back to `pending` — resending could duplicate.
+- Failed-import recovery: a `status='failed'` import is never auto-retried. A user
+  re-uploads a corrected CSV via `POST /api/audiences/[id]/imports/[importId]/retry`,
+  which overwrites the stored object, resets the row to `pending`, and re-enqueues
+  `process_import` (dedup-safe via `onConflictDoNothing`). Operators see recent
+  failed/dead-lettered work on the admin overview, or query directly:
+  `SELECT * FROM job_logs WHERE status IN ('failed','dead_letter') ORDER BY created_at DESC;`
 - The web tier (Vercel) and the worker share the same Postgres; the worker is the
   only process that consumes the BullMQ queue and runs cron. Keep queue messages
   ID-only so the worker re-reads content from Postgres.

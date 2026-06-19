@@ -46,7 +46,8 @@ function fixLinkFor(reason: string): { href: string; label: string } | null {
   return null;
 }
 
-const STAT_KEYS: (keyof CampaignStats)[] = [
+// Numeric per-status keys only (excludes `total` and the `undeliverable` array).
+const STAT_KEYS = [
   "pending",
   "sending",
   "sent",
@@ -56,7 +57,7 @@ const STAT_KEYS: (keyof CampaignStats)[] = [
   "unsubscribed",
   "failed",
   "skipped",
-];
+] as const satisfies readonly (keyof CampaignStats)[];
 
 export default function CampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -238,6 +239,43 @@ export default function CampaignDetailPage() {
                 ) : null,
               )}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {stats && stats.undeliverable && stats.undeliverable.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Didn&apos;t receive</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              Suppressed recipients were skipped on purpose (unsubscribed,
+              bounced, or complained before). Failed recipients hit a hard send
+              error.
+            </p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Reason</TableHead>
+                  <TableHead className="text-right">Count</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {stats.undeliverable.map((u) => (
+                  <TableRow key={`${u.status}:${u.reason}`}>
+                    <TableCell>
+                      <Badge variant={u.status === "skipped" ? "outline" : "destructive"}>
+                        {u.status === "skipped" ? "Suppressed" : "Failed"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{u.reason}</TableCell>
+                    <TableCell className="text-right font-medium">{u.count}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       )}

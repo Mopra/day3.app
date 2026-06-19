@@ -139,6 +139,14 @@ export type Campaign = {
   createdAt: string;
 };
 
+// Why a recipient did not receive the email. `skipped` = suppressed (never
+// attempted); `failed` = hard failure on send (bad address / provider error).
+export type UndeliverableReason = {
+  status: "skipped" | "failed";
+  reason: string;
+  count: number;
+};
+
 export type CampaignStats = {
   total: number;
   pending?: number;
@@ -150,6 +158,7 @@ export type CampaignStats = {
   unsubscribed?: number;
   failed?: number;
   skipped?: number;
+  undeliverable?: UndeliverableReason[];
 };
 
 export type Recipient = {

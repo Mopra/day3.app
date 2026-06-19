@@ -15,13 +15,24 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useApi } from "@/lib/api";
-import { statusLabel, statusVariant } from "@/lib/format";
+import { formatDateTime, statusLabel, statusVariant } from "@/lib/format";
 import type { Account } from "@/lib/types";
+
+type FailedJob = {
+  id: string;
+  jobType: string;
+  entityType: string | null;
+  entityId: string | null;
+  status: string;
+  error: string | null;
+  createdAt: string;
+};
 
 type Overview = {
   accounts: number;
   pausedAccounts: number;
   campaignsByStatus: Record<string, number>;
+  failedJobs: FailedJob[];
 };
 
 export default function AdminOverviewPage() {
@@ -139,6 +150,50 @@ export default function AdminOverviewPage() {
                     <TableCell>
                       {a.monthlyEmailSentCount}/{a.monthlyEmailLimit}
                     </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Recent failed jobs</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!overview ? (
+            <Skeleton className="h-24 w-full" />
+          ) : overview.failedJobs.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              No failed or dead-lettered jobs.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Job</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Entity</TableHead>
+                  <TableHead>Error</TableHead>
+                  <TableHead>When</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {overview.failedJobs.map((j) => (
+                  <TableRow key={j.id}>
+                    <TableCell className="font-medium">{j.jobType}</TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariant(j.status)}>{statusLabel(j.status)}</Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {j.entityType ? `${j.entityType}: ${j.entityId ?? "—"}` : "—"}
+                    </TableCell>
+                    <TableCell className="max-w-72 truncate text-muted-foreground">
+                      {j.error ?? "—"}
+                    </TableCell>
+                    <TableCell>{formatDateTime(j.createdAt)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
