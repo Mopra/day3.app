@@ -3,6 +3,7 @@ import type { Db } from "../db/client";
 import { jobLogs } from "../db/schema";
 import { buildInfo, type BuildInfo } from "./version";
 import type { HeartbeatState } from "./heartbeat";
+import { logger } from "./logger";
 
 // Readiness/health snapshot for the web tier. Three things matter for "is this
 // service actually working":
@@ -18,6 +19,13 @@ import type { HeartbeatState } from "./heartbeat";
 // of rotation". A stale worker is reported as a degraded sub-check (HTTP 200,
 // status "degraded") so the page stays green for the *web* tier but a monitor
 // watching the body can alert on the worker independently.
+//
+// SECURITY: this endpoint is public and unauthenticated, so the response body
+// must never carry raw driver/error text — postgres-js connection errors leak
+// host/IP/port (e.g. `connect ECONNREFUSED <host>:6543`) and auth errors leak
+// the database/username. Sub-check `detail` strings are therefore always generic
+// and constant; the real error is shipped to the log / error sink via
+// `logger.reportError` instead, where redaction already applies.
 
 // The cron sweep runs every 15 minutes; flag it stale well past two missed runs.
 export const CRON_STALE_MS = 40 * 60 * 1000;
@@ -35,13 +43,21 @@ export type HealthReport = {
   timestamp: string;
 };
 
+// Generic, constant detail strings returned to the (public) client. The real
+// driver error is sent to the log / error sink, never the response body.
+const DB_UNREACHABLE_DETAIL = "database unreachable";
+const CRON_CHECK_FAILED_DETAIL = "cron check failed";
+
 async function checkDb(db: Db): Promise<CheckResult> {
   try {
     // Cheapest possible round-trip that proves the connection + auth work.
     await db.execute(sql`select 1`);
     return { ok: true };
   } catch (err) {
-    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+    // Real error (host/IP/port/credentials) goes to the redacted log/error sink
+    // only — the public body gets a generic detail.
+    void logger.reportError("health: db check failed", err);
+    return { ok: false, detail: DB_UNREACHABLE_DETAIL };
   }
 }
 
@@ -57,7 +73,10 @@ async function checkCron(
       columns: { createdAt: true },
     });
   } catch (err) {
-    return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+    // Same as checkDb: keep the driver error out of the public body, send it to
+    // the redacted log/error sink instead.
+    void logger.reportError("health: cron check failed", err);
+    return { ok: false, detail: CRON_CHECK_FAILED_DETAIL };
   }
   if (!lastRun) {
     return { ok: false, detail: "no cron sweep has run yet" };

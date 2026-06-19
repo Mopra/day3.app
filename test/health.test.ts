@@ -24,16 +24,20 @@ async function seedCronRun(db: Db, ageMs: number): Promise<void> {
   });
 }
 
+// A raw driver error mimicking what postgres-js throws on a dead connection —
+// it carries host/IP/port, which must NEVER reach the public response body.
+const RAW_DRIVER_ERROR = "connect ECONNREFUSED 10.0.0.5:6543";
+
 // A Db stand-in whose first DB call throws — simulates Postgres being
 // unreachable without tearing down a real pool.
 const downDb = {
   execute: async () => {
-    throw new Error("connection refused");
+    throw new Error(RAW_DRIVER_ERROR);
   },
   query: {
     jobLogs: {
       findFirst: async () => {
-        throw new Error("connection refused");
+        throw new Error(RAW_DRIVER_ERROR);
       },
     },
   },
@@ -66,12 +70,39 @@ describe("checkHealth", () => {
 
     expect(report.status).toBe("unhealthy");
     expect(report.checks.db.ok).toBe(false);
-    expect(report.checks.db.detail).toMatch(/connection refused/);
+    // The public body must report a generic detail — never the raw driver error,
+    // which carries the DB host/IP/port (information disclosure on a public,
+    // unauthenticated endpoint).
+    expect(report.checks.db.detail).toBe("database unreachable");
+    expect(JSON.stringify(report)).not.toContain("ECONNREFUSED");
+    expect(JSON.stringify(report)).not.toContain("10.0.0.5");
+    expect(JSON.stringify(report)).not.toContain("6543");
     // The cron check is skipped (not run against a dead DB) but still reported.
     expect(report.checks.cron.ok).toBe(false);
     expect(healthHttpStatus(report)).toBe(503);
     // The body still carries build info so a monitor can record which deploy failed.
     expect(report.build.version).toEqual(expect.any(String));
+  });
+
+  it("does not leak the raw driver error when the cron check throws", async () => {
+    // A DB that answers `select 1` but fails the cron query — exercises the
+    // checkCron catch path independently of checkDb.
+    const cronDownDb = {
+      execute: async () => undefined,
+      query: {
+        jobLogs: {
+          findFirst: async () => {
+            throw new Error(RAW_DRIVER_ERROR);
+          },
+        },
+      },
+    } as unknown as Db;
+    const report = await checkHealth({ db: cronDownDb, heartbeat: null });
+    expect(report.checks.db.ok).toBe(true);
+    expect(report.checks.cron.ok).toBe(false);
+    expect(report.checks.cron.detail).toBe("cron check failed");
+    expect(JSON.stringify(report)).not.toContain("ECONNREFUSED");
+    expect(JSON.stringify(report)).not.toContain("10.0.0.5");
   });
 
   it("degrades (200) when the cron sweep is stale", async () => {
