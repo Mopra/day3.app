@@ -12,27 +12,80 @@ import { enforceAccountHealth } from "@/services/health";
 // cert and rejects non-AWS SigningCertURLs — no shared secret needed.
 const validator = new SnsPayloadValidator();
 
+// This route is unauthenticated by design (SNS can't present a bearer token), so
+// it carries its own abuse hardening: a body cap to bound parsing work, a
+// mandatory topic allowlist (SES_SNS_TOPIC_ARN, required in prod by env.ts), and
+// a host allowlist on SubscribeURL to defang SSRF via a forged handshake.
+//
+// A legitimate SNS notification envelope is a few KB; SES event payloads are
+// well under this. 256 KiB leaves generous headroom while rejecting anything
+// large enough to be an abuse attempt before we spend cycles validating it.
+const MAX_BODY_BYTES = 256 * 1024;
+
+// SNS confirmation handshakes only ever point at the regional SNS control plane.
+// We require the SubscribeURL host to be exactly sns.<region>.amazonaws.com so a
+// forged SubscriptionConfirmation can't coerce a fetch to an arbitrary host.
+// (The validator's cert check is the primary defense; this is defense in depth.)
+const SNS_HOST_RE = /^sns\.[a-z0-9-]+\.amazonaws\.com$/;
+
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec => (typeof v === "object" && v !== null ? (v as Rec) : {});
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
+// Structured rejection log. Never includes signature, secret, or body material —
+// only coarse, non-sensitive metadata useful for spotting abuse in aggregate.
+function warnReject(reason: string, fields: Record<string, string | undefined> = {}): void {
+  console.warn(JSON.stringify({ level: "warn", at: "ses-webhook", reason, ...fields }));
+}
+
+function isAllowedSubscribeUrl(rawUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  return url.protocol === "https:" && SNS_HOST_RE.test(url.hostname);
+}
+
 export async function POST(req: NextRequest) {
+  const body = await req.text();
+
+  // Reject oversized bodies before handing them to the signature validator.
+  if (body.length > MAX_BODY_BYTES) {
+    warnReject("body_too_large", { bytes: String(body.length) });
+    return new Response("Payload too large", { status: 413 });
+  }
+
   let payload;
   try {
-    payload = await validator.validate(await req.text());
+    payload = await validator.validate(body);
   } catch {
+    // Forged / unverifiable signature. The validator already declined to fetch a
+    // non-AWS SigningCertURL; we only log a non-sensitive marker here.
+    warnReject("invalid_signature");
     return new Response("Invalid SNS signature", { status: 403 });
   }
 
-  // Optional topic allowlist to reject messages from unexpected topics.
+  // Topic allowlist. SES_SNS_TOPIC_ARN is required in production (env.ts), so
+  // this check is never silently skipped where it matters.
   const expectedTopic = process.env.SES_SNS_TOPIC_ARN;
   if (expectedTopic && payload.TopicArn !== expectedTopic) {
+    warnReject("topic_mismatch", {
+      type: str(payload.Type),
+      received: str(payload.TopicArn),
+    });
     return new Response("Unexpected topic", { status: 403 });
   }
 
   // Confirm the subscription on first handshake.
   if (payload.Type === "SubscriptionConfirmation") {
     if (payload.SubscribeURL) {
+      // SSRF guard: only fetch SubscribeURLs on the regional SNS host.
+      if (!isAllowedSubscribeUrl(payload.SubscribeURL)) {
+        warnReject("subscribe_url_host_rejected");
+        return new Response("Invalid SubscribeURL", { status: 403 });
+      }
       try {
         await fetch(payload.SubscribeURL);
       } catch (err) {

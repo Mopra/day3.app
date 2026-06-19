@@ -23,7 +23,19 @@ const SECRET_KEYS = [
 ] as const;
 
 const saved: Record<string, string | undefined> = {};
-const ALL_KEYS = [...Object.keys(VALID), "EMAIL_PROVIDER", "AWS_REGION"];
+const ALL_KEYS = [
+  ...Object.keys(VALID),
+  "EMAIL_PROVIDER",
+  "AWS_REGION",
+  "SES_SNS_TOPIC_ARN",
+];
+
+// A complete SES config: provider + region + the topic ARN the webhook pins to.
+const SES_OK = {
+  EMAIL_PROVIDER: "ses",
+  AWS_REGION: "eu-north-1",
+  SES_SNS_TOPIC_ARN: "arn:aws:sns:eu-north-1:123456789012:day3-ses-events",
+} as const;
 
 beforeEach(() => {
   for (const k of ALL_KEYS) saved[k] = process.env[k];
@@ -74,15 +86,38 @@ describe("validateEnv", () => {
   });
 
   it("requires AWS_REGION only when EMAIL_PROVIDER=ses", () => {
-    applyEnv({ ...VALID, EMAIL_PROVIDER: "ses" });
+    applyEnv({ ...VALID, EMAIL_PROVIDER: "ses", SES_SNS_TOPIC_ARN: SES_OK.SES_SNS_TOPIC_ARN });
     expect(() => validateEnv()).toThrow(/AWS_REGION/);
 
-    applyEnv({ ...VALID, EMAIL_PROVIDER: "ses", AWS_REGION: "eu-north-1" });
+    applyEnv({ ...VALID, ...SES_OK });
     expect(() => validateEnv()).not.toThrow();
 
     // mock provider doesn't need AWS_REGION
     applyEnv({ ...VALID, EMAIL_PROVIDER: "mock" });
     expect(() => validateEnv()).not.toThrow();
+  });
+
+  it("requires SES_SNS_TOPIC_ARN only when EMAIL_PROVIDER=ses (web tier)", () => {
+    // SES selected but topic ARN missing → reject. The webhook's topic
+    // allowlist must never be silently skipped in production.
+    applyEnv({ ...VALID, EMAIL_PROVIDER: "ses", AWS_REGION: SES_OK.AWS_REGION });
+    expect(() => validateEnv()).toThrow(/SES_SNS_TOPIC_ARN/);
+
+    applyEnv({ ...VALID, ...SES_OK });
+    expect(() => validateEnv()).not.toThrow();
+
+    // mock provider doesn't need the topic ARN
+    applyEnv({ ...VALID, EMAIL_PROVIDER: "mock" });
+    expect(() => validateEnv()).not.toThrow();
+
+    // The worker tier doesn't serve the webhook, so it must not require the ARN.
+    applyEnv({
+      DATABASE_URL: VALID.DATABASE_URL,
+      UNSUBSCRIBE_SECRET: VALID.UNSUBSCRIBE_SECRET,
+      EMAIL_PROVIDER: "ses",
+      AWS_REGION: SES_OK.AWS_REGION,
+    });
+    expect(() => validateEnv("worker")).not.toThrow();
   });
 
   it("aggregates multiple problems into one error", () => {

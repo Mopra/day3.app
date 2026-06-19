@@ -8,7 +8,10 @@
 // Validation is profiled per process, because the two tiers don't use the same
 // secrets:
 //   "web" (Next.js): DATABASE_URL, UNSUBSCRIBE_SECRET, OAUTH_STATE_SECRET,
-//     DNS_TOKEN_ENC_KEY, CLERK_WEBHOOK_SIGNING_SECRET, + AWS_REGION when ses.
+//     DNS_TOKEN_ENC_KEY, CLERK_WEBHOOK_SIGNING_SECRET, + AWS_REGION and
+//     SES_SNS_TOPIC_ARN when ses. The topic ARN is required so the SES/SNS
+//     webhook's topic allowlist is never silently skipped (unauthenticated
+//     route — see app/api/webhooks/ses/route.ts).
 //   "worker" (BullMQ): DATABASE_URL, UNSUBSCRIBE_SECRET, + AWS_REGION when ses.
 //     The worker does no inbound auth, no Cloudflare OAuth, and no DNS-token
 //     decryption, so it doesn't require those secrets.
@@ -40,6 +43,7 @@ const fullSchema = z.object({
   CLERK_WEBHOOK_SIGNING_SECRET: secret("CLERK_WEBHOOK_SIGNING_SECRET"),
   EMAIL_PROVIDER: z.string().optional(),
   AWS_REGION: z.string().optional(), // required only when EMAIL_PROVIDER=ses
+  SES_SNS_TOPIC_ARN: z.string().optional(), // required only when EMAIL_PROVIDER=ses (web tier)
 });
 
 export type Env = z.infer<typeof fullSchema>;
@@ -67,8 +71,24 @@ function sesRegionRefinement(
   }
 }
 
+// The web tier owns the unauthenticated SES/SNS webhook, so it additionally
+// requires SES_SNS_TOPIC_ARN under SES — that ARN is the topic allowlist the
+// route enforces, and skipping it would let any caller's notifications through.
+function sesTopicRefinement(
+  env: { EMAIL_PROVIDER?: string; SES_SNS_TOPIC_ARN?: string },
+  ctx: z.RefinementCtx,
+) {
+  if (env.EMAIL_PROVIDER === "ses" && !env.SES_SNS_TOPIC_ARN) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["SES_SNS_TOPIC_ARN"],
+      message: "SES_SNS_TOPIC_ARN is required when EMAIL_PROVIDER=ses",
+    });
+  }
+}
+
 const schemas = {
-  web: fullSchema.superRefine(sesRegionRefinement),
+  web: fullSchema.superRefine(sesRegionRefinement).superRefine(sesTopicRefinement),
   worker: workerSchema.superRefine(sesRegionRefinement),
 } as const;
 
