@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { ClerkClient } from "@clerk/backend";
 import type { Db } from "../db/client";
 import { accountUsers, accounts, type Account } from "../db/schema";
@@ -8,6 +8,79 @@ import { PLANS, type PlanKey } from "./plans";
 // The Clerk Billing plan slug for the paid plan. Must match the plan
 // configured in the Clerk dashboard.
 export const PAID_PLAN_SLUG = "tiny";
+
+// Local membership roles. Clerk org roles arrive prefixed (e.g. "org:admin");
+// anything that is not an admin is recorded as a plain member.
+export type AccountRole = "admin" | "member";
+
+export function roleFromClerk(clerkRole: string | null | undefined): AccountRole {
+  return clerkRole === "org:admin" || clerkRole === "admin" ? "admin" : "member";
+}
+
+// Upserts the local membership row for (account, user). Race-safe and
+// idempotent: a redelivered webhook or a concurrent first load converges on the
+// same row, and the role/email are reconciled to the latest Clerk state.
+export async function reconcileMembership(
+  db: Db,
+  input: { accountId: string; clerkUserId: string; email: string; role: AccountRole },
+): Promise<void> {
+  const now = nowIso();
+  await db
+    .insert(accountUsers)
+    .values({
+      id: newId("usr"),
+      accountId: input.accountId,
+      clerkUserId: input.clerkUserId,
+      email: input.email.toLowerCase(),
+      role: input.role,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [accountUsers.accountId, accountUsers.clerkUserId],
+      set: { email: input.email.toLowerCase(), role: input.role, updatedAt: now },
+    });
+}
+
+// Removes a single membership (organizationMembership.deleted webhook).
+export async function removeMembership(
+  db: Db,
+  clerkOrgId: string,
+  clerkUserId: string,
+): Promise<void> {
+  const account = await getAccountByClerkOrgId(db, clerkOrgId);
+  if (!account) return;
+  await db
+    .delete(accountUsers)
+    .where(
+      and(eq(accountUsers.accountId, account.id), eq(accountUsers.clerkUserId, clerkUserId)),
+    );
+}
+
+// Removes every membership for an org (organization.deleted webhook) so we never
+// leave dangling members pointing at a deactivated account.
+export async function removeAllMemberships(db: Db, clerkOrgId: string): Promise<void> {
+  const account = await getAccountByClerkOrgId(db, clerkOrgId);
+  if (!account) return;
+  await db.delete(accountUsers).where(eq(accountUsers.accountId, account.id));
+}
+
+// Reconciles a membership from a webhook payload, resolving the account by org.
+// A missing account is fine: it is created lazily on first dashboard load and
+// will reconcile the member then.
+export async function reconcileMembershipByOrg(
+  db: Db,
+  input: { clerkOrgId: string; clerkUserId: string; email: string; role: AccountRole },
+): Promise<void> {
+  const account = await getAccountByClerkOrgId(db, input.clerkOrgId);
+  if (!account) return;
+  await reconcileMembership(db, {
+    accountId: account.id,
+    clerkUserId: input.clerkUserId,
+    email: input.email,
+    role: input.role,
+  });
+}
 
 type AuthLike = {
   userId: string | null;
@@ -72,22 +145,22 @@ export async function syncCurrentOrganization(
     account = (await getAccountByClerkOrgId(db, auth.orgId))!;
   }
 
-  // Record the member locally (idempotent).
+  // Record the member locally, reconciling email and the org role on every sync
+  // (upsert) so a role change in Clerk is reflected and a concurrent first load
+  // does not throw on the unique (account, user) index.
   const user = await clerk.users.getUser(auth.userId);
   const email =
     user.emailAddresses.find((e) => e.id === user.primaryEmailAddressId)?.emailAddress ?? "";
-  await db
-    .insert(accountUsers)
-    .values({
-      id: newId("usr"),
-      accountId: account.id,
-      clerkUserId: auth.userId,
-      email: email.toLowerCase(),
-      role: "member",
-      createdAt: now,
-      updatedAt: now,
-    })
-    .onConflictDoNothing();
+  const membership = await clerk.organizations
+    .getOrganizationMembershipList({ organizationId: auth.orgId, userId: [auth.userId], limit: 1 })
+    .then((res) => res.data[0])
+    .catch(() => undefined);
+  await reconcileMembership(db, {
+    accountId: account.id,
+    clerkUserId: auth.userId,
+    email,
+    role: roleFromClerk(membership?.role),
+  });
 
   return account;
 }
