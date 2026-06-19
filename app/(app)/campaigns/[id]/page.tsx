@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table";
 import { useApi } from "@/lib/api";
 import { formatDateTime, statusLabel, statusVariant } from "@/lib/format";
+import { sanitizeHtml } from "@/services/render";
 import { CampaignForm, type CampaignFormValues } from "@/components/campaign-form";
 import type { Campaign, CampaignStats, Recipient, RiskReview } from "@/lib/types";
 
@@ -205,10 +206,20 @@ export default function CampaignDetailPage() {
               <iframe
                 title="Email preview"
                 sandbox=""
-                srcDoc={campaign.htmlBody}
+                // Show the sanitized HTML (unsupported tags and inline styles
+                // are stripped before sending) so the preview reflects the
+                // formatting subscribers will see. Note this preview does NOT
+                // substitute merge tags and does NOT include the auto-appended
+                // unsubscribe footer — both are applied per-recipient on send.
+                srcDoc={sanitizeHtml(campaign.htmlBody)}
                 className="h-80 w-full border-0"
               />
             </div>
+            <p className="text-xs text-muted-foreground">
+              Preview shows how your email will be formatted after unsupported
+              tags and styles are removed. Merge tags appear as-is, and the
+              unsubscribe footer is added automatically on send.
+            </p>
           </CardContent>
         </Card>
       )}

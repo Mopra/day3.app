@@ -160,6 +160,193 @@ describe("email rendering", () => {
     expect(out.text).toContain("Hello Alice");
     expect(out.text).not.toContain("<p>");
   });
+
+  it("strips <script> tags and event handlers from the HTML", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody:
+          '<p onclick="steal()">Hi</p><script>alert(1)</script><img src="javascript:evil()">',
+      },
+    });
+    expect(out.html).not.toMatch(/<script/i);
+    expect(out.html).not.toContain("alert(1)");
+    expect(out.html).not.toMatch(/onclick/i);
+    expect(out.html).not.toMatch(/javascript:/i);
+    expect(out.html).toContain("Hi");
+    // The script body must not leak into the text fallback either.
+    expect(out.text).not.toContain("alert(1)");
+  });
+
+  it("strips on* handlers hidden behind a '>' inside a quoted attribute", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody:
+          '<img alt="x>" src=y onerror=alert(document.cookie)>',
+      },
+    });
+    expect(out.html).not.toMatch(/onerror/i);
+    expect(out.html).not.toContain("alert(document.cookie)");
+  });
+
+  it("drops tags with an unterminated attribute quote instead of leaking them verbatim", () => {
+    // An unterminated quote makes a quote-aware tag regex fail to find the tag's
+    // closing '>', so a naive sanitizer passes the whole tag through verbatim —
+    // and the appended footer's href="..." closes the dangling quote, leaving a
+    // live onerror handler in the delivered email (stored XSS).
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody: '<img src="x" onerror="alert(document.cookie)" alt="',
+      },
+    });
+    expect(out.html).not.toMatch(/onerror/i);
+    expect(out.html).not.toContain("alert(document.cookie)");
+    // No raw <img ...> tag may survive into the output.
+    expect(out.html).not.toMatch(/<img\b/i);
+    // The footer must still render correctly (i.e. the dangling quote did not
+    // swallow or corrupt the appended unsubscribe link).
+    expect(out.html).toContain("https://app.test/unsubscribe?token=abc");
+  });
+
+  it("keeps verbatim javascript: hrefs out via the same unterminated-quote vector", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody: '<a href="javascript:alert(1)" "',
+      },
+    });
+    expect(out.html).not.toMatch(/javascript:/i);
+    expect(out.html).not.toContain("alert(1)");
+    expect(out.html).not.toMatch(/<a\b[^>]*javascript/i);
+  });
+
+  it("rejects javascript: URLs that are HTML-entity-encoded", () => {
+    const decimal = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody: '<a href="&#106;avascript:alert(1)">x</a>',
+      },
+    });
+    const hex = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody: '<a href="&#x6a;avascript:alert(1)">x</a>',
+      },
+    });
+    expect(decimal.html).not.toMatch(/javascript/i);
+    expect(decimal.html).not.toContain("alert(1)");
+    expect(hex.html).not.toMatch(/javascript/i);
+    expect(hex.html).not.toContain("alert(1)");
+  });
+
+  it("HTML-escapes attacker-controlled merge values so they cannot inject markup", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        subject: "Hi {{first_name}}",
+        htmlBody: "<p>Hello {{first_name}}</p>",
+        textBody: null,
+      },
+      subscriber: {
+        email: "e@x.co",
+        firstName: "<img src=x onerror=alert(1)>",
+        lastName: null,
+      },
+    });
+    // The dangerous markup must be neutralized into inert escaped text, never a
+    // live <img> tag with an onerror handler.
+    expect(out.html).not.toContain("<img src=x");
+    expect(out.html).not.toMatch(/<img[^>]*onerror/i);
+    expect(out.html).toContain("&lt;img src=x");
+    // Subject is a plain-text header, not HTML, so it is not escaped there.
+    expect(out.subject).toBe("Hi <img src=x onerror=alert(1)>");
+  });
+
+  it("blocks javascript: in an href supplied via a merge variable", () => {
+    // The href passes isSafeUrl() during sanitization (it looks like the
+    // relative URL "{{first_name}}"), but substitution then injects an
+    // attacker-controlled scheme. escapeHtml() does not encode ':' so without a
+    // dedicated guard the delivered HTML would be href="javascript:...".
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody: '<a href="{{first_name}}">click</a>',
+      },
+      subscriber: {
+        email: "e@x.co",
+        firstName: "javascript:alert(document.cookie)",
+        lastName: null,
+      },
+    });
+    expect(out.html).not.toMatch(/href="javascript:/i);
+    expect(out.html).not.toMatch(/javascript:/i);
+    expect(out.html).not.toContain("alert(document.cookie)");
+  });
+
+  it("blocks javascript: in an img src supplied via a merge variable", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody: '<img src="{{first_name}}">',
+      },
+      subscriber: {
+        email: "e@x.co",
+        firstName: "javascript:alert(document.cookie)",
+        lastName: null,
+      },
+    });
+    expect(out.html).not.toMatch(/src="javascript:/i);
+    expect(out.html).not.toMatch(/javascript:/i);
+    expect(out.html).not.toContain("alert(document.cookie)");
+  });
+
+  it("drops href/src that embed a merge tag even with a literal prefix", () => {
+    // A partially-literal URL (https://host/?u={{email}}) is still refused,
+    // because the merge value is uncontrolled and substitution happens against
+    // the whole HTML string, defeating any post-substitution re-validation.
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody: '<a href="https://h.test/?u={{email}}">x</a>',
+      },
+      subscriber: { email: "javascript:alert(1)", firstName: null, lastName: null },
+    });
+    expect(out.html).not.toMatch(/javascript:/i);
+    expect(out.html).not.toContain("alert(1)");
+    // The anchor's text content is preserved even though the href is dropped.
+    expect(out.html).toContain(">x</a>");
+  });
+
+  it("guarantees exactly one functioning unsubscribe link", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody:
+          '<p>Body</p><a href="{{unsubscribe_url}}">Opt out</a>',
+      },
+    });
+    const links = out.html.match(/href="https:\/\/app\.test\/unsubscribe\?token=abc"/g) ?? [];
+    expect(links).toHaveLength(1);
+    // The substituted footer link must be present and functional.
+    expect(out.html).toContain('href="https://app.test/unsubscribe?token=abc"');
+    expect(out.html).not.toContain("{{unsubscribe_url}}");
+    // Exactly one unsubscribe entry in the text fallback as well.
+    const textLinks = out.text.match(/https:\/\/app\.test\/unsubscribe\?token=abc/g) ?? [];
+    expect(textLinks).toHaveLength(1);
+  });
 });
 
 describe("send eligibility", () => {
