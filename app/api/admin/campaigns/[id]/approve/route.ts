@@ -3,11 +3,12 @@ import { route, json, HttpError } from "@/api/http";
 import { requireAdmin } from "@/api/context";
 import { campaigns } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
+import { logAdminAction } from "@/lib/admin-audit";
 import { getQueue } from "@/queue/producer";
 
 export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
+  const { db, auth, userEmail } = await requireAdmin();
   const { id } = await params;
-  const { db } = await requireAdmin();
   const campaign = await db.query.campaigns.findFirst({ where: eq(campaigns.id, id) });
   if (!campaign) throw new HttpError(404, "Not found");
   if (campaign.status !== "blocked" && campaign.status !== "pending_review") {
@@ -18,6 +19,14 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
     .update(campaigns)
     .set({ status: "approved", pausedReason: null, updatedAt: nowIso() })
     .where(eq(campaigns.id, campaign.id));
+  await logAdminAction(db, {
+    action: "campaign.approve",
+    actorEmail: userEmail,
+    actorUserId: auth.userId,
+    targetType: "campaign",
+    targetId: campaign.id,
+    details: { accountId: campaign.accountId, fromStatus: campaign.status },
+  });
   await getQueue().send({
     type: "generate_campaign_recipients",
     campaignId: campaign.id,
