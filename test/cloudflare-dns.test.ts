@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { encryptSecret, decryptSecret } from "../src/lib/crypto";
+import { encryptSecret, decryptSecret, keyIdOf } from "../src/lib/crypto";
 import {
   findZone,
   upsertRecord,
@@ -40,6 +40,51 @@ describe("crypto (AES-256-GCM)", () => {
 
   it("throws when no key is configured", async () => {
     await expect(encryptSecret("x", undefined)).rejects.toThrow(/DNS_TOKEN_ENC_KEY/);
+  });
+});
+
+describe("crypto key rotation (versioned ciphertext)", () => {
+  const V1 = Buffer.alloc(32, 1).toString("base64");
+  const V2 = Buffer.alloc(32, 2).toString("base64");
+  // A keyring carrying both keys, encrypting new data under v2.
+  const ring = { keys: { v1: V1, v2: V2 }, activeKeyId: "v2" };
+
+  it("encrypts under the active key id (v2) and tags the ciphertext with it", async () => {
+    const enc = await encryptSecret("token", ring);
+    expect(enc.startsWith("v2.")).toBe(true);
+    expect(keyIdOf(enc)).toBe("v2");
+  });
+
+  it("decrypts ciphertext written under either v1 or v2 while both keys are present", async () => {
+    // v2 ciphertext from the active key.
+    const encV2 = await encryptSecret("new-secret", ring);
+    expect(await decryptSecret(encV2, ring)).toBe("new-secret");
+
+    // v1 ciphertext, as written before the rotation, still decrypts via the keyring.
+    const encV1 = await encryptSecret("old-secret", { keys: { v1: V1 }, activeKeyId: "v1" });
+    expect(keyIdOf(encV1)).toBe("v1");
+    expect(await decryptSecret(encV1, ring)).toBe("old-secret");
+  });
+
+  it("fails closed on an unknown key version (no key for that id)", async () => {
+    const enc = await encryptSecret("secret", { keys: { v9: V1 }, activeKeyId: "v9" });
+    // Keyring lacks v9 → must reject, never returning plaintext.
+    await expect(decryptSecret(enc, ring)).rejects.toThrow(/no key for id "v9"/);
+  });
+
+  it("reads legacy (un-prefixed) ciphertext as key id v1", async () => {
+    // Legacy payloads have no `<id>.` prefix; attribute them to v1.
+    const enc = await encryptSecret("legacy", V1); // bare key → emits "v1." prefix
+    const bare = enc.replace(/^v1\./, ""); // simulate pre-versioning storage
+    expect(keyIdOf(bare)).toBe("v1");
+    expect(await decryptSecret(bare, ring)).toBe("legacy");
+  });
+
+  it("re-encrypts v1 → v2 (the rotation step) and the result decrypts under v2", async () => {
+    const encV1 = await encryptSecret("rotate-me", { keys: { v1: V1 }, activeKeyId: "v1" });
+    const reEncrypted = await encryptSecret(await decryptSecret(encV1, ring), ring);
+    expect(keyIdOf(reEncrypted)).toBe("v2");
+    expect(await decryptSecret(reEncrypted, ring)).toBe("rotate-me");
   });
 });
 
