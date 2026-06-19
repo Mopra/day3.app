@@ -19,6 +19,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useApi } from "@/lib/api";
 import { domainState } from "@/lib/domain";
+import { sanitizeHtml } from "@/services/render";
 import type { Audience, Campaign, SendingDomain } from "@/lib/types";
 
 export type CampaignFormValues = {
@@ -217,6 +218,13 @@ export function CampaignForm({
                 Variables: {"{{first_name}}"}, {"{{last_name}}"}, {"{{email}}"}. An unsubscribe
                 footer is appended automatically.
               </p>
+              <p className="text-xs text-muted-foreground">
+                For deliverability, emails support a limited set of tags
+                (headings, paragraphs, lists, links, images, bold/italic,
+                tables). Other tags and inline <code>style</code> attributes are
+                removed before sending — the Preview tab shows exactly what
+                subscribers receive.
+              </p>
             </TabsContent>
             <TabsContent value="text">
               <Textarea
@@ -231,7 +239,14 @@ export function CampaignForm({
                 <iframe
                   title="Email preview"
                   sandbox=""
-                  srcDoc={htmlBody || "<p style='color:#888'>Nothing to preview yet.</p>"}
+                  // Render the SAME sanitized HTML subscribers receive, so the
+                  // preview never misrepresents the delivered email (stripped
+                  // styles/tags show up here too).
+                  srcDoc={
+                    htmlBody
+                      ? sanitizeHtml(htmlBody)
+                      : "<p style='color:#888'>Nothing to preview yet.</p>"
+                  }
                   className="h-80 w-full border-0"
                 />
               </div>

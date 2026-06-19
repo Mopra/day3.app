@@ -146,10 +146,28 @@ function buildAttrs(tag: string, rawAttrs: string): string {
   return out;
 }
 
+// Renders a single sanitized tag from its parsed parts, applying the tag and
+// attribute allowlists.
+function sanitizeTag(slash: string, name: string, rawAttrs: string): string {
+  const tag = name.toLowerCase();
+  if (!ALLOWED_TAGS.has(tag)) return "";
+  if (slash) return `</${tag}>`;
+  return `<${tag}${buildAttrs(tag, rawAttrs)}>`;
+}
+
 // Minimal HTML sanitizer: drops disallowed tags (keeping their text content),
 // removes the contents of dangerous tags entirely (<script>/<style>/<iframe>),
 // and filters attributes against the allowlist. Not a full DOM parser — it
 // matches the lightweight, dependency-free approach used by htmlToText below.
+//
+// A regex pass alone is unsafe here: a tag with an unterminated attribute quote
+// (e.g. `<img src="x" onerror="..." alt="`) has no reachable `>` for a quote-
+// aware tag regex to match, so the whole tag would pass through VERBATIM —
+// including its live on* handler — and a later-appended `"` (e.g. from the
+// footer's href) closes the dangling quote, yielding stored XSS. So we scan
+// linearly, locate each tag's real `>` terminator while honoring quoted
+// attribute values, and DROP any tag we cannot fully terminate (along with the
+// untrustworthy remainder) rather than emit it raw.
 export function sanitizeHtml(html: string): string {
   // Drop comments and the entire contents of script-like/style/embed tags.
   const cleaned = html
@@ -158,20 +176,57 @@ export function sanitizeHtml(html: string): string {
     // Unclosed dangerous tags: strip from the opening tag to end of input.
     .replace(/<(script|style|iframe|object|embed|noscript|template)\b[\s\S]*$/gi, "");
 
-  // The attribute portion is matched as a sequence of quoted strings and
-  // unquoted runs so that a '>' inside a quoted attribute value does NOT
-  // terminate the tag early. A naive [^>]* stops at the first '>', which lets
-  // input like <img alt="x>" onerror=...> leak a live handler that the client
-  // re-parses as part of the tag.
-  return cleaned.replace(
-    /<\s*(\/?)([a-z][a-z0-9]*)\b((?:"[^"]*"|'[^']*'|[^>"'])*)>/gi,
-    (_match, slash: string, name: string, rawAttrs: string) => {
-      const tag = name.toLowerCase();
-      if (!ALLOWED_TAGS.has(tag)) return "";
-      if (slash) return `</${tag}>`;
-      return `<${tag}${buildAttrs(tag, rawAttrs)}>`;
-    },
-  );
+  let out = "";
+  let i = 0;
+  const len = cleaned.length;
+  while (i < len) {
+    const lt = cleaned.indexOf("<", i);
+    if (lt === -1) {
+      out += cleaned.slice(i);
+      break;
+    }
+    out += cleaned.slice(i, lt);
+
+    // Is this '<' the start of an open/close tag? If not (e.g. "3 < 5"),
+    // neutralize the stray '<' as text and move on.
+    const open = /^<\s*(\/?)([a-z][a-z0-9]*)\b/i.exec(cleaned.slice(lt));
+    if (!open) {
+      out += "&lt;";
+      i = lt + 1;
+      continue;
+    }
+
+    // Find the tag's real terminating '>', skipping any '>' that sits inside a
+    // quoted attribute value. A '>' inside a quoted value must NOT end the tag,
+    // and a quote that never closes means the tag is malformed.
+    let j = lt + open[0].length;
+    let quote: string | null = null;
+    let end = -1;
+    for (; j < len; j++) {
+      const c = cleaned[j];
+      if (quote) {
+        if (c === quote) quote = null;
+      } else if (c === '"' || c === "'") {
+        quote = c;
+      } else if (c === ">") {
+        end = j;
+        break;
+      }
+    }
+
+    if (end === -1) {
+      // Unterminated tag (e.g. a dangling attribute quote). Drop it AND the rest
+      // of the input: nothing after a broken tag can be trusted, and emitting it
+      // verbatim is exactly the bypass we are closing.
+      break;
+    }
+
+    const rawAttrs = cleaned.slice(lt + open[0].length, end);
+    out += sanitizeTag(open[1], open[2], rawAttrs);
+    i = end + 1;
+  }
+
+  return out;
 }
 
 // Removes any user-supplied unsubscribe markup so the canonical footer is the

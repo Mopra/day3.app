@@ -192,6 +192,40 @@ describe("email rendering", () => {
     expect(out.html).not.toContain("alert(document.cookie)");
   });
 
+  it("drops tags with an unterminated attribute quote instead of leaking them verbatim", () => {
+    // An unterminated quote makes a quote-aware tag regex fail to find the tag's
+    // closing '>', so a naive sanitizer passes the whole tag through verbatim —
+    // and the appended footer's href="..." closes the dangling quote, leaving a
+    // live onerror handler in the delivered email (stored XSS).
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody: '<img src="x" onerror="alert(document.cookie)" alt="',
+      },
+    });
+    expect(out.html).not.toMatch(/onerror/i);
+    expect(out.html).not.toContain("alert(document.cookie)");
+    // No raw <img ...> tag may survive into the output.
+    expect(out.html).not.toMatch(/<img\b/i);
+    // The footer must still render correctly (i.e. the dangling quote did not
+    // swallow or corrupt the appended unsubscribe link).
+    expect(out.html).toContain("https://app.test/unsubscribe?token=abc");
+  });
+
+  it("keeps verbatim javascript: hrefs out via the same unterminated-quote vector", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody: '<a href="javascript:alert(1)" "',
+      },
+    });
+    expect(out.html).not.toMatch(/javascript:/i);
+    expect(out.html).not.toContain("alert(1)");
+    expect(out.html).not.toMatch(/<a\b[^>]*javascript/i);
+  });
+
   it("rejects javascript: URLs that are HTML-entity-encoded", () => {
     const decimal = renderCampaignEmail({
       ...input,

@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/table";
 import { useApi } from "@/lib/api";
 import { formatDateTime, statusLabel, statusVariant } from "@/lib/format";
+import { sanitizeHtml } from "@/services/render";
 import { CampaignForm, type CampaignFormValues } from "@/components/campaign-form";
 import type { Campaign, CampaignStats, Recipient, RiskReview } from "@/lib/types";
 
@@ -205,10 +206,17 @@ export default function CampaignDetailPage() {
               <iframe
                 title="Email preview"
                 sandbox=""
-                srcDoc={campaign.htmlBody}
+                // Show the same sanitized HTML subscribers receive (unsupported
+                // tags and inline styles are stripped before sending), so the
+                // preview matches the delivered email.
+                srcDoc={sanitizeHtml(campaign.htmlBody)}
                 className="h-80 w-full border-0"
               />
             </div>
+            <p className="text-xs text-muted-foreground">
+              Preview reflects the sanitized email: unsupported tags and inline
+              styles are removed before sending.
+            </p>
           </CardContent>
         </Card>
       )}
