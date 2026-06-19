@@ -19,13 +19,15 @@ import {
 } from "@/components/ui/table";
 import { useApi } from "@/lib/api";
 import { formatDate, statusLabel, statusVariant } from "@/lib/format";
-import type { Account, AccountHealth, CampaignListItem } from "@/lib/types";
+import { OnboardingChecklist } from "@/components/onboarding-checklist";
+import type { Account, AccountHealth, CampaignListItem, OnboardingState } from "@/lib/types";
 
 export default function DashboardPage() {
   const api = useApi();
   const { organization } = useOrganization();
   const [account, setAccount] = useState<Account | null>(null);
   const [health, setHealth] = useState<AccountHealth | null>(null);
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignListItem[] | null>(null);
 
   useEffect(() => {
@@ -38,6 +40,10 @@ export default function DashboardPage() {
         const res = await api.get<{ account: Account; health: AccountHealth }>("/api/account");
         setAccount(res.account);
         setHealth(res.health);
+        // Onboarding state is computed from the synced account, so fetch it
+        // after sync to reflect the latest billing entitlements.
+        const ob = await api.get<{ onboarding: OnboardingState }>("/api/account/onboarding");
+        setOnboarding(ob.onboarding);
       })
       .catch((err) => toast.error(err.message));
     api
@@ -64,6 +70,23 @@ export default function DashboardPage() {
           <AlertDescription>{account.pausedReason ?? "Contact support."}</AlertDescription>
         </Alert>
       )}
+
+      {/* Billing inactive (but not risk-paused): an actionable next step, not a
+          dead-end. Risk-paused is handled by the alert above. */}
+      {account?.riskStatus !== "paused" && onboarding && !onboarding.billingActive && (
+        <Alert>
+          <AlertTitle>Activate your plan to start sending</AlertTitle>
+          <AlertDescription>
+            Your subscription is not active yet.{" "}
+            <Link href="/billing" className="font-medium underline underline-offset-4">
+              Go to billing
+            </Link>{" "}
+            to subscribe.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {onboarding && <OnboardingChecklist onboarding={onboarding} />}
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
