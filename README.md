@@ -66,7 +66,7 @@ starts consuming.
 | `DATABASE_URL` | ✓ | ✓ | Postgres connection string. |
 | `UNSUBSCRIBE_SECRET` | ✓ | ✓ | HMAC key for unsubscribe / one-click tokens; MUST match across both tiers. `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `OAUTH_STATE_SECRET` | ✓ | — | HMAC key for the Cloudflare OAuth state cookie (CSRF). `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `DNS_TOKEN_ENC_KEY` | ✓ | — | base64 of 32 raw bytes (AES-256) encrypting Cloudflare DNS tokens at rest. `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` |
+| `DNS_TOKEN_ENC_KEY` | ✓† | — | base64 of 32 raw bytes (AES-256) encrypting Cloudflare DNS tokens at rest. `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. †Or `DNS_TOKEN_ENC_KEYS` + `DNS_TOKEN_ENC_ACTIVE_KEY_ID` for rotation — see [docs/cloudflare-dns-oauth.md](docs/cloudflare-dns-oauth.md#key-rotation-encrypt-at-rest). |
 | `CLERK_WEBHOOK_SIGNING_SECRET` | ✓ | — | Verifies Clerk webhooks. Use a ≥16-char placeholder locally. |
 | `AWS_REGION` | ✓* | ✓* | *Required only when `EMAIL_PROVIDER=ses`. |
 
