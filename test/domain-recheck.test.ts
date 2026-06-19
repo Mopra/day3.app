@@ -10,10 +10,24 @@ const RECORDS = [
 ];
 
 function verifiedState(): DomainIdentityState {
-  return { verified: true, verificationStatus: "verified", dkimStatus: "success", records: RECORDS };
+  return {
+    verified: true,
+    verificationStatus: "verified",
+    dkimStatus: "success",
+    mailFromDomain: "send.updates.test.co",
+    mailFromStatus: "success",
+    records: RECORDS,
+  };
 }
 function pendingState(): DomainIdentityState {
-  return { verified: false, verificationStatus: "pending", dkimStatus: "pending", records: RECORDS };
+  return {
+    verified: false,
+    verificationStatus: "pending",
+    dkimStatus: "pending",
+    mailFromDomain: "send.updates.test.co",
+    mailFromStatus: "pending",
+    records: RECORDS,
+  };
 }
 
 // Records which domains the fetcher was asked about, returning a configured state.
@@ -44,6 +58,32 @@ describe("recheckPendingDomains", () => {
     expect(count).toBe(1);
     const row = await db.query.sendingDomains.findFirst({ where: eq(sendingDomains.id, domain.id) });
     expect(row?.verificationStatus).toBe("verified");
+  });
+
+  it("persists a Return-Path (mailFromStatus) change even when verification is unchanged", async () => {
+    const db = await testDb();
+    const account = await seedAccount(db);
+    const domain = await seedDomain(db, account.id, {
+      domain: "updates.test.co",
+      verificationStatus: "pending",
+      dkimStatus: "pending",
+      mailFromStatus: "pending",
+      dnsRecordsJson: JSON.stringify(RECORDS),
+    });
+
+    // Same verification/DKIM status, but the custom MAIL FROM has gone live.
+    const state: DomainIdentityState = {
+      verified: false,
+      verificationStatus: "pending",
+      dkimStatus: "pending",
+      mailFromDomain: "send.updates.test.co",
+      mailFromStatus: "success",
+      records: RECORDS,
+    };
+    await recheckPendingDomains(db, fakeFetcher({ "updates.test.co": state }));
+
+    const row = await db.query.sendingDomains.findFirst({ where: eq(sendingDomains.id, domain.id) });
+    expect(row?.mailFromStatus).toBe("success");
   });
 
   it("leaves a still-pending domain unchanged and reports zero", async () => {

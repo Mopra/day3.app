@@ -47,6 +47,9 @@ const DEFAULTS: Record<string, RateLimitRule> = {
   unsubscribe: { limit: 60, windowMs: 60_000 },
   // Cloudflare OAuth connect start.
   oauth_connect: { limit: 20, windowMs: 60_000 },
+  // Manual domain re-check: each hit calls SES GetEmailIdentity (and possibly a
+  // DoH lookup). Generous enough for impatient clicking, bounded against abuse.
+  domain_recheck: { limit: 12, windowMs: 60_000 },
 };
 
 function parseRule(name: string): RateLimitRule {

@@ -35,7 +35,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useApi } from "@/lib/api";
-import { domainState } from "@/lib/domain";
+import { domainState, recheckWindowExpired } from "@/lib/domain";
 import { formatDate } from "@/lib/format";
 import type { DomainState, SendingDomain } from "@/lib/types";
 
@@ -59,12 +59,26 @@ const STATUS_UI: Record<DomainState, { label: string; icon: typeof CheckCircle2;
 
 function StatusCell({ domain }: { domain: SendingDomain }) {
   const state = domainState(domain);
-  const ui = STATUS_UI[state];
+  // A pending domain past the cron's recheck window has gone stale — the list
+  // must flag it as needing a manual re-check rather than an endless "Verifying…".
+  const stale = recheckWindowExpired(domain);
+  const ui = stale
+    ? { label: "Needs attention", icon: AlertCircle, className: "text-amber-500" }
+    : STATUS_UI[state];
   const Icon = ui.icon;
+  // A verified domain whose optional Return-Path isn't live yet still works, but
+  // there's a deliverability win available — hint at it, understated.
+  const returnPathPending =
+    state === "verified" && !!domain.mailFromStatus && domain.mailFromStatus !== "success";
   return (
-    <span className={`inline-flex items-center gap-1.5 text-sm ${ui.className}`}>
-      <Icon className="size-4" />
-      {ui.label}
+    <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
+      <span className={`inline-flex items-center gap-1.5 ${ui.className}`}>
+        <Icon className="size-4" />
+        {ui.label}
+      </span>
+      {returnPathPending && (
+        <span className="text-xs text-muted-foreground">· Return-Path pending</span>
+      )}
     </span>
   );
 }

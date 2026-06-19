@@ -29,6 +29,13 @@
       "when": 1782000000000,
       "tag": "0003_canonicalize_email_casing",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1782100000000,
+      "tag": "0004_add_mail_from",
+      "breakpoints": true
     }
   ]
 }
