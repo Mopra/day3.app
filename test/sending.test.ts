@@ -204,6 +204,39 @@ describe("send_campaign_batch", () => {
     expect(rows.filter((r) => r.status === "pending")).toHaveLength(3);
   });
 
+  it("never exceeds the monthly limit when two batches run concurrently", async () => {
+    // Near-exhausted account: only 3 sends of quota remain, but 5 recipients
+    // are pending and two batches race for them. With a read-then-write window
+    // both batches would read sentCount=0, each claim 3, and jointly send 6.
+    // The atomic reservation must bound the total at 3.
+    const { db, account, campaign } = await setupSendingCampaign({ limit: 3, sentCount: 0 });
+    const provider = new RecordingProvider();
+    const message = { campaignId: campaign.id, accountId: account.id, batchSize: 5 };
+
+    await Promise.all([
+      sendCampaignBatch(message, deps(db, new FakeQueue(), provider)),
+      sendCampaignBatch(message, deps(db, new FakeQueue(), provider)),
+    ]);
+
+    // The hard invariant: total emails handed to the provider never exceeds the
+    // monthly limit, no matter how the two batches interleave.
+    expect(provider.sent.length).toBeLessThanOrEqual(3);
+
+    const freshAccount = await db.query.accounts.findFirst({
+      where: eq(accounts.id, account.id),
+    });
+    // The counter reflects exactly the emails sent and is itself capped.
+    expect(freshAccount!.monthlyEmailSentCount).toBe(provider.sent.length);
+    expect(freshAccount!.monthlyEmailSentCount).toBeLessThanOrEqual(3);
+
+    // Sent recipients are not double-counted: each sent row is distinct.
+    const sentRows = await db
+      .select()
+      .from(campaignRecipients)
+      .where(eq(campaignRecipients.campaignId, campaign.id));
+    expect(sentRows.filter((r) => r.status === "sent")).toHaveLength(provider.sent.length);
+  });
+
   it("renders unsubscribe links and footer into the sent email", async () => {
     const { db, account, campaign } = await setupSendingCampaign();
     const provider = new RecordingProvider();

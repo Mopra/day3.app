@@ -86,8 +86,17 @@ export async function sendCampaignBatch(
     return;
   }
 
-  const remainingQuota = account.monthlyEmailLimit - account.monthlyEmailSentCount;
-  if (remainingQuota <= 0) {
+  // Atomically *reserve* quota before claiming any rows. The counter is bumped
+  // by up to batchSize in a single conditional statement that can never push
+  // the count past the limit (`LEAST(count + n, limit)`), so two concurrent
+  // BullMQ workers reading the same near-exhausted account can only ever divide
+  // the remaining headroom between them — their reservations sum to at most the
+  // limit. `granted` is how much *this* worker actually won (new count minus
+  // old, captured via a CTE because RETURNING only sees post-update values).
+  // The read above is advisory only; correctness rests on this statement.
+  const claimCount = Number(await reserveQuota(db, account.id, message.batchSize));
+
+  if (claimCount <= 0) {
     await pauseCampaign(db, campaign.id, "Monthly email limit was reached.");
     await logJob(db, {
       jobType: "send_campaign_batch",
@@ -99,15 +108,13 @@ export async function sendCampaignBatch(
     return;
   }
 
-  const claimCount = Math.min(message.batchSize, remainingQuota);
-
-  // Atomic claim: flip up to N pending rows to "sending" in one statement.
-  // A concurrent or retried batch can never claim the same row twice, which
-  // is what makes retries duplicate-free. `FOR UPDATE SKIP LOCKED` on the inner
-  // SELECT is what makes this safe under *true* concurrency (multiple BullMQ
-  // workers): each worker locks and claims a disjoint set of pending rows
-  // instead of two workers racing for the same ids. (Under D1's single writer
-  // this was implicit; on Postgres it must be explicit.)
+  // Atomic claim: flip up to `claimCount` pending rows to "sending" in one
+  // statement. A concurrent or retried batch can never claim the same row
+  // twice, which is what makes retries duplicate-free. `FOR UPDATE SKIP LOCKED`
+  // on the inner SELECT is what makes this safe under *true* concurrency
+  // (multiple BullMQ workers): each worker locks and claims a disjoint set of
+  // pending rows instead of two workers racing for the same ids. (Under D1's
+  // single writer this was implicit; on Postgres it must be explicit.)
   const claimed = await db
     .update(campaignRecipients)
     .set({ status: "sending", lockedAt: nowIso(), updatedAt: nowIso() })
@@ -118,6 +125,14 @@ export async function sendCampaignBatch(
       ),
     )
     .returning();
+
+  // Release the slice of the reservation we couldn't fill with real rows (e.g.
+  // fewer pending recipients than quota allowed). This keeps the counter equal
+  // to actual reserved sends; the per-send reconciliation below handles rows
+  // that are claimed but never sent (suppressed/failed/rate-limited).
+  if (claimed.length < claimCount) {
+    await releaseReservation(db, account.id, claimCount - claimed.length);
+  }
 
   let sent = 0;
   let failed = 0;
@@ -188,31 +203,67 @@ export async function sendCampaignBatch(
 // SEND_BATCH_SIZE emails, so one multi-row insert per flush is plenty.
 const EVENT_INSERT_CHUNK = 100;
 
+// Atomically reserves up to `amount` units of monthly send quota and returns
+// how many were actually granted (0 when the account is at its limit). The CTE
+// captures the pre-update count under a row lock so `granted` is the true
+// new-minus-old delta — RETURNING on its own only exposes post-update values.
+// Doing the read-and-conditional-increment in one statement is what bounds the
+// total across concurrent workers by the limit instead of by a stale read.
+async function reserveQuota(db: Db, accountId: string, amount: number): Promise<number> {
+  const rows = await db.execute<{ granted: number }>(sql`
+    WITH prev AS (
+      SELECT monthly_email_sent_count AS old_count, monthly_email_limit AS lim
+      FROM accounts WHERE id = ${accountId} FOR UPDATE
+    )
+    UPDATE accounts
+    SET monthly_email_sent_count = LEAST(prev.old_count + ${amount}, prev.lim),
+        updated_at = ${nowIso()}
+    FROM prev
+    WHERE accounts.id = ${accountId}
+    RETURNING LEAST(prev.old_count + ${amount}, prev.lim) - prev.old_count AS granted
+  `);
+  const row = (Array.isArray(rows) ? rows[0] : (rows as { rows?: { granted: number }[] }).rows?.[0]) as
+    | { granted: number }
+    | undefined;
+  return Number(row?.granted ?? 0);
+}
+
+// Gives `amount` units of reserved quota back to the account. Quota is reserved
+// atomically up front (see sendCampaignBatch); rows that turn out not to send —
+// suppressed, failed, rate-limited, or claimed-but-rolled-back — release their
+// slice so the counter converges on the number of emails actually sent.
+async function releaseReservation(db: Db, accountId: string, amount: number): Promise<void> {
+  if (amount <= 0) return;
+  await db
+    .update(accounts)
+    .set({
+      // GREATEST guards against the counter dipping below zero if reservations
+      // and releases ever interleave unexpectedly.
+      monthlyEmailSentCount: sql`GREATEST(${accounts.monthlyEmailSentCount} - ${amount}, 0)`,
+      updatedAt: nowIso(),
+    })
+    .where(eq(accounts.id, accountId));
+}
+
 // Flushes the per-batch bookkeeping that we deliberately do NOT write once per
-// email: the usage counter (one increment by the number sent) and the event
-// rows (bulk-inserted). Called at every exit point of the send loop.
+// email: it reconciles the up-front quota reservation against what was actually
+// sent (releasing the unsent slice) and bulk-inserts the event rows.
 //
 // Crash-window tradeoff: each recipient's "sent" status (with its provider
 // message id) is still written immediately, so a crash never re-sends — a
 // retried batch only re-claims "pending" rows. If a crash happens between the
-// last send and this flush, the counter under-counts by at most one batch and
-// some "sent" events are missing; both are acceptable (analytics, and a small
-// rare quota overage) and far cheaper than a hot-row UPDATE per email.
+// last send and this flush, the reservation is *not* released, so the counter
+// over-counts by at most one batch and some "sent" events are missing. Erring
+// toward over-counting (never under) is the safe side of a billing/abuse
+// boundary, and far cheaper than a hot-row UPDATE per email.
 async function flushBatchWrites(
   db: Db,
   accountId: string,
+  reservedCount: number,
   sentCount: number,
   events: (typeof emailEvents.$inferInsert)[],
 ): Promise<void> {
-  if (sentCount > 0) {
-    await db
-      .update(accounts)
-      .set({
-        monthlyEmailSentCount: sql`${accounts.monthlyEmailSentCount} + ${sentCount}`,
-        updatedAt: nowIso(),
-      })
-      .where(eq(accounts.id, accountId));
-  }
+  await releaseReservation(db, accountId, reservedCount - sentCount);
   for (let i = 0; i < events.length; i += EVENT_INSERT_CHUNK) {
     await db.insert(emailEvents).values(events.slice(i, i + EVENT_INSERT_CHUNK));
   }
@@ -355,7 +406,7 @@ async function sendToClaimed(
           ? "Provider daily sending limit reached. Resume tomorrow."
           : "Provider rate limit hit. Resume shortly.";
       await pauseCampaign(db, campaign.id, reason);
-      await flushBatchWrites(db, account.id, sent, pendingEvents);
+      await flushBatchWrites(db, account.id, claimed.length, sent, pendingEvents);
       return { sent, failed, skipped };
     } else if (result.error?.startsWith("E_SENDER_NOT_VERIFIED")) {
       const rest = claimed.slice(i).map((r) => r.id);
@@ -365,7 +416,7 @@ async function sendToClaimed(
         .set({ verificationStatus: "failed", updatedAt: nowIso() })
         .where(eq(sendingDomains.id, campaign.sendingDomainId));
       await pauseCampaign(db, campaign.id, "Sender domain is not verified with the provider.");
-      await flushBatchWrites(db, account.id, sent, pendingEvents);
+      await flushBatchWrites(db, account.id, claimed.length, sent, pendingEvents);
       return { sent, failed, skipped };
     } else {
       const now = nowIso();
@@ -388,6 +439,6 @@ async function sendToClaimed(
     }
   }
 
-  await flushBatchWrites(db, account.id, sent, pendingEvents);
+  await flushBatchWrites(db, account.id, claimed.length, sent, pendingEvents);
   return { sent, failed, skipped };
 }
