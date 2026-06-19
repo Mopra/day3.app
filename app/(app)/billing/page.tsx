@@ -81,11 +81,12 @@ export default function BillingPage() {
                 {account.monthlyEmailSentCount.toLocaleString()} /{" "}
                 {account.monthlyEmailLimit.toLocaleString()} emails this period
               </div>
-              {account.currentPeriodEnd && (
-                <div className="text-muted-foreground">
-                  Renews {formatDate(account.currentPeriodEnd)}
-                </div>
-              )}
+              {account.subscriptionStatus === "active" &&
+                account.currentPeriodEnd && (
+                  <div className="text-muted-foreground">
+                    Renews {formatDate(account.currentPeriodEnd)}
+                  </div>
+                )}
               <Button
                 variant="outline"
                 size="sm"
