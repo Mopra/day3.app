@@ -317,6 +317,15 @@ export const emailEvents = pgTable(
   (t) => [
     index("idx_email_events_campaign_id").on(t.campaignId),
     index("idx_email_events_provider_message_id").on(t.providerMessageId),
+    // SNS delivers at-least-once: the same delivery/bounce/complaint notification
+    // can arrive multiple times. De-dup on (providerMessageId, eventType) so a
+    // redelivery is a no-op insert (see onConflictDoNothing in the SES webhook).
+    // providerMessageId is nullable; Postgres treats NULLs as distinct, so
+    // event types without a message id (e.g. open/click) are unaffected.
+    uniqueIndex("uq_email_events_provider_message_event").on(
+      t.providerMessageId,
+      t.eventType,
+    ),
   ],
 );
 
