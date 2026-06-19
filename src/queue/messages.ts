@@ -32,9 +32,27 @@ export const SEND_BATCH_SIZE = 25;
 // sides reference the same name without pulling in the driver.
 export const QUEUE_NAME = "day3-jobs";
 
-// Retry policy applied to every enqueued job (mirrors the old CF queue's
-// max_retries + backoff). Retries are safe because the handlers are idempotent
-// on DB status; exhausted jobs land in BullMQ's "failed" set (the DLQ).
+// Bounded retry + backoff policy applied to every enqueued job. Retries are
+// safe because handlers are idempotent on DB status, so a re-delivered message
+// never double-sends — a retried `send_campaign_batch` only re-claims rows that
+// are still `pending` (see send-batch.ts). The caps bound Redis memory; the
+// dead-letter row written when a job exhausts `attempts` (see recordDeadLetter
+// in lib/job-log.ts, wired from worker/index.ts) makes exhausted work
+// observable in Postgres instead of only lingering in BullMQ's "failed" set.
+//
+// Per message type, the deliberate failure semantics are:
+//   - send_campaign_batch: THROWS on transient errors (SES/DB/Redis enqueue
+//     blip) → retried up to `attempts` with exponential backoff. Each retry
+//     re-claims only `pending` rows, so duplicates are impossible. After the
+//     last attempt the job is dead-lettered (logged + queryable). Per-recipient
+//     permanent failures (bad address) are recorded as `failed` rows inline and
+//     never throw, so they don't burn the whole batch's retries.
+//   - generate_campaign_recipients / review_campaign: THROW on transient errors
+//     → retried; inserts are dedupe-safe (onConflictDoNothing) so resuming a
+//     crashed attempt can't duplicate.
+//   - process_import: SWALLOWS errors by design (writes import.status='failed'
+//     and returns) → never retried; a retry must not restart a failed import.
+//   - process_email_event: webhook-driven; logged as skipped in the MVP.
 export const DEFAULT_JOB_OPTIONS = {
   attempts: 5,
   backoff: { type: "exponential" as const, delay: 5000 },

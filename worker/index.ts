@@ -12,6 +12,7 @@ import {
 } from "../src/queue/messages";
 import { handleQueueMessage, type QueueDeps } from "../src/queue/consumer";
 import { runScheduledSweeps } from "../src/queue/cron";
+import { recordDeadLetter } from "../src/lib/job-log";
 import { getDb } from "../src/db/client";
 import { emailProviderFromEnv } from "../src/email/factory";
 import { createSupabaseObjectStore } from "../src/lib/supabase-storage";
@@ -80,9 +81,29 @@ const worker = new Worker(
 worker.on("ready", () =>
   console.log(`[worker] ready — queue=${QUEUE_NAME} concurrency=${CONCURRENCY}`),
 );
-worker.on("failed", (job, err) =>
-  console.error(`[worker] job ${job?.name ?? "?"} (${job?.id ?? "?"}) failed:`, err?.message ?? err),
-);
+worker.on("failed", (job, err) => {
+  console.error(
+    `[worker] job ${job?.name ?? "?"} (${job?.id ?? "?"}) failed:`,
+    err?.message ?? err,
+  );
+  // BullMQ fires "failed" on every attempt. Only the final, retries-exhausted
+  // failure is dead-lettered (mirrored to job_logs) so transient retries don't
+  // spam the table; `attemptsMade` reaches the configured `attempts` cap on the
+  // last try. The sweep job never dead-letters (it has no DB-observable entity).
+  if (
+    job &&
+    job.name !== SWEEP_JOB &&
+    job.attemptsMade >= (job.opts.attempts ?? DEFAULT_JOB_OPTIONS.attempts)
+  ) {
+    void recordDeadLetter(deps.db, {
+      jobType: job.name,
+      jobId: job.id,
+      attemptsMade: job.attemptsMade,
+      error: err?.message ?? String(err),
+      payload: job.data,
+    }).catch((logErr) => console.error("[worker] dead-letter record failed:", logErr));
+  }
+});
 worker.on("error", (err) => console.error("[worker] error:", err));
 
 // Repeatable cron sweep every 15 minutes (replaces the CF `scheduled` trigger):
