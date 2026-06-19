@@ -160,6 +160,43 @@ describe("email rendering", () => {
     expect(out.text).toContain("Hello Alice");
     expect(out.text).not.toContain("<p>");
   });
+
+  it("strips <script> tags and event handlers from the HTML", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody:
+          '<p onclick="steal()">Hi</p><script>alert(1)</script><img src="javascript:evil()">',
+      },
+    });
+    expect(out.html).not.toMatch(/<script/i);
+    expect(out.html).not.toContain("alert(1)");
+    expect(out.html).not.toMatch(/onclick/i);
+    expect(out.html).not.toMatch(/javascript:/i);
+    expect(out.html).toContain("Hi");
+    // The script body must not leak into the text fallback either.
+    expect(out.text).not.toContain("alert(1)");
+  });
+
+  it("guarantees exactly one functioning unsubscribe link", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody:
+          '<p>Body</p><a href="{{unsubscribe_url}}">Opt out</a>',
+      },
+    });
+    const links = out.html.match(/href="https:\/\/app\.test\/unsubscribe\?token=abc"/g) ?? [];
+    expect(links).toHaveLength(1);
+    // The substituted footer link must be present and functional.
+    expect(out.html).toContain('href="https://app.test/unsubscribe?token=abc"');
+    expect(out.html).not.toContain("{{unsubscribe_url}}");
+    // Exactly one unsubscribe entry in the text fallback as well.
+    const textLinks = out.text.match(/https:\/\/app\.test\/unsubscribe\?token=abc/g) ?? [];
+    expect(textLinks).toHaveLength(1);
+  });
 });
 
 describe("send eligibility", () => {
