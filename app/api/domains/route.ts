@@ -3,6 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
+import { findDomain } from "@/api/finders";
 import { sendingDomains } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { createDomainIdentity } from "@/services/ses-identity";
@@ -78,6 +79,6 @@ export const POST = route(async (req: NextRequest) => {
     }
   }
 
-  const row = await db.query.sendingDomains.findFirst({ where: eq(sendingDomains.id, id) });
+  const row = await findDomain(db, account.id, id);
   return json({ domain: row }, 201);
 });

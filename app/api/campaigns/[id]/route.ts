@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findCampaign } from "@/api/finders";
@@ -16,7 +16,7 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
   const campaign = await findCampaign(db, account.id, id);
   if (!campaign) throw new HttpError(404, "Not found");
   const review = await db.query.riskReviews.findFirst({
-    where: eq(riskReviews.campaignId, campaign.id),
+    where: and(eq(riskReviews.campaignId, campaign.id), eq(riskReviews.accountId, account.id)),
   });
   return json({
     campaign,
