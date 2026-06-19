@@ -91,7 +91,7 @@ describe("applySubscriptionEvent (primary period source)", () => {
     await applySubscriptionEvent(db, {
       clerkOrgId: "org_primary",
       planSlug: "tiny",
-      active: true,
+      lifecycle: "active",
       periodStart: "2026-06-01T00:00:00.000Z",
       periodEnd: "2026-07-01T00:00:00.000Z",
     });
@@ -113,12 +113,125 @@ describe("applySubscriptionEvent (primary period source)", () => {
     await applySubscriptionEvent(db, {
       clerkOrgId: "org_redelivery",
       planSlug: "tiny",
-      active: true,
+      lifecycle: "active",
       periodStart: "2026-06-01T00:00:00.000Z",
       periodEnd: "2026-07-01T00:00:00.000Z",
     });
 
     const row = await db.query.accounts.findFirst({ where: eq(accounts.id, acc.id) });
     expect(row?.monthlyEmailSentCount).toBe(120);
+  });
+});
+
+describe("applySubscriptionEvent lifecycle (deterministic + idempotent)", () => {
+  const period = {
+    periodStart: "2026-06-01T00:00:00.000Z",
+    periodEnd: "2026-07-01T00:00:00.000Z",
+  };
+
+  it("active -> past_due -> active maps statuses deterministically and is idempotent", async () => {
+    const db = await testDb();
+    const acc = await seedAccount(db, {
+      clerkOrgId: "org_lifecycle",
+      plan: "tiny",
+      subscriptionStatus: "active",
+      sendingEnabled: true,
+      monthlyEmailLimit: 10_000,
+      monthlyEmailSentCount: 4000,
+      currentPeriodStart: period.periodStart,
+      currentPeriodEnd: period.periodEnd,
+    });
+
+    const read = async () =>
+      (await db.query.accounts.findFirst({ where: eq(accounts.id, acc.id) }))!;
+
+    // Payment fails: past_due blocks sending but keeps the plan/limit and usage.
+    await applySubscriptionEvent(db, {
+      clerkOrgId: "org_lifecycle",
+      planSlug: "tiny",
+      lifecycle: "past_due",
+      ...period,
+    });
+    let row = await read();
+    expect(row.subscriptionStatus).toBe("past_due");
+    expect(row.sendingEnabled).toBe(false);
+    expect(row.plan).toBe("tiny");
+    expect(row.monthlyEmailLimit).toBe(10_000);
+    expect(row.monthlyEmailSentCount).toBe(4000);
+
+    // Duplicate past_due redelivery is a no-op (same row).
+    await applySubscriptionEvent(db, {
+      clerkOrgId: "org_lifecycle",
+      planSlug: "tiny",
+      lifecycle: "past_due",
+      ...period,
+    });
+    row = await read();
+    expect(row.subscriptionStatus).toBe("past_due");
+    expect(row.monthlyEmailSentCount).toBe(4000);
+
+    // Payment recovers within the same period: re-activates without zeroing usage.
+    await applySubscriptionEvent(db, {
+      clerkOrgId: "org_lifecycle",
+      planSlug: "tiny",
+      lifecycle: "active",
+      ...period,
+    });
+    row = await read();
+    expect(row.subscriptionStatus).toBe("active");
+    expect(row.sendingEnabled).toBe(true);
+    expect(row.monthlyEmailSentCount).toBe(4000);
+  });
+
+  it("tolerates an out-of-order active redelivery for an already-elapsed period", async () => {
+    const db = await testDb();
+    const acc = await seedAccount(db, {
+      clerkOrgId: "org_ooo",
+      plan: "tiny",
+      subscriptionStatus: "active",
+      sendingEnabled: true,
+      monthlyEmailSentCount: 50,
+      currentPeriodStart: "2026-06-01T00:00:00.000Z",
+      currentPeriodEnd: "2026-07-01T00:00:00.000Z",
+    });
+
+    // A stale "active" for the previous period arrives late. Its period start is
+    // not newer, so it must not zero the current usage.
+    await applySubscriptionEvent(db, {
+      clerkOrgId: "org_ooo",
+      planSlug: "tiny",
+      lifecycle: "active",
+      periodStart: "2026-05-01T00:00:00.000Z",
+      periodEnd: "2026-06-01T00:00:00.000Z",
+    });
+
+    const row = await db.query.accounts.findFirst({ where: eq(accounts.id, acc.id) });
+    expect(row?.monthlyEmailSentCount).toBe(50);
+  });
+
+  it("ended revokes the plan and blocks sending without zeroing usage", async () => {
+    const db = await testDb();
+    const acc = await seedAccount(db, {
+      clerkOrgId: "org_ended",
+      plan: "tiny",
+      subscriptionStatus: "active",
+      sendingEnabled: true,
+      monthlyEmailSentCount: 7,
+      ...period,
+    });
+
+    await applySubscriptionEvent(db, {
+      clerkOrgId: "org_ended",
+      planSlug: "tiny",
+      lifecycle: "ended",
+      ...period,
+    });
+
+    const row = await db.query.accounts.findFirst({ where: eq(accounts.id, acc.id) });
+    expect(row?.subscriptionStatus).toBe("inactive");
+    expect(row?.sendingEnabled).toBe(false);
+    expect(row?.plan).toBe("none");
+    expect(row?.monthlyEmailLimit).toBe(0);
+    expect(row?.monthlyEmailSentCount).toBe(7);
   });
 });

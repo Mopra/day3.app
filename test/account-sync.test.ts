@@ -78,6 +78,35 @@ describe("syncCurrentOrganization", () => {
     expect(members).toHaveLength(1);
   });
 
+  it("never re-activates a stored past_due row from an active session claim", async () => {
+    // Clerk keeps the plan entitlement assigned during the past_due grace window,
+    // so the session reports hasPaidPlan=true. A dashboard/billing reload must NOT
+    // flip the stored past_due row back to active and re-enable sending — that is
+    // deferred to the authoritative subscriptionItem.active webhook.
+    const db = await testDb();
+    const account = await seedAccount(db, {
+      clerkOrgId: "org_pastdue",
+      plan: "tiny",
+      subscriptionStatus: "past_due",
+      sendingEnabled: false,
+    });
+
+    const result = await syncCurrentOrganization(db, fakeClerk({ email: "a@acme.com", role: "org:admin" }), {
+      userId: "user_1",
+      orgId: "org_pastdue",
+      has: () => true, // active plan entitlement still assigned during dunning
+    });
+
+    expect(result.subscriptionStatus).toBe("past_due");
+    expect(result.sendingEnabled).toBe(false);
+
+    const stored = await db.query.accounts.findFirst({
+      where: (t, { eq: e }) => e(t.id, account.id),
+    });
+    expect(stored?.subscriptionStatus).toBe("past_due");
+    expect(stored?.sendingEnabled).toBe(false);
+  });
+
   it("reconciles a changed role on a later sync", async () => {
     const db = await testDb();
 

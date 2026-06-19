@@ -8,6 +8,7 @@ export type Account = {
   subscriptionStatus: string;
   monthlyEmailLimit: number;
   monthlyEmailSentCount: number;
+  currentPeriodEnd: string | null;
   sendingEnabled: boolean;
   riskStatus: string;
   pausedReason: string | null;
