@@ -6,6 +6,7 @@ import {
   getCloudflareOAuthConfig,
   verifyState,
 } from "@/services/cloudflare-oauth";
+import { requireOAuthStateSecret } from "@/lib/env";
 
 // Cloudflare redirects the user back here with ?code&state. We validate state
 // against the signed cookie, exchange the code (PKCE), persist the encrypted
@@ -13,7 +14,7 @@ import {
 export async function GET(req: NextRequest) {
   const url = req.nextUrl;
   const cookie = req.cookies.get(CF_STATE_COOKIE)?.value;
-  const saved = cookie ? await verifyState(cookie, process.env.OAUTH_STATE_SECRET ?? "") : null;
+  const saved = cookie ? await verifyState(cookie, requireOAuthStateSecret()) : null;
   const returnTo = saved?.returnTo ?? "/domains";
 
   const redirectBack = (params: Record<string, string>) => {

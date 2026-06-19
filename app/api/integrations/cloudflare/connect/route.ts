@@ -9,6 +9,7 @@ import {
   randomToken,
   signState,
 } from "@/services/cloudflare-oauth";
+import { requireOAuthStateSecret } from "@/lib/env";
 
 // Only allow same-origin relative paths as the post-connect destination, so the
 // returnTo param can't be turned into an open redirect.
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
     const codeChallenge = await pkceChallenge(codeVerifier);
     const cookie = await signState(
       newStatePayload(account.id, returnTo, codeVerifier, state),
-      process.env.OAUTH_STATE_SECRET ?? "",
+      requireOAuthStateSecret(),
     );
 
     const res = NextResponse.redirect(buildAuthorizeUrl(config, { state, codeChallenge }));
