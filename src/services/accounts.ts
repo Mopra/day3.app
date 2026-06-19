@@ -149,11 +149,16 @@ export async function syncCurrentOrganization(
     account = await getAccountByClerkOrgId(db, auth.orgId);
     if (!account) throw new Error("failed to create account");
   } else {
-    // Don't clobber a webhook-set past_due with a stale "ended" from the session:
-    // when the org has no active claim but we already recorded past_due, leave the
-    // lifecycle (and the plan it was on) as past_due so the user keeps the "fix
-    // payment" CTA and the plan/limit it relates to.
-    const keepPastDue = !hasPaidPlan && account.subscriptionStatus === "past_due";
+    // Never re-activate a stored past_due row from the session. Clerk keeps the
+    // plan entitlement assigned during the past_due dunning/grace window, so
+    // auth.has({plan}) stays true until the subscription transitions to "ended".
+    // If we let an active session claim flip a past_due row back to active here,
+    // /api/account/sync (hit on every dashboard/billing load) would silently set
+    // sendingEnabled:true and let an unpaid org resume sending. Re-activation is
+    // deferred to the authoritative subscriptionItem.active webhook, which carries
+    // the real lifecycle. We keep the recorded past_due plan/limit so the user
+    // still sees the "fix payment" CTA for the plan they owe for.
+    const keepPastDue = account.subscriptionStatus === "past_due";
     const effectivePlan: PlanKey = keepPastDue
       ? (isPlanKey(account.plan) ? account.plan : "none")
       : plan;
