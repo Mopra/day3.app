@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # build/typecheck must not require real infra; env validation reads these.
+      DATABASE_URL: postgres://user:pass@localhost:5432/db
+      UNSUBSCRIBE_SECRET: ci-placeholder-unsubscribe-secret
+      OAUTH_STATE_SECRET: ci-placeholder-oauth-state-secret
+      DNS_TOKEN_ENC_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      CLERK_WEBHOOK_SIGNING_SECRET: ci-placeholder-clerk-secret
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # Migration discipline: schema.ts and the generated migrations must be in
+      # sync. `drizzle-kit generate` is a no-op when they agree; if it writes a
+      # new migration or touches the journal/snapshots, the tree goes dirty and
+      # this step fails — forcing the author to commit (or fix) their migration.
+      - name: Check migrations are in sync with schema.ts
+        run: |
+          npx drizzle-kit generate
+          if [ -n "$(git status --porcelain migrations)" ]; then
+            echo "::error::schema.ts and migrations are out of sync. Run 'npm run db:generate' and commit the result."
+            git status --porcelain migrations
+            git --no-pager diff -- migrations
+            exit 1
+          fi
+
+      - run: npm run typecheck
+
+      - run: npm run lint
+
+      # Applies all migrations from scratch on a fresh pglite DB every run
+      # (test/apply-migrations.ts + test/migrations.test.ts).
+      - run: npm test
+
+      - run: npm run build
