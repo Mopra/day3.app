@@ -7,8 +7,10 @@ import { accounts } from "@/db/schema";
 import { verifyUnsubscribeToken } from "@/services/unsubscribe";
 import { applyUnsubscribe } from "@/services/unsubscribe-action";
 import { requireUnsubscribeSecret } from "@/lib/env";
+import { enforceRateLimit, clientIp } from "@/lib/rate-limit";
 
 export const GET = route(async (req: NextRequest) => {
+  await enforceRateLimit("unsubscribe", clientIp(req));
   const token = req.nextUrl.searchParams.get("token") ?? "";
   const payload = await verifyUnsubscribeToken(token, requireUnsubscribeSecret());
   if (!payload) throw new HttpError(400, "Invalid or expired link");
@@ -23,6 +25,7 @@ export const GET = route(async (req: NextRequest) => {
 const ConfirmSchema = z.object({ token: z.string().min(1) });
 
 export const POST = route(async (req: NextRequest) => {
+  await enforceRateLimit("unsubscribe", clientIp(req));
   // Support both the SPA JSON body and the form-encoded one-click
   // List-Unsubscribe-Post (RFC 8058) flow, which posts to the token URL.
   let token = req.nextUrl.searchParams.get("token") ?? "";

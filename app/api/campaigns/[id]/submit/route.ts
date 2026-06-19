@@ -6,10 +6,12 @@ import { campaigns, subscribers } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 import { checkSendEligibility } from "@/services/plans";
 import { getQueue } from "@/queue/producer";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
   const { id } = await params;
   const { db, account } = await requireAccount();
+  await enforceRateLimit("campaign_submit", account.id);
   const campaign = await findCampaign(db, account.id, id);
   if (!campaign) throw new HttpError(404, "Not found");
 

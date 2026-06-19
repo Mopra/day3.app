@@ -6,12 +6,14 @@ import { newId, nowIso } from "@/lib/ids";
 import { MAX_IMPORT_ROWS } from "@/lib/csv";
 import { putImportObject } from "@/lib/supabase-storage";
 import { getQueue } from "@/queue/producer";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 // CSV import: store the file in Supabase Storage, create the import row, enqueue
 // the process_import job (consumed by the VPS worker).
 export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { params }) => {
   const { id } = await params;
   const { db, account } = await requireAccount();
+  await enforceRateLimit("import", account.id);
   const audience = await findAudience(db, account.id, id);
   if (!audience) throw new HttpError(404, "Not found");
 
