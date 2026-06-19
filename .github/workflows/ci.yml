@@ -13,13 +13,6 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      # build/typecheck must not require real infra; env validation reads these.
-      DATABASE_URL: postgres://user:pass@localhost:5432/db
-      UNSUBSCRIBE_SECRET: ci-placeholder-unsubscribe-secret
-      OAUTH_STATE_SECRET: ci-placeholder-oauth-state-secret
-      DNS_TOKEN_ENC_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
-      CLERK_WEBHOOK_SIGNING_SECRET: ci-placeholder-clerk-secret
     steps:
       - uses: actions/checkout@v4
 
@@ -44,12 +37,38 @@ jobs:
             exit 1
           fi
 
+      # Placeholder secrets so build/typecheck/lint never require real infra:
+      # env validation reads these at module-eval time. Scoped to the steps that
+      # need them and deliberately NOT shared with `npm test` — the test suite is
+      # hermetic, and a job-level DNS_TOKEN_ENC_KEY would leak into the crypto
+      # tests (encryptSecret('x', undefined) would resolve via process.env
+      # instead of rejecting, failing cloudflare-dns.test.ts).
       - run: npm run typecheck
+        env:
+          DATABASE_URL: postgres://user:pass@localhost:5432/db
+          UNSUBSCRIBE_SECRET: ci-placeholder-unsubscribe-secret
+          OAUTH_STATE_SECRET: ci-placeholder-oauth-state-secret
+          DNS_TOKEN_ENC_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          CLERK_WEBHOOK_SIGNING_SECRET: ci-placeholder-clerk-secret
 
       - run: npm run lint
+        env:
+          DATABASE_URL: postgres://user:pass@localhost:5432/db
+          UNSUBSCRIBE_SECRET: ci-placeholder-unsubscribe-secret
+          OAUTH_STATE_SECRET: ci-placeholder-oauth-state-secret
+          DNS_TOKEN_ENC_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          CLERK_WEBHOOK_SIGNING_SECRET: ci-placeholder-clerk-secret
 
+      # No env here on purpose: the suite must run with a clean environment so the
+      # crypto tests that assert "throws when no key is configured" hold.
       # Applies all migrations from scratch on a fresh pglite DB every run
       # (test/apply-migrations.ts + test/migrations.test.ts).
       - run: npm test
 
       - run: npm run build
+        env:
+          DATABASE_URL: postgres://user:pass@localhost:5432/db
+          UNSUBSCRIBE_SECRET: ci-placeholder-unsubscribe-secret
+          OAUTH_STATE_SECRET: ci-placeholder-oauth-state-secret
+          DNS_TOKEN_ENC_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+          CLERK_WEBHOOK_SIGNING_SECRET: ci-placeholder-clerk-secret
