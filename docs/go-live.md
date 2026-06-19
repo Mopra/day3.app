@@ -10,6 +10,29 @@ Always check the AWS console region selector (top-right) is `eu-north-1`.
 
 ---
 
+## Part 0 — Database migrations (run before serving traffic)
+
+Apply the forward-only Drizzle migrations to Supabase **before** promoting a new
+Vercel deployment or restarting the worker, so no release ever runs against an
+old schema. This is the documented deploy-pipeline gate.
+
+1. Point `DATABASE_URL` at the Supabase **direct/session** connection (port
+   `5432`, not the pooler on `6543` — migrations need a real session).
+2. Run:
+   ```bash
+   DATABASE_URL="postgres://…:5432/postgres" npm run db:migrate
+   ```
+   `drizzle-kit migrate` replays only the journal entries not yet recorded in the
+   `__drizzle_migrations` table — it is idempotent, so re-running is safe.
+3. Only after it succeeds: promote the Vercel deployment and
+   `pm2 restart day3-worker` on the VPS.
+
+CI guarantees the migrations match `src/db/schema.ts` (it re-runs
+`drizzle-kit generate` and fails on any diff), so what you apply here is exactly
+what the code expects. See [migration discipline](../README.md#migration-discipline).
+
+---
+
 ## Part 1 — Amazon SES
 
 ### 1A. Create the configuration set `day3-default`

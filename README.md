@@ -45,10 +45,39 @@ the dev console instead of delivering email — the full campaign pipeline
 
 Useful:
 
-- `npm test` — vitest in workerd with real D1 (idempotency tests live here)
+- `npm test` — vitest against real Postgres (pglite); applies migrations from
+  scratch every run and asserts schema/journal/snapshot agree (idempotency tests
+  live here too)
 - `npm run typecheck` / `npm run lint` / `npm run build`
 - `npm run db:generate` — new Drizzle migration after schema changes
 - Trigger cron locally: `curl "http://localhost:5173/cdn-cgi/handler/scheduled?cron=*+*+*+*+*"`
+
+## Migration discipline
+
+`src/db/schema.ts` is the single source of truth; SQL under `migrations/` is
+**forward-only** and generated, never edited by hand. The journal
+(`migrations/meta/_journal.json`) and the per-migration `*_snapshot.json` files
+are part of the migration — always commit them together.
+
+Workflow when you change the schema:
+
+1. Edit `src/db/schema.ts`.
+2. `npm run db:generate` — writes the next `NNNN_*.sql`, its snapshot, and the
+   journal entry.
+3. Review the SQL (squash/rename within the same PR if the diff is noisy), then
+   commit the SQL **and** the `meta/` changes in one commit.
+4. `npm test` proves it applies cleanly from scratch.
+
+CI enforces this: it re-runs `drizzle-kit generate` and fails the build if that
+produces any diff — i.e. if `schema.ts` and the committed migrations disagree, or
+a migration was added without its snapshot. Two contributors who both generate a
+migration will collide on the next `NNNN` index; resolve by regenerating one off
+the merged `schema.ts` so the journal stays linear.
+
+**Apply order in production** is `drizzle-kit migrate` (see the deploy
+checklist), which replays only the un-applied journal entries against
+`DATABASE_URL` and records them in the `__drizzle_migrations` table — never
+`db:push` (which diffs live and can drop columns).
 
 ## Required environment variables
 
@@ -76,17 +105,21 @@ Storage, SES credentials).
 
 ## Going to production (first deploy checklist)
 
-1. `wrangler d1 create newsletter_mvp` → put the id in `wrangler.jsonc`
-2. `wrangler queues create newsletter-jobs` (+ `newsletter-jobs-dlq`)
-3. `wrangler r2 bucket create newsletter-imports`
-4. Secrets: `wrangler secret put CLERK_SECRET_KEY` (+ publishable key,
-   webhook secret, `UNSUBSCRIBE_SECRET`, `ADMIN_EMAILS`)
-5. Set `APP_URL` in `wrangler.jsonc` vars to the production origin
-6. Clerk dashboard: production instance, org Billing plan `tiny`,
-   webhook endpoint `/api/webhooks/clerk`
-7. Real email: `wrangler email sending enable <domain>`, uncomment the
-   `send_email` binding, set `EMAIL_PROVIDER=cloudflare`
-8. `npm run db:migrate:prod && npm run deploy`
+The web tier runs on **Vercel**, the BullMQ worker on the **VPS**, Postgres on
+**Supabase**. Full provider walkthrough: [docs/go-live.md](docs/go-live.md).
+
+1. Provision Supabase Postgres, VPS Redis (`rediss://`), and SES (see go-live).
+2. Set env on Vercel (web) and `/opt/day3/.env.worker` (worker) — see
+   `.env.example` / `.env.worker.example`.
+3. Clerk dashboard: production instance, org Billing plan `tiny`, webhook
+   endpoint `/api/webhooks/clerk`.
+4. **Apply the database migrations before any new code serves traffic:**
+   `DATABASE_URL=<supabase-direct-5432> npm run db:migrate`
+   (`drizzle-kit migrate` — forward-only, idempotent; replays only un-applied
+   journal entries). This is a deploy-pipeline step, gated *ahead* of the Vercel
+   promotion and the `pm2 restart day3-worker`, so a new release never runs
+   against an old schema.
+5. Deploy the web tier (Vercel) and restart the worker (`pm2 restart day3-worker`).
 
 ## Architecture notes
 
