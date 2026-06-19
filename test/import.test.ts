@@ -63,6 +63,44 @@ describe("process_import", () => {
     expect(subs.map((s) => s.email).sort()).toEqual(["alice@example.com", "bob@example.com"]);
   });
 
+  it("skips a Mixed.Case import row when a lowercase suppression exists", async () => {
+    const csv = "email\nMixed.Case@Example.com\nbob@example.com";
+    const { db, store, account, audience, importId } = await createImport(csv);
+    // Suppression added in lowercase; the import row arrives mixed-case.
+    await addSuppression(db, {
+      accountId: account.id,
+      email: "mixed.case@example.com",
+      reason: "unsubscribe",
+    });
+
+    await processImport({ importId, accountId: account.id }, db, store);
+
+    const subs = await db
+      .select()
+      .from(subscribers)
+      .where(eq(subscribers.audienceId, audience.id));
+    // Mixed.Case is suppressed (canonical match) → only bob imported.
+    expect(subs.map((s) => s.email).sort()).toEqual(["bob@example.com"]);
+  });
+
+  it("dedupes two casings of the same address within an audience", async () => {
+    const csv = "email\nMixed.Case@Example.com\nmixed.case@example.com";
+    const { db, store, account, audience, importId } = await createImport(csv);
+
+    await processImport({ importId, accountId: account.id }, db, store);
+
+    const subs = await db
+      .select()
+      .from(subscribers)
+      .where(eq(subscribers.audienceId, audience.id));
+    // Both rows canonicalize to the same email → unique index dedupes to one,
+    // stored in canonical (lowercased) form.
+    expect(subs.map((s) => s.email)).toEqual(["mixed.case@example.com"]);
+
+    const importRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
+    expect(importRow?.importedRows).toBe(1);
+  });
+
   it("does not duplicate existing audience members", async () => {
     const csv = "email\nalice@example.com\nnew@example.com";
     const { db, store, account, audience, importId } = await createImport(csv);

@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { campaignRecipients, campaigns, subscribers } from "../../db/schema";
+import { canonicalizeEmail } from "../../lib/csv";
 import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
 import { getSuppressedEmails } from "../../services/suppression";
@@ -57,7 +58,7 @@ export async function generateCampaignRecipients(
     campaign.accountId,
     audienceMembers.map((s) => s.email),
   );
-  const eligible = audienceMembers.filter((s) => !suppressed.has(s.email.toLowerCase()));
+  const eligible = audienceMembers.filter((s) => !suppressed.has(canonicalizeEmail(s.email)));
 
   const now = nowIso();
   for (let i = 0; i < eligible.length; i += INSERT_CHUNK) {
@@ -70,7 +71,7 @@ export async function generateCampaignRecipients(
           campaignId: campaign.id,
           accountId: campaign.accountId,
           subscriberId: s.id,
-          email: s.email,
+          email: canonicalizeEmail(s.email),
           status: "pending" as const,
           provider: "ses",
           createdAt: now,

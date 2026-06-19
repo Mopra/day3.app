@@ -46,7 +46,7 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (req, { para
 });
 
 const AddSubscriberSchema = z.object({
-  email: z.email().toLowerCase(),
+  email: z.email().trim().toLowerCase(),
   firstName: z.string().trim().max(100).optional(),
   lastName: z.string().trim().max(100).optional(),
 });

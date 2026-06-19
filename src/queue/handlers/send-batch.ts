@@ -10,6 +10,7 @@ import {
   type Campaign,
   type CampaignRecipient,
 } from "../../db/schema";
+import { canonicalizeEmail } from "../../lib/csv";
 import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
 import type { EmailProvider } from "../../email/provider";
@@ -302,7 +303,7 @@ async function sendToClaimed(
   for (let i = 0; i < claimed.length; i++) {
     const recipient = claimed[i];
 
-    if (suppressed.has(recipient.email.toLowerCase())) {
+    if (suppressed.has(canonicalizeEmail(recipient.email))) {
       await db
         .update(campaignRecipients)
         .set({ status: "skipped", error: "suppressed", updatedAt: nowIso() })

@@ -64,6 +64,14 @@ export function countCsvDataRows(content: string): number {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// The single canonical form for an email everywhere it is stored or compared:
+// trimmed + lowercased. Storing the canonical form keeps the (audience_id, email)
+// / (campaign_id, email) unique indexes case-insensitive in practice, and keeps
+// suppression lookups and dedupe filters from mixing raw and lowercased values.
+export function canonicalizeEmail(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 export function isValidEmail(value: string): boolean {
   return value.length <= 320 && EMAIL_RE.test(value);
 }
@@ -142,7 +150,7 @@ export function parseSubscriberCsv(content: string): CsvParseResult {
       if (!col) return;
       const value = (line[i] ?? "").trim();
       if (!value) return;
-      if (col === "email") record.email = value.toLowerCase();
+      if (col === "email") record.email = canonicalizeEmail(value);
       else record[col] = value;
     });
     if (!record.email || !isValidEmail(record.email)) {
