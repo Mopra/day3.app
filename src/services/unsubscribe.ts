@@ -4,7 +4,15 @@ export type UnsubscribeTokenPayload = {
   email: string;
   campaignId?: string;
   campaignRecipientId?: string;
+  /** Issued-at, epoch seconds. Set by signUnsubscribeToken; used to bound token age. */
+  iat?: number;
 };
+
+// Tokens are embedded in every sent email and the List-Unsubscribe header, so a
+// leaked token grants an unsubscribe-others capability. Bound their lifetime so
+// it is not permanent. Default is generous (1 year) to stay compatible with
+// mail clients that surface the List-Unsubscribe link long after delivery.
+export const DEFAULT_UNSUBSCRIBE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
 
 function base64UrlEncode(bytes: Uint8Array): string {
   let binary = "";
@@ -34,7 +42,12 @@ export async function signUnsubscribeToken(
   payload: UnsubscribeTokenPayload,
   secret: string,
 ): Promise<string> {
-  const body = new TextEncoder().encode(JSON.stringify(payload));
+  // Stamp an issued-at (epoch seconds) so the verifier can enforce a max age.
+  const signed: UnsubscribeTokenPayload = {
+    ...payload,
+    iat: payload.iat ?? Math.floor(Date.now() / 1000),
+  };
+  const body = new TextEncoder().encode(JSON.stringify(signed));
   const key = await hmacKey(secret, "sign");
   const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, body));
   return `${base64UrlEncode(body)}.${base64UrlEncode(sig)}`;
@@ -43,6 +56,7 @@ export async function signUnsubscribeToken(
 export async function verifyUnsubscribeToken(
   token: string,
   secret: string,
+  maxAgeSeconds: number = DEFAULT_UNSUBSCRIBE_MAX_AGE_SECONDS,
 ): Promise<UnsubscribeTokenPayload | null> {
   const parts = token.split(".");
   if (parts.length !== 2) return null;
@@ -59,6 +73,11 @@ export async function verifyUnsubscribeToken(
     if (!valid) return null;
     const payload = JSON.parse(new TextDecoder().decode(body)) as UnsubscribeTokenPayload;
     if (!payload.accountId || !payload.subscriberId || !payload.email) return null;
+    // Enforce a bounded lifetime. An unstamped token predates this check and is
+    // treated as over-age (we never issue tokens without iat).
+    if (typeof payload.iat !== "number" || !Number.isFinite(payload.iat)) return null;
+    const ageSeconds = Math.floor(Date.now() / 1000) - payload.iat;
+    if (ageSeconds > maxAgeSeconds) return null;
     return payload;
   } catch {
     return null;
