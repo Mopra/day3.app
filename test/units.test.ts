@@ -8,7 +8,13 @@ import {
 } from "../src/lib/csv";
 import { runDeterministicRiskChecks } from "../src/services/risk";
 import { renderCampaignEmail } from "../src/services/render";
-import { checkSendEligibility } from "../src/services/plans";
+import {
+  checkSendEligibility,
+  entitlementsFor,
+  monthlyEmailLimitForPlan,
+  planFromSlug,
+  subscriptionStatusForLifecycle,
+} from "../src/services/plans";
 import type { Account } from "../src/db/schema";
 
 describe("csv parsing", () => {
@@ -349,6 +355,58 @@ describe("email rendering", () => {
   });
 });
 
+describe("plan slug -> entitlement mapping", () => {
+  it("maps the paid slug to the tiny plan and everything else to none", () => {
+    expect(planFromSlug("tiny")).toBe("tiny");
+    expect(planFromSlug("unknown")).toBe("none");
+    expect(planFromSlug(undefined)).toBe("none");
+    expect(planFromSlug(null)).toBe("none");
+    expect(planFromSlug("")).toBe("none");
+  });
+
+  it("centralizes the per-plan monthly email limit", () => {
+    expect(monthlyEmailLimitForPlan("tiny")).toBe(10_000);
+    expect(monthlyEmailLimitForPlan("none")).toBe(0);
+  });
+
+  it("maps each lifecycle to a deterministic subscription status", () => {
+    expect(subscriptionStatusForLifecycle("active")).toBe("active");
+    expect(subscriptionStatusForLifecycle("past_due")).toBe("past_due");
+    expect(subscriptionStatusForLifecycle("ended")).toBe("inactive");
+  });
+
+  it("active enables sending on a paid plan with the plan's limit", () => {
+    expect(entitlementsFor("tiny", "active")).toEqual({
+      plan: "tiny",
+      subscriptionStatus: "active",
+      monthlyEmailLimit: 10_000,
+      sendingEnabled: true,
+    });
+  });
+
+  it("past_due keeps the plan visible but blocks sending", () => {
+    expect(entitlementsFor("tiny", "past_due")).toEqual({
+      plan: "tiny",
+      subscriptionStatus: "past_due",
+      monthlyEmailLimit: 10_000,
+      sendingEnabled: false,
+    });
+  });
+
+  it("ended revokes the plan and blocks sending", () => {
+    expect(entitlementsFor("none", "ended")).toEqual({
+      plan: "none",
+      subscriptionStatus: "inactive",
+      monthlyEmailLimit: 0,
+      sendingEnabled: false,
+    });
+  });
+
+  it("never re-enables sending on a risk-paused account, even when active", () => {
+    expect(entitlementsFor("tiny", "active", { riskPaused: true }).sendingEnabled).toBe(false);
+  });
+});
+
 describe("send eligibility", () => {
   const account = {
     subscriptionStatus: "active",
@@ -368,6 +426,16 @@ describe("send eligibility", () => {
       subscriptionStatus: "inactive",
     } as Account);
     expect(result.allowed).toBe(false);
+  });
+
+  it("blocks a past_due account with a payment-specific reason", () => {
+    const result = checkSendEligibility({
+      ...account,
+      subscriptionStatus: "past_due",
+      sendingEnabled: false,
+    } as Account);
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) expect(result.reason).toMatch(/past due/i);
   });
 
   it("blocks when sending disabled or over quota", () => {

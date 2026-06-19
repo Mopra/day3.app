@@ -28,7 +28,13 @@ import type { Campaign, CampaignStats, OnboardingState, Recipient, RiskReview } 
 // link rather than a dead-end message.
 function fixLinkFor(reason: string): { href: string; label: string } | null {
   const r = reason.toLowerCase();
-  if (r.includes("subscription") || r.includes("limit") || r.includes("plan")) {
+  if (
+    r.includes("subscription") ||
+    r.includes("limit") ||
+    r.includes("plan") ||
+    r.includes("payment") ||
+    r.includes("billing")
+  ) {
     return { href: "/billing", label: "Go to billing" };
   }
   if (r.includes("domain")) {
