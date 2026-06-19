@@ -1,4 +1,4 @@
-import { and, eq, gt, isNotNull, lt, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { accounts, campaignRecipients, campaigns, sendingDomains } from "../db/schema";
 import { nowIso } from "../lib/ids";
@@ -115,13 +115,16 @@ export async function recheckPendingDomains(
       const state = await fetchIdentity(domain.domain);
       if (
         state.verificationStatus !== domain.verificationStatus ||
-        state.dkimStatus !== domain.dkimStatus
+        state.dkimStatus !== domain.dkimStatus ||
+        state.mailFromStatus !== domain.mailFromStatus
       ) {
         await db
           .update(sendingDomains)
           .set({
             verificationStatus: state.verificationStatus,
             dkimStatus: state.dkimStatus,
+            mailFromDomain: state.mailFromDomain,
+            mailFromStatus: state.mailFromStatus,
             dnsRecordsJson: JSON.stringify(state.records),
             updatedAt: nowIso(),
           })
@@ -146,13 +149,36 @@ async function dailyHealthChecks(db: Db): Promise<void> {
   }
 }
 
-// First day of the month: reset usage counters. Clerk Billing periods are
-// mirrored when webhooks deliver them; the monthly cron is the fallback reset.
-async function resetMonthlyUsage(db: Db): Promise<void> {
-  await db
+// Fallback usage reset. The Clerk `subscriptionItem.active` webhook is the
+// primary period source (it zeroes usage and advances the marker when a new
+// period starts — see applySubscriptionEvent); this monthly cron only catches
+// accounts whose period elapsed without a webhook arriving.
+//
+// To stay billing-correct it resets ONLY accounts whose current period has
+// already ended (currentPeriodEnd in the past, or null for accounts that never
+// received a billing webhook), never the whole table. After resetting it pushes
+// the marker forward by a nominal period so the same elapsed period can't be
+// reset twice — the next webhook overwrites it with the exact boundary.
+const FALLBACK_PERIOD_DAYS = 31;
+export async function resetMonthlyUsage(db: Db, now: Date = new Date()): Promise<number> {
+  const nowMs = now.getTime();
+  const nextEnd = new Date(nowMs + FALLBACK_PERIOD_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const reset = await db
     .update(accounts)
-    .set({ monthlyEmailSentCount: 0, updatedAt: nowIso() })
-    .where(sql`1 = 1`);
+    .set({
+      monthlyEmailSentCount: 0,
+      currentPeriodStart: now.toISOString(),
+      currentPeriodEnd: nextEnd,
+      updatedAt: nowIso(),
+    })
+    .where(
+      or(
+        isNull(accounts.currentPeriodEnd),
+        lt(accounts.currentPeriodEnd, now.toISOString()),
+      ),
+    )
+    .returning({ id: accounts.id });
+  return reset.length;
 }
 
 export type CronDeps = { db: Db; queue: JobQueue };
@@ -175,7 +201,7 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
   if (isDaily) {
     await dailyHealthChecks(db);
     if (now.getUTCDate() === 1) {
-      await resetMonthlyUsage(db);
+      await resetMonthlyUsage(db, now);
     }
   }
 
