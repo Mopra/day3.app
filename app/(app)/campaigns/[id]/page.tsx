@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { toast } from "sonner";
@@ -21,7 +22,23 @@ import { useApi } from "@/lib/api";
 import { formatDateTime, statusLabel, statusVariant } from "@/lib/format";
 import { sanitizeHtml } from "@/services/render";
 import { CampaignForm, type CampaignFormValues } from "@/components/campaign-form";
-import type { Campaign, CampaignStats, Recipient, RiskReview } from "@/lib/types";
+import type { Campaign, CampaignStats, OnboardingState, Recipient, RiskReview } from "@/lib/types";
+
+// Maps a send-blocking condition to the page that fixes it, so the user gets a
+// link rather than a dead-end message.
+function fixLinkFor(reason: string): { href: string; label: string } | null {
+  const r = reason.toLowerCase();
+  if (r.includes("subscription") || r.includes("limit") || r.includes("plan")) {
+    return { href: "/billing", label: "Go to billing" };
+  }
+  if (r.includes("domain")) {
+    return { href: "/domains", label: "Verify a domain" };
+  }
+  if (r.includes("subscriber") || r.includes("audience") || r.includes("recipient")) {
+    return { href: "/audiences", label: "Import subscribers" };
+  }
+  return null;
+}
 
 const STAT_KEYS: (keyof CampaignStats)[] = [
   "pending",
@@ -43,6 +60,7 @@ export default function CampaignDetailPage() {
   const [stats, setStats] = useState<CampaignStats | null>(null);
   const [riskReview, setRiskReview] = useState<RiskReview | null>(null);
   const [recipients, setRecipients] = useState<Recipient[] | null>(null);
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
@@ -56,6 +74,10 @@ export default function CampaignDetailPage() {
         setRiskReview(res.riskReview);
       })
       .catch((err) => toast.error(err.message));
+    api
+      .get<{ onboarding: OnboardingState }>("/api/account/onboarding")
+      .then((res) => setOnboarding(res.onboarding))
+      .catch(() => {});
     api
       .get<{ recipients: Recipient[] }>(`/api/campaigns/${id}/recipients?limit=50`)
       .then((res) => setRecipients(res.recipients))
@@ -97,6 +119,13 @@ export default function CampaignDetailPage() {
   if (!campaign) return <Skeleton className="h-64 w-full" />;
 
   const ownEmail = user?.primaryEmailAddress?.emailAddress;
+  const submittable = campaign.status === "draft" || campaign.status === "approved";
+  // Pre-flight: mirror the submit route's send gates so the user sees an
+  // actionable message (with a fix link) instead of clicking into a raw error.
+  const sendBlocked = submittable && onboarding && !onboarding.canSend ? onboarding : null;
+  const blockFix = sendBlocked?.sendBlockedReason
+    ? fixLinkFor(sendBlocked.sendBlockedReason)
+    : null;
 
   return (
     <div className="space-y-6">
@@ -115,8 +144,11 @@ export default function CampaignDetailPage() {
               Send test to me
             </Button>
           )}
-          {(campaign.status === "draft" || campaign.status === "approved") && (
-            <Button disabled={busy} onClick={() => action("submit", undefined, "Campaign submitted")}>
+          {submittable && (
+            <Button
+              disabled={busy || !!sendBlocked}
+              onClick={() => action("submit", undefined, "Campaign submitted")}
+            >
               Submit & send
             </Button>
           )}
@@ -137,6 +169,24 @@ export default function CampaignDetailPage() {
         <Alert variant="destructive">
           <AlertTitle>{statusLabel(campaign.status)}</AlertTitle>
           <AlertDescription>{campaign.pausedReason}</AlertDescription>
+        </Alert>
+      )}
+
+      {sendBlocked && (
+        <Alert>
+          <AlertTitle>This campaign can&apos;t be sent yet</AlertTitle>
+          <AlertDescription>
+            {sendBlocked.sendBlockedReason}
+            {blockFix && (
+              <>
+                {" "}
+                <Link href={blockFix.href} className="font-medium underline underline-offset-4">
+                  {blockFix.label}
+                </Link>
+                .
+              </>
+            )}
+          </AlertDescription>
         </Alert>
       )}
 

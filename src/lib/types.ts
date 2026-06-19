@@ -25,6 +25,19 @@ export type AccountHealth = {
   reason?: string;
 };
 
+// Server-computed onboarding/send state (mirrors services/onboarding.ts). Drives
+// the dashboard checklist and the actionable send-blocking messages.
+export type OnboardingState = {
+  billingActive: boolean;
+  hasVerifiedDomain: boolean;
+  hasSubscribers: boolean;
+  hasCampaign: boolean;
+  hasSentCampaign: boolean;
+  accountPaused: boolean;
+  canSend: boolean;
+  sendBlockedReason: string | null;
+};
+
 export type SendingDomain = {
   id: string;
   domain: string;
