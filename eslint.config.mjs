@@ -12,6 +12,7 @@ export default tseslint.config(
       "node_modules",
       "worker-configuration.d.ts",
       "migrations",
+      ".claude",
     ],
   },
   js.configs.recommended,
@@ -29,7 +30,12 @@ export default tseslint.config(
     },
   },
   {
-    files: ["src/app/**/*.{ts,tsx}", "src/components/**/*.tsx", "src/hooks/**/*.ts"],
+    files: [
+      "app/**/*.{ts,tsx}",
+      "src/app/**/*.{ts,tsx}",
+      "src/components/**/*.tsx",
+      "src/hooks/**/*.ts",
+    ],
     plugins: { "react-hooks": reactHooks },
     rules: {
       ...reactHooks.configs.recommended.rules,
