@@ -262,6 +262,7 @@ function CloudflareAutoConfig({
   const searchParams = useSearchParams();
   const [connection, setConnection] = useState<CfConnection | null | undefined>(undefined);
   const [configuring, setConfiguring] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [done, setDone] = useState(false);
 
   const loadConnection = useCallback(async () => {
@@ -303,6 +304,20 @@ function CloudflareAutoConfig({
     }
   }, [api, domain.id, onChange, onConfigured]);
 
+  const disconnect = useCallback(async () => {
+    setDisconnecting(true);
+    try {
+      await api.del("/api/integrations/cloudflare");
+      setConnection(null);
+      setDone(false);
+      toast.success("Cloudflare disconnected.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't disconnect Cloudflare");
+    } finally {
+      setDisconnecting(false);
+    }
+  }, [api]);
+
   useEffect(() => {
     loadConnection();
   }, [loadConnection]);
@@ -330,37 +345,59 @@ function CloudflareAutoConfig({
 
   const connectHref = `/api/integrations/cloudflare/connect?returnTo=${encodeURIComponent(`/domains/${domain.id}`)}`;
 
+  // A connection whose token expired and can't be refreshed needs the user to
+  // re-consent (see CloudflareReauthRequiredError on the server). Treat anything
+  // other than "connected" as needing a reconnect rather than offering an action
+  // that will just fail.
+  const expired = connection != null && connection.status !== "connected";
+
+  const heading = !connection
+    ? "On Cloudflare? Skip the copy-paste"
+    : expired
+      ? "Reconnect Cloudflare to continue"
+      : "Configure DNS automatically";
+
+  const description = !connection
+    ? "Connect your Cloudflare account and we'll add these DNS records for you — no manual entry."
+    : expired
+      ? "Your Cloudflare connection expired. Reconnect to let us add these DNS records for you again."
+      : `Connected${connection.label ? ` as ${connection.label}` : ""}. We'll add every record below to your Cloudflare zone for you.`;
+
+  const reconnectButton = (
+    <Button
+      variant={expired ? "default" : "outline"}
+      render={
+        <a href={connectHref}>
+          <Cloud />
+          {connection ? "Reconnect Cloudflare" : "Connect Cloudflare"}
+        </a>
+      }
+    />
+  );
+
   return (
     <div className="rounded-xl border border-primary/20 bg-primary/5 p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
           <Cloud className="size-6 shrink-0 text-primary" />
           <div>
-            <h3 className="font-medium">
-              {connection ? "Configure DNS automatically" : "On Cloudflare? Skip the copy-paste"}
-            </h3>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              {connection
-                ? `Connected${connection.label ? ` as ${connection.label}` : ""}. We'll add every record below to your Cloudflare zone for you.`
-                : "Connect your Cloudflare account and we'll add these DNS records for you — no manual entry."}
-            </p>
+            <h3 className="font-medium">{heading}</h3>
+            <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
           </div>
         </div>
-        <div className="shrink-0">
-          {connection ? (
+        <div className="flex shrink-0 items-center gap-2">
+          {connection && !expired && (
             <Button onClick={configure} disabled={configuring || done}>
               {configuring ? <Loader2 className="animate-spin" /> : <Zap />}
               {done ? "Records added" : configuring ? "Configuring…" : "Configure automatically"}
             </Button>
-          ) : (
-            <Button
-              render={
-                <a href={connectHref}>
-                  <Cloud />
-                  Connect Cloudflare
-                </a>
-              }
-            />
+          )}
+          {(expired || !connection) && reconnectButton}
+          {connection && (
+            <Button variant="ghost" size="sm" onClick={disconnect} disabled={disconnecting}>
+              {disconnecting ? <Loader2 className="animate-spin" /> : null}
+              Disconnect
+            </Button>
           )}
         </div>
       </div>

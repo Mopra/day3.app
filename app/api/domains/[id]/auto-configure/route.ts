@@ -7,7 +7,7 @@ import { nowIso } from "@/lib/ids";
 import { logJob } from "@/lib/job-log";
 import { parseDnsRecords } from "@/lib/domain";
 import { findZone, writeRecords } from "@/services/cloudflare-dns";
-import { getValidAccessToken } from "@/services/cloudflare-oauth";
+import { CloudflareReauthRequiredError, getValidAccessToken } from "@/services/cloudflare-oauth";
 import { getDomainIdentity } from "@/services/ses-identity";
 
 // Write this domain's verification records into the customer's Cloudflare zone
@@ -52,7 +52,18 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
     throw new HttpError(400, "DNS records aren't ready yet — try again in a moment");
   }
 
-  const token = await getValidAccessToken(db, integration);
+  let token: string;
+  try {
+    token = await getValidAccessToken(db, integration);
+  } catch (err) {
+    if (err instanceof CloudflareReauthRequiredError) {
+      throw new HttpError(
+        409,
+        "Your Cloudflare connection has expired. Reconnect Cloudflare, then try again.",
+      );
+    }
+    throw err;
+  }
   const zone = await findZone(token, domain.domain);
   if (!zone) {
     const msg = "We couldn't find this domain in your Cloudflare account";

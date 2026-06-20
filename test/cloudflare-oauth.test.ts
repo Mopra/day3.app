@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import {
+  CloudflareReauthRequiredError,
   fetchUserInfo,
   getCloudflareOAuthConfig,
   getValidAccessToken,
@@ -133,6 +134,44 @@ describe("token storage", () => {
     const after = await db.query.dnsIntegrations.findFirst({ where: eq(dnsIntegrations.accountId, acc.id) });
     expect(await decryptSecret(after!.accessTokenEnc)).toBe("new-access");
     expect(await decryptSecret(after!.refreshTokenEnc)).toBe("new-refresh");
+  });
+
+  it("signals reconnect (not a 500) when expired with no refresh token stored", async () => {
+    // Reproduces the real incident: a connection made before `offline_access` was
+    // requested has an empty refresh token, so once the access token expires it
+    // can never refresh. This must surface as a clean reconnect signal.
+    const db = await testDb();
+    const acc = await seedAccount(db);
+    await saveTokens(db, acc.id, { accessToken: "old", refreshToken: "", expiresAt: past() });
+    const row = await db.query.dnsIntegrations.findFirst({ where: eq(dnsIntegrations.accountId, acc.id) });
+
+    const fetchSpy = vi.fn(async () => { throw new Error("must not hit the token endpoint"); });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    await expect(getValidAccessToken(db, row!)).rejects.toBeInstanceOf(CloudflareReauthRequiredError);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const after = await db.query.dnsIntegrations.findFirst({ where: eq(dnsIntegrations.accountId, acc.id) });
+    expect(after!.status).toBe("expired");
+  });
+
+  it("signals reconnect and marks expired when the refresh token is rejected", async () => {
+    const db = await testDb();
+    const acc = await seedAccount(db);
+    await saveTokens(db, acc.id, { accessToken: "old", refreshToken: "stale-refresh", expiresAt: past() });
+    const row = await db.query.dnsIntegrations.findFirst({ where: eq(dnsIntegrations.accountId, acc.id) });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 400,
+        json: async () => ({ error: "invalid_grant", error_description: "refresh token is invalid" }),
+      })) as unknown as typeof fetch,
+    );
+
+    await expect(getValidAccessToken(db, row!)).rejects.toBeInstanceOf(CloudflareReauthRequiredError);
+    const after = await db.query.dnsIntegrations.findFirst({ where: eq(dnsIntegrations.accountId, acc.id) });
+    expect(after!.status).toBe("expired");
   });
 });
 

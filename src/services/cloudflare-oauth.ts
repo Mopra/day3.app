@@ -182,16 +182,52 @@ export async function saveTokens(
   });
 }
 
+// Thrown when the connection can't yield a usable access token without the user
+// re-consenting: the access token is expired and there is no working refresh
+// token (e.g. the original consent didn't grant one because `offline_access`
+// wasn't requested, or Cloudflare rejected/rotated-out the refresh token). The
+// caller should surface a clean "reconnect Cloudflare" prompt, not a 500.
+export class CloudflareReauthRequiredError extends Error {
+  constructor(message = "Cloudflare connection expired — reconnect required") {
+    super(message);
+    this.name = "CloudflareReauthRequiredError";
+  }
+}
+
+// Mark the connection as needing re-consent so the UI can show a reconnect
+// prompt instead of pretending it's still healthy.
+async function markExpired(db: Db, integrationId: string): Promise<void> {
+  await db
+    .update(dnsIntegrations)
+    .set({ status: "expired", updatedAt: nowIso() })
+    .where(eq(dnsIntegrations.id, integrationId));
+}
+
 // Return a usable access token, transparently refreshing (and persisting the
-// rotated tokens) when the stored one is expired or about to expire.
+// rotated tokens) when the stored one is expired or about to expire. When no
+// refresh is possible, throws CloudflareReauthRequiredError (a clean reconnect
+// signal) rather than letting a token-endpoint failure bubble up as a 500.
 export async function getValidAccessToken(db: Db, integration: DnsIntegration): Promise<string> {
   const expMs = integration.expiresAt ? new Date(integration.expiresAt).getTime() : 0;
   if (expMs - TOKEN_SKEW_MS > Date.now()) {
     return decryptSecret(integration.accessTokenEnc);
   }
-  const config = getCloudflareOAuthConfig();
   const refreshToken = await decryptSecret(integration.refreshTokenEnc);
-  const tokens = await refreshAccessToken(refreshToken, config);
+  if (!refreshToken) {
+    // No refresh token was ever stored — refreshing is impossible.
+    await markExpired(db, integration.id);
+    throw new CloudflareReauthRequiredError();
+  }
+  const config = getCloudflareOAuthConfig();
+  let tokens: CfTokens;
+  try {
+    tokens = await refreshAccessToken(refreshToken, config);
+  } catch (err) {
+    // Refresh token revoked / expired / rejected — the user must reconsent.
+    console.error("[cloudflare-oauth] token refresh failed", err);
+    await markExpired(db, integration.id);
+    throw new CloudflareReauthRequiredError();
+  }
   await saveTokens(db, integration.accountId, tokens, integration.cfAccountLabel);
   return tokens.accessToken;
 }
