@@ -23,6 +23,14 @@ export type QueueMessage =
   | {
       type: "process_email_event";
       eventId: string;
+    }
+  | {
+      // Double opt-in confirmation email for a public-form signup. ID-only: the
+      // worker re-reads the subscriber + form + account, signs the confirm token,
+      // and sends via the account's verified sending domain.
+      type: "send_form_confirmation";
+      subscriberId: string;
+      accountId: string;
     };
 
 export const SEND_BATCH_SIZE = 25;

@@ -96,6 +96,35 @@ export type Subscriber = {
   createdAt: string;
 };
 
+export type SignupForm = {
+  id: string;
+  audienceId: string;
+  slug: string;
+  name: string;
+  status: "active" | "disabled";
+  doubleOptIn: boolean;
+  collectName: boolean;
+  headline: string | null;
+  description: string | null;
+  buttonLabel: string;
+  successMessage: string | null;
+  redirectUrl: string | null;
+  accentColor: string | null;
+  submitCount: number;
+  confirmedCount: number;
+  createdAt: string;
+  updatedAt: string;
+  // Only present on the list endpoint.
+  audienceName?: string | null;
+};
+
+export type FormInstall = {
+  hostedUrl: string;
+  prettyUrl: string | null;
+  iframeSnippet: string;
+  htmlSnippet: string;
+};
+
 export type ImportRow = {
   id: string;
   filename: string;

@@ -35,6 +35,13 @@ export const accounts = pgTable(
 
     companyAddress: text("company_address"),
 
+    // Public, human-readable handle used in hosted signup-form URLs
+    // (go.day3.app/<slug>/<form-slug>). Nullable: generated lazily the first time
+    // an account needs a public surface (see lib/slug.ts). Unique so a slug
+    // resolves to exactly one account; NULLs are allowed to coexist (Postgres
+    // treats them as distinct in a unique index).
+    slug: text("slug").unique(),
+
     createdAt: tstz("created_at").notNull(),
     updatedAt: tstz("updated_at").notNull(),
   },
@@ -136,7 +143,13 @@ export const audiences = pgTable(
 );
 
 export const SUBSCRIBER_STATUSES = [
+  // Confirmed and mailable — the only status generate-recipients includes.
   "subscribed",
+  // Awaiting double opt-in confirmation (public signup form). NEVER mailed a
+  // campaign: generate-recipients filters strictly on status='subscribed', so a
+  // pending row is structurally excluded until it confirms. Protects sender
+  // reputation against bot/typo signups on public forms.
+  "pending",
   "unsubscribed",
   "bounced",
   "complained",
@@ -155,7 +168,15 @@ export const subscribers = pgTable(
     lastName: text("last_name"),
     status: text("status").$type<SubscriberStatus>().notNull().default("subscribed"),
     source: text("source"),
+    // The signup form that captured this subscriber (null for import/manual adds).
+    formId: text("form_id"),
     importedAt: tstz("imported_at"),
+    // Double opt-in: when the subscriber clicked the confirmation link (pending →
+    // subscribed). Null while pending or for non-form sources.
+    confirmedAt: tstz("confirmed_at"),
+    // Consent proof captured at signup (GDPR): the submitter's IP. Stored only
+    // for form signups.
+    consentIp: text("consent_ip"),
     unsubscribedAt: tstz("unsubscribed_at"),
     createdAt: tstz("created_at").notNull(),
     updatedAt: tstz("updated_at").notNull(),
@@ -165,6 +186,56 @@ export const subscribers = pgTable(
     index("idx_subscribers_account_audience").on(t.accountId, t.audienceId),
     index("idx_subscribers_audience_status").on(t.audienceId, t.status),
     index("idx_subscribers_email").on(t.email),
+  ],
+);
+
+export const FORM_STATUSES = ["active", "disabled"] as const;
+export type FormStatus = (typeof FORM_STATUSES)[number];
+
+// A hosted/embeddable newsletter signup form. One Form is the single primitive
+// behind every public surface (hosted page at go.day3.app/f/<id>, the pretty
+// share URL go.day3.app/<account-slug>/<slug>, the iframe embed, and the raw
+// HTML snippet) — they all funnel into POST /api/public/forms/<id>/submit. The
+// presentation/behaviour fields below render the hosted page and gate the
+// double opt-in flow.
+export const forms = pgTable(
+  "forms",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    // The audience captured signups land in.
+    audienceId: text("audience_id").notNull(),
+    // Per-account URL handle (go.day3.app/<account-slug>/<slug>). Stable id URL
+    // (/f/<id>) is used for embeds so a rename never breaks a live embed.
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    status: text("status").$type<FormStatus>().notNull().default("active"),
+
+    // Confirmed opt-in. ON by default for public forms — protects deliverability
+    // (a pending signup is never mailed a campaign). Toggleable per form.
+    doubleOptIn: boolean("double_opt_in").notNull().default(true),
+
+    // Presentation (hosted page + iframe render).
+    headline: text("headline"),
+    description: text("description"),
+    buttonLabel: text("button_label").notNull().default("Subscribe"),
+    successMessage: text("success_message"),
+    // Optional: where to send the browser after a successful submit instead of
+    // the hosted thank-you/check-inbox screen.
+    redirectUrl: text("redirect_url"),
+    collectName: boolean("collect_name").notNull().default(false),
+    accentColor: text("accent_color"),
+
+    // Denormalized counters for the dashboard (best-effort, incremented inline).
+    submitCount: integer("submit_count").notNull().default(0),
+    confirmedCount: integer("confirmed_count").notNull().default(0),
+
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_forms_account_slug").on(t.accountId, t.slug),
+    index("idx_forms_account_id").on(t.accountId),
   ],
 );
 
@@ -395,6 +466,7 @@ export type SendingDomain = typeof sendingDomains.$inferSelect;
 export type DnsIntegration = typeof dnsIntegrations.$inferSelect;
 export type Audience = typeof audiences.$inferSelect;
 export type Subscriber = typeof subscribers.$inferSelect;
+export type Form = typeof forms.$inferSelect;
 export type Import = typeof imports.$inferSelect;
 export type Campaign = typeof campaigns.$inferSelect;
 export type CampaignRecipient = typeof campaignRecipients.$inferSelect;

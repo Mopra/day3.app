@@ -45,11 +45,20 @@ const DEFAULTS: Record<string, RateLimitRule> = {
   campaign_submit: { limit: 20, windowMs: 60_000 },
   // Public unsubscribe lookup/confirm (unauthenticated, keyed by IP).
   unsubscribe: { limit: 60, windowMs: 60_000 },
+  // Public signup-form submit (unauthenticated, keyed by IP). Bounds bot floods
+  // hitting a public form; double opt-in is the real reputation guard, this just
+  // caps volume per source.
+  form_submit: { limit: 20, windowMs: 60_000 },
+  // Public confirmation-link clicks (unauthenticated, keyed by IP).
+  form_confirm: { limit: 60, windowMs: 60_000 },
   // Cloudflare OAuth connect start.
   oauth_connect: { limit: 20, windowMs: 60_000 },
   // Manual domain re-check: each hit calls SES GetEmailIdentity (and possibly a
   // DoH lookup). Generous enough for impatient clicking, bounded against abuse.
   domain_recheck: { limit: 12, windowMs: 60_000 },
+  // AI assist (draft/subjects/preview-text/rewrite): each hit is a paid LLM call
+  // via OpenRouter. Generous for normal composing, bounded against cost abuse.
+  ai: { limit: 20, windowMs: 60_000 },
 };
 
 function parseRule(name: string): RateLimitRule {

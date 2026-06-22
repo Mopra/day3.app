@@ -36,6 +36,13 @@
       "when": 1782100000000,
       "tag": "0004_add_mail_from",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1782162229790,
+      "tag": "0005_curvy_the_watchers",
+      "breakpoints": true
     }
   ]
 }

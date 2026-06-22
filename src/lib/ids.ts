@@ -6,6 +6,7 @@ export type IdPrefix =
   | "dom"
   | "aud"
   | "sub"
+  | "frm"
   | "imp"
   | "cmp"
   | "rcp"
