@@ -123,6 +123,8 @@ export type FormInstall = {
   prettyUrl: string | null;
   iframeSnippet: string;
   htmlSnippet: string;
+  inlineSnippet: string;
+  popupSnippet: string;
 };
 
 export type ImportRow = {

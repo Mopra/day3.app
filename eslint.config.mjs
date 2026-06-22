@@ -13,6 +13,9 @@ export default tseslint.config(
       "worker-configuration.d.ts",
       "migrations",
       ".claude",
+      // Hand-written static browser scripts served as-is (own IIFE, browser
+      // globals) — not part of the TS source graph.
+      "public/**/*.js",
     ],
   },
   js.configs.recommended,

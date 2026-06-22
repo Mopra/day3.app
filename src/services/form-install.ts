@@ -8,6 +8,8 @@ export type FormInstall = {
   prettyUrl: string | null; // human-friendly share link (needs an account slug)
   iframeSnippet: string; // recommended embed (works in every no-code builder)
   htmlSnippet: string; // raw <form> for full control / no-JS
+  inlineSnippet: string; // JS widget, rendered inline where the div sits
+  popupSnippet: string; // JS widget, opens as a modal on click
 };
 
 export function buildFormInstall(form: Form, accountSlug: string | null): FormInstall {
@@ -47,7 +49,20 @@ export function buildFormInstall(form: Form, accountSlug: string | null): FormIn
   <button type="submit">${escapeText(form.buttonLabel)}</button>
 </form>`;
 
-  return { hostedUrl, prettyUrl, iframeSnippet, htmlSnippet };
+  // JS widget (embed.js): convenience over the iframe — supports inline render
+  // and click/auto popups. Loads the form from its own <script> origin.
+  const scriptUrl = `${base}/embed.js`;
+  const inlineSnippet = `<div data-day3-form="${form.id}"></div>
+<script src="${scriptUrl}" async></script>`;
+  const popupSnippet = `<button data-day3-form="${form.id}" data-day3-mode="popup">${escapeText(form.buttonLabel)}</button>
+<script src="${scriptUrl}" async></script>
+
+<!-- Or open automatically instead of on click — put this on any element:
+     data-day3-trigger="delay:5000"   (after 5s)
+     data-day3-trigger="exit-intent"  (when leaving)
+     data-day3-trigger="scroll:50"    (after scrolling 50%) -->`;
+
+  return { hostedUrl, prettyUrl, iframeSnippet, htmlSnippet, inlineSnippet, popupSnippet };
 }
 
 function escapeAttr(value: string): string {

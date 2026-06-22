@@ -321,6 +321,7 @@ export default function FormDetailPage() {
                 <TabsList>
                   <TabsTrigger value="share">Share link</TabsTrigger>
                   <TabsTrigger value="embed">Embed</TabsTrigger>
+                  <TabsTrigger value="popup">Popup</TabsTrigger>
                   <TabsTrigger value="html">HTML</TabsTrigger>
                 </TabsList>
 
@@ -347,6 +348,15 @@ export default function FormDetailPage() {
                   </p>
                   <Snippet code={install.iframeSnippet} />
                   <CopyButton value={install.iframeSnippet} label="Copy embed code" />
+                </TabsContent>
+
+                <TabsContent value="popup" className="space-y-3 pt-4">
+                  <p className="text-sm text-muted-foreground">
+                    A button that opens the form in a modal — or trigger it automatically on exit
+                    intent, a delay, or scroll depth. Needs JavaScript on the page.
+                  </p>
+                  <Snippet code={install.popupSnippet} />
+                  <CopyButton value={install.popupSnippet} label="Copy popup code" />
                 </TabsContent>
 
                 <TabsContent value="html" className="space-y-3 pt-4">
