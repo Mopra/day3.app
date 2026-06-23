@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,16 @@ export default function LandingPage() {
     <main className="flex min-h-screen flex-col items-center justify-center px-4">
       <div className="max-w-2xl space-y-8 text-center">
         <div className="space-y-4">
-          <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">Day3</h1>
+          <h1 className="flex justify-center">
+            <span className="sr-only">Day3</span>
+            <Image
+              src="/day3-lockup-light.svg"
+              alt="Day3"
+              width={235}
+              height={60}
+              priority
+            />
+          </h1>
           <p className="mx-auto max-w-lg text-lg text-muted-foreground">
             Simple product update emails for small SaaS teams.
             <br />

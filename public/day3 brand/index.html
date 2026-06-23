@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>day3 — logo exports</title>
+<style>
+  :root { --esp:#2B2019; --car:#C28A4D; --cream:#F6F0E3; --board:#E7E1D4; --stone:#6F6555; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--board); color:var(--esp);
+    font-family:'Helvetica Neue',Helvetica,Arial,sans-serif; padding:56px; }
+  h1 { font-size:30px; letter-spacing:-.01em; margin:0 0 4px; }
+  .sub { color:var(--stone); font-size:15px; margin:0 0 40px; max-width:560px; line-height:1.5; }
+  .eyebrow { font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:#8A7E6C; font-weight:600; margin:0 0 12px; }
+  .grid { display:flex; flex-wrap:wrap; gap:20px; margin-bottom:40px; }
+  .card { background:var(--cream); border-radius:3px; box-shadow:0 1px 3px rgba(43,32,25,.10);
+    padding:28px; display:flex; align-items:center; justify-content:center; min-height:140px; }
+  .card.dark { background:var(--esp); }
+  .card img { display:block; }
+  .name { font-size:11px; color:var(--stone); margin-top:8px; }
+  .item { display:flex; flex-direction:column; }
+  code { font-family:ui-monospace,Menlo,Consolas,monospace; }
+  .snippet { background:#2B2019; color:#E7DECB; border-radius:6px; padding:22px 24px;
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; line-height:1.7;
+    white-space:pre; overflow:auto; max-width:760px; }
+  .snippet .c { color:#9A8C72; }
+</style>
+</head>
+<body>
+  <h1>day3 — logo exports</h1>
+  <p class="sub">Scalable SVGs for the web plus PNGs at every standard size. Use SVGs wherever possible; fall back to PNGs for favicons and app icons.</p>
+
+  <p class="eyebrow">Logomark</p>
+  <div class="grid">
+    <div class="item"><div class="card"><img src="day3-mark.svg" width="178" height="50" alt=""></div><div class="name">day3-mark.svg</div></div>
+    <div class="item"><div class="card dark"><img src="day3-mark-light.svg" width="178" height="50" alt=""></div><div class="name">day3-mark-light.svg</div></div>
+  </div>
+
+  <p class="eyebrow">Lockup</p>
+  <div class="grid">
+    <div class="item"><div class="card"><img src="day3-lockup.svg" width="235" height="60" alt=""></div><div class="name">day3-lockup.svg</div></div>
+    <div class="item"><div class="card dark"><img src="day3-lockup-light.svg" width="235" height="60" alt=""></div><div class="name">day3-lockup-light.svg</div></div>
+  </div>
+
+  <p class="eyebrow">App icon &amp; favicon</p>
+  <div class="grid">
+    <div class="item"><div class="card"><img src="day3-icon.svg" width="96" height="96" alt=""></div><div class="name">day3-icon.svg</div></div>
+    <div class="item"><div class="card"><img src="day3-icon-cream.svg" width="96" height="96" alt=""></div><div class="name">day3-icon-cream.svg</div></div>
+    <div class="item"><div class="card"><img src="apple-touch-icon.png" width="80" height="80" alt=""></div><div class="name">apple-touch-icon.png · 180</div></div>
+    <div class="item"><div class="card"><img src="favicon-32.png" width="32" height="32" alt=""></div><div class="name">favicon-32.png</div></div>
+    <div class="item"><div class="card"><img src="favicon-16.png" width="16" height="16" alt=""></div><div class="name">favicon-16.png</div></div>
+  </div>
+
+  <p class="eyebrow">Drop into your &lt;head&gt;</p>
+  <div class="snippet"><span class="c">&lt;!-- modern browsers --&gt;</span>
+&lt;link rel="icon" href="/favicon.svg" type="image/svg+xml"&gt;
+&lt;link rel="icon" href="/favicon-32.png" sizes="32x32"&gt;
+&lt;link rel="icon" href="/favicon-16.png" sizes="16x16"&gt;
+&lt;link rel="apple-touch-icon" href="/apple-touch-icon.png"&gt;
+<span class="c">&lt;!-- PWA manifest references icon-192 / icon-512 / icon-maskable-512 --&gt;</span></div>
+</body>
+</html>

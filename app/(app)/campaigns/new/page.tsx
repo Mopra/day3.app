@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { useApi } from "@/lib/api";
-import { CampaignForm, type CampaignFormValues } from "@/components/campaign-form";
+import { CampaignComposer, type CampaignFormValues } from "@/components/campaign-composer";
 
 export default function CampaignNewPage() {
   const api = useApi();
@@ -18,7 +18,7 @@ export default function CampaignNewPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">New campaign</h1>
-      <CampaignForm onSave={onSave} submitLabel="Save draft" />
+      <CampaignComposer onSave={onSave} submitLabel="Save draft" />
     </div>
   );
 }

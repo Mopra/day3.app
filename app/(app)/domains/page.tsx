@@ -10,7 +10,6 @@ import {
   ChevronRight,
   Clock,
   Globe,
-  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -26,6 +25,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { OrbitLoader } from "@/components/ui/orbit-loader";
 import {
   Table,
   TableBody,
@@ -194,7 +194,7 @@ export default function DomainsPage() {
                 </p>
               </div>
               <Button type="submit" disabled={formState.isSubmitting} className="w-full">
-                {formState.isSubmitting && <Loader2 className="animate-spin" />}
+                {formState.isSubmitting && <OrbitLoader size={16} />}
                 Add domain
               </Button>
             </form>

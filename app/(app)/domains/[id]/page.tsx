@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Trash2 } from "lucide-react";
+import { ArrowLeft, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { OrbitLoader } from "@/components/ui/orbit-loader";
 import { DomainSetupGuide } from "@/components/domain-setup-guide";
 import { ApiError, useApi } from "@/lib/api";
 import { domainState } from "@/lib/domain";
@@ -121,7 +122,7 @@ export default function DomainDetailPage() {
                 <DialogFooter>
                   <DialogClose render={<Button variant="outline">Cancel</Button>} />
                   <Button variant="destructive" onClick={remove} disabled={removing}>
-                    {removing ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                    {removing ? <OrbitLoader size={16} /> : <Trash2 />}
                     Remove domain
                   </Button>
                 </DialogFooter>

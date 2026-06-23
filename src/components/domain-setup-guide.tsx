@@ -10,13 +10,13 @@ import {
   Cloud,
   Copy,
   ExternalLink,
-  Loader2,
   RefreshCw,
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { OrbitLoader } from "@/components/ui/orbit-loader";
 import { CopyButton, copyText } from "@/components/copy-button";
 import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -388,14 +388,14 @@ function CloudflareAutoConfig({
         <div className="flex shrink-0 items-center gap-2">
           {connection && !expired && (
             <Button onClick={configure} disabled={configuring || done}>
-              {configuring ? <Loader2 className="animate-spin" /> : <Zap />}
+              {configuring ? <OrbitLoader size={16} /> : <Zap />}
               {done ? "Records added" : configuring ? "Configuring…" : "Configure automatically"}
             </Button>
           )}
           {(expired || !connection) && reconnectButton}
           {connection && (
             <Button variant="ghost" size="sm" onClick={disconnect} disabled={disconnecting}>
-              {disconnecting ? <Loader2 className="animate-spin" /> : null}
+              {disconnecting ? <OrbitLoader size={16} /> : null}
               Disconnect
             </Button>
           )}
@@ -483,7 +483,7 @@ function StatusHero({
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
             {checking ? (
               <span className="flex items-center gap-1.5">
-                <Loader2 className="size-3 animate-spin" /> Checking now…
+                <OrbitLoader size={14} /> Checking now…
               </span>
             ) : lastChecked ? (
               <span>Last checked {ago(lastChecked)}</span>
@@ -491,7 +491,7 @@ function StatusHero({
           </div>
         </div>
         <Button onClick={onCheck} disabled={checking} className="shrink-0">
-          {checking ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          {checking ? <OrbitLoader size={16} /> : <RefreshCw />}
           Re-check now
         </Button>
       </div>
@@ -518,7 +518,7 @@ function StatusHero({
       ) : confirmed ? (
         <CheckCircle2 className="size-8 shrink-0 text-primary" />
       ) : (
-        <Loader2 className="size-8 shrink-0 animate-spin text-muted-foreground" />
+        <OrbitLoader size={32} className="shrink-0" />
       )}
       <div className="flex-1 space-y-1">
         <h2 className="font-medium">
@@ -538,7 +538,7 @@ function StatusHero({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
           {checking ? (
             <span className="flex items-center gap-1.5">
-              <Loader2 className="size-3 animate-spin" /> Checking now…
+              <OrbitLoader size={14} /> Checking now…
             </span>
           ) : lastChecked ? (
             <span>Last checked {ago(lastChecked)}</span>
@@ -548,7 +548,7 @@ function StatusHero({
         </div>
       </div>
       <Button variant="outline" onClick={onCheck} disabled={checking} className="shrink-0">
-        {checking ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+        {checking ? <OrbitLoader size={16} /> : <RefreshCw />}
         Check now
       </Button>
     </div>
@@ -567,7 +567,7 @@ function RecordsNotReady({ checking, onCheck }: { checking: boolean; onCheck: ()
         This usually takes a moment.
       </p>
       <Button variant="outline" onClick={onCheck} disabled={checking} className="mt-3">
-        {checking ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+        {checking ? <OrbitLoader size={16} /> : <RefreshCw />}
         Refresh
       </Button>
     </div>
@@ -716,7 +716,7 @@ function ReturnPathStatus({ status }: { status?: string }) {
       ) : broken ? (
         <AlertCircle className="size-3.5" />
       ) : (
-        <Loader2 className="size-3.5 animate-spin" />
+        <OrbitLoader size={14} />
       )}
       Return-Path {ok ? "active" : broken ? "needs attention" : "pending"}
     </span>
@@ -769,7 +769,7 @@ function StatusPill({ resolved }: { resolved: boolean }) {
       {resolved ? (
         <Check className="size-3.5" />
       ) : (
-        <Loader2 className="size-3.5 animate-spin" />
+        <OrbitLoader size={14} />
       )}
       {resolved ? "Found" : "Waiting"}
     </span>

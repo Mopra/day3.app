@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { OrbitLoaderScreen } from "@/components/ui/orbit-loader";
 import {
   Table,
   TableBody,
@@ -48,7 +48,7 @@ export default function AdminAccountPage() {
 
   useEffect(load, [load]);
 
-  if (!detail) return <Skeleton className="h-64 w-full" />;
+  if (!detail) return <OrbitLoaderScreen />;
   const { account, health, campaigns, subscriberCount } = detail;
 
   async function act(path: string, body?: unknown) {

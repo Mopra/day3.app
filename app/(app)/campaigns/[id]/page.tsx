@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { OrbitLoaderScreen } from "@/components/ui/orbit-loader";
+import { LaunchStream, SendDots } from "@/components/ui/send-loader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Table,
@@ -21,7 +22,7 @@ import {
 import { useApi } from "@/lib/api";
 import { formatDateTime, statusLabel, statusVariant } from "@/lib/format";
 import { sanitizeHtml } from "@/services/render";
-import { CampaignForm, type CampaignFormValues } from "@/components/campaign-form";
+import { CampaignComposer, type CampaignFormValues } from "@/components/campaign-composer";
 import type { Campaign, CampaignStats, OnboardingState, Recipient, RiskReview } from "@/lib/types";
 
 // Maps a send-blocking condition to the page that fixes it, so the user gets a
@@ -59,10 +60,58 @@ const STAT_KEYS = [
   "skipped",
 ] as const satisfies readonly (keyof CampaignStats)[];
 
+// The send-in-progress hero, shown while the pipeline works (review → build
+// recipients → sending). Copy and the live count follow the campaign status so
+// the user sees momentum rather than a static "please wait".
+function SendingBanner({
+  status,
+  stats,
+}: {
+  status: Campaign["status"];
+  stats: CampaignStats | null;
+}) {
+  const copy: Record<string, { title: string; subtitle: string }> = {
+    pending_review: {
+      title: "Reviewing your campaign",
+      subtitle: "Running a quick safety check before it goes out.",
+    },
+    approved: {
+      title: "Approved — preparing to send",
+      subtitle: "Getting everything ready.",
+    },
+    generating_recipients: {
+      title: "Building your send list",
+      subtitle: "Gathering the subscribers for this campaign.",
+    },
+    sending: {
+      title: "Sending your campaign",
+      subtitle:
+        stats && stats.total > 0
+          ? `${((stats.sent ?? 0) + (stats.delivered ?? 0)).toLocaleString()} of ${stats.total.toLocaleString()} sent · going out now`
+          : "Your emails are going out now.",
+    },
+  };
+  const { title, subtitle } = copy[status] ?? copy.sending;
+  return (
+    <div className="flex flex-col gap-4 rounded-xl border border-primary/20 bg-primary/5 p-5 sm:flex-row sm:items-center">
+      <LaunchStream scale={0.8} />
+      <div className="min-w-0">
+        <h2 className="font-medium">{title}</h2>
+        <p className="text-sm text-muted-foreground">{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
 export default function CampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
   const api = useApi();
   const { user } = useUser();
+  const searchParams = useSearchParams();
+  // Dev-only: force the send banner onto a real campaign page without sending,
+  // e.g. /campaigns/<id>?send=sending. Ignored in production builds.
+  const previewSend =
+    process.env.NODE_ENV !== "production" ? searchParams.get("send") : null;
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [stats, setStats] = useState<CampaignStats | null>(null);
   const [riskReview, setRiskReview] = useState<RiskReview | null>(null);
@@ -123,7 +172,7 @@ export default function CampaignDetailPage() {
     load();
   }
 
-  if (!campaign) return <Skeleton className="h-64 w-full" />;
+  if (!campaign) return <OrbitLoaderScreen />;
 
   const ownEmail = user?.primaryEmailAddress?.emailAddress;
   const submittable = campaign.status === "draft" || campaign.status === "approved";
@@ -156,7 +205,14 @@ export default function CampaignDetailPage() {
               disabled={busy || !!sendBlocked}
               onClick={() => action("submit", undefined, "Campaign submitted")}
             >
-              Submit & send
+              {busy || previewSend === "submitting" ? (
+                <>
+                  <SendDots />
+                  Sending…
+                </>
+              ) : (
+                "Submit & send"
+              )}
             </Button>
           )}
           {campaign.status === "sending" && (
@@ -172,6 +228,13 @@ export default function CampaignDetailPage() {
         </div>
       </div>
 
+      {(inFlight || previewSend) && (
+        <SendingBanner
+          status={(previewSend as Campaign["status"]) ?? campaign.status}
+          stats={stats}
+        />
+      )}
+
       {campaign.pausedReason && campaign.status !== "sent" && (
         <Alert variant="destructive">
           <AlertTitle>{statusLabel(campaign.status)}</AlertTitle>
@@ -183,16 +246,18 @@ export default function CampaignDetailPage() {
         <Alert>
           <AlertTitle>This campaign can&apos;t be sent yet</AlertTitle>
           <AlertDescription>
-            {sendBlocked.sendBlockedReason}
-            {blockFix && (
-              <>
-                {" "}
-                <Link href={blockFix.href} className="font-medium underline underline-offset-4">
-                  {blockFix.label}
-                </Link>
-                .
-              </>
-            )}
+            <p>
+              {sendBlocked.sendBlockedReason}
+              {blockFix && (
+                <>
+                  {" "}
+                  <Link href={blockFix.href} className="font-medium underline underline-offset-4">
+                    {blockFix.label}
+                  </Link>
+                  .
+                </>
+              )}
+            </p>
           </AlertDescription>
         </Alert>
       )}
@@ -281,7 +346,7 @@ export default function CampaignDetailPage() {
       )}
 
       {campaign.status === "draft" ? (
-        <CampaignForm initial={campaign} onSave={onSave} submitLabel="Save draft" />
+        <CampaignComposer initial={campaign} onSave={onSave} submitLabel="Save draft" />
       ) : (
         <Card>
           <CardHeader>

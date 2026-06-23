@@ -50,6 +50,12 @@ const fullSchema = z.object({
   EMAIL_PROVIDER: z.string().optional(),
   AWS_REGION: z.string().optional(), // required only when EMAIL_PROVIDER=ses
   SES_SNS_TOPIC_ARN: z.string().optional(), // required only when EMAIL_PROVIDER=ses (web tier)
+  // --- AI (OpenRouter) — OPTIONAL. Powers the campaign drafting/assist helpers.
+  // When OPENROUTER_API_KEY is unset, the AI features are hidden and the app runs
+  // exactly as before (the assist routes return 503), so this is never required
+  // to boot. OPENROUTER_MODEL overrides the default model slug.
+  OPENROUTER_API_KEY: secret("OPENROUTER_API_KEY").optional(),
+  OPENROUTER_MODEL: z.string().optional(),
 });
 
 export type Env = z.infer<typeof fullSchema>;

@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { OrbitLoader } from "@/components/ui/orbit-loader";
 
 type State =
   | { phase: "loading" }
@@ -51,7 +52,12 @@ function UnsubscribeInner() {
           <CardTitle>{state.phase === "done" ? "You're unsubscribed" : "Unsubscribe"}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
-          {state.phase === "loading" && <p className="text-muted-foreground">Checking link…</p>}
+          {state.phase === "loading" && (
+            <div className="flex items-center gap-3 text-muted-foreground">
+              <OrbitLoader size={24} />
+              <span>Checking link…</span>
+            </div>
+          )}
           {state.phase === "error" && <p className="text-destructive">{state.message}</p>}
           {state.phase === "confirm" && (
             <>

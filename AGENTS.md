@@ -4,6 +4,12 @@ Newsletter SaaS for small SaaS teams. A Next.js 16 (App Router) web app on Verce
 serves the UI and the API routes; a separate long-running Node worker
 (`worker/index.ts`) drains the BullMQ queue and runs the cron sweeps.
 
+> **`PRODUCT.md` is the product source of truth** (what Day3 is, features, pricing,
+> flows). **After any change that affects what the product is or does — features,
+> pricing/limits, integrations, core flows, or the domain model — update `PRODUCT.md`
+> in the same PR** and bump its "Last verified" date. Skip purely internal
+> refactors/bug-fixes that don't change product behavior.
+
 ## Stack
 
 - Next.js 16 (App Router) on Vercel — serves the React 19 SPA-style UI and the API route handlers
