@@ -4,6 +4,7 @@ export type IdPrefix =
   | "acc"
   | "usr"
   | "dom"
+  | "snd"
   | "aud"
   | "sub"
   | "frm"

@@ -26,10 +26,10 @@ import {
   Quote,
   Minus,
   Sparkles,
-  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { OrbitLoader } from "@/components/ui/orbit-loader";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -321,7 +321,7 @@ export function RichTextEditor({
           className,
         )}
       >
-        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        <OrbitLoader size={20} className="text-muted-foreground" />
       </div>
     );
   }
@@ -451,7 +451,7 @@ export function RichTextEditor({
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => runRewrite(opt.action)}
               >
-                {rewriting === opt.action ? <Loader2 className="animate-spin" /> : opt.label}
+                {rewriting === opt.action ? <OrbitLoader size={16} /> : opt.label}
               </Button>
             ))}
           </BubbleMenu>

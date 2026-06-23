@@ -28,6 +28,7 @@ export class SesEmailProvider implements EmailProvider {
           FromEmailAddress: input.fromName
             ? `${input.fromName} <${input.fromEmail}>`
             : input.fromEmail,
+          ...(input.replyTo ? { ReplyToAddresses: [input.replyTo] } : {}),
           Destination: { ToAddresses: [input.toEmail] },
           ConfigurationSetName: this.config.configurationSet,
           Content: {

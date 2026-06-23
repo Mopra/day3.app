@@ -2,11 +2,12 @@ import type { CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * Brand loading animation: three squares orbiting a shared center, the third
- * tinted with the brand accent. Colors are theme tokens (foreground + primary)
- * so it stays visible in both light and dark modes. The motion is disabled
- * under `prefers-reduced-motion` (see `.d3-orbit` in globals.css), leaving a
- * static three-square mark.
+ * Brand loading mark: the Day3 three-block mark "thinking" — blocks bounce in an
+ * equalizer wave while a glow washes across them to the brand accent. Base
+ * blocks inherit `currentColor` so the mark reads on any surface (light pages,
+ * dark buttons); the wash uses the primary token. The motion is disabled under
+ * `prefers-reduced-motion` (see `.d3-orbit` in globals.css), leaving a static
+ * three-block mark.
  *
  * Use inline (next to button text, inside status pills) or, for whole-view
  * loading gates, via `OrbitLoaderScreen`.
@@ -16,7 +17,7 @@ export function OrbitLoader({
   className,
   label = "Loading",
 }: {
-  /** Outer diameter in px. Squares scale from this. */
+  /** Overall footprint in px. Blocks and gaps scale from this. */
   size?: number;
   className?: string;
   /** Accessible label, announced to screen readers. */

@@ -1,0 +1,91 @@
+/* ============================================================
+   Day3 — Queue & Send loaders
+   Pure CSS animations. No JS, no images. Safe in Server
+   Components. Import this once (e.g. in app/layout.tsx) or
+   it is imported for you by Day3Loaders.tsx.
+   ============================================================ */
+
+/* ---- 1 · LAUNCH STREAM ---------------------------------- */
+.d3ls {
+  position: relative;
+  width: 320px;
+  height: 56px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 9%, #000 64%, transparent 96%);
+          mask-image: linear-gradient(90deg, transparent 0, #000 9%, #000 64%, transparent 96%);
+}
+.d3ls__b {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  transform-origin: center;
+  background: #2B2019;
+  animation: d3stream 3.2s linear infinite, d3streamColor 3.2s linear infinite;
+}
+.d3ls__b:nth-child(1) { animation-delay: 0s, 0s; }
+.d3ls__b:nth-child(2) { animation-delay: -0.64s, -0.64s; }
+.d3ls__b:nth-child(3) { animation-delay: -1.28s, -1.28s; }
+.d3ls__b:nth-child(4) { animation-delay: -1.92s, -1.92s; }
+.d3ls__b:nth-child(5) { animation-delay: -2.56s, -2.56s; }
+
+.d3ls--dark .d3ls__b {
+  background: #4A3C30;
+  animation-name: d3stream, d3streamColorDark;
+}
+
+@keyframes d3stream {
+  0%   { transform: translateX(-54px) scaleX(1)   scaleY(1);    opacity: 0; }
+  7%   { transform: translateX(-8px)  scaleX(1.12) scaleY(.88); opacity: 1; }
+  14%  { transform: translateX(24px)  scaleX(1)    scaleY(1);   opacity: 1; }
+  36%  { transform: translateX(80px)  scaleX(1)    scaleY(1);   opacity: 1; }
+  54%  { transform: translateX(136px) scaleX(1)    scaleY(1);   opacity: 1; }
+  60%  { transform: translateX(126px) scaleX(.76)  scaleY(1.2); opacity: 1; }
+  76%  { transform: translateX(340px) scaleX(1.5)  scaleY(.68); opacity: 0; }
+  100% { transform: translateX(-54px) scaleX(1)    scaleY(1);   opacity: 0; }
+}
+@keyframes d3streamColor {
+  0%, 54%      { background: #2B2019; }
+  59%, 76%     { background: #C28A4D; }
+  76.01%, 100% { background: #2B2019; }
+}
+@keyframes d3streamColorDark {
+  0%, 54%      { background: #4A3C30; }
+  59%, 76%     { background: #E0A463; }
+  76.01%, 100% { background: #4A3C30; }
+}
+
+/* ---- 2 · IN-CONTEXT dots (send button + queue toast) ---- */
+.d3dots {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+}
+.d3dots__d {
+  position: absolute;
+  top: 1px;
+  border-radius: 25%;
+  transform-origin: center;
+}
+.d3dots__d--in  { animation: d3senddotIn 1.5s ease-in-out infinite; }
+.d3dots__d--out { animation: d3senddot   1.5s ease-in-out infinite; }
+
+@keyframes d3senddot {
+  0%, 70%, 100% { transform: translateX(0)    scale(1);  opacity: 1; }
+  30%           { transform: translateX(14px) scale(.9); opacity: 0; }
+}
+@keyframes d3senddotIn {
+  0%, 100% { transform: translateX(0);    opacity: 0; }
+  8%       { transform: translateX(-12px); opacity: 0; }
+  34%, 64% { transform: translateX(0);    opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .d3ls__b, .d3dots__d {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

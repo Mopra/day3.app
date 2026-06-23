@@ -60,6 +60,22 @@ export type SendingDomain = {
   updatedAt?: string;
 };
 
+// A saved "From" identity the user picks in the composer. The list endpoint joins
+// the sender to its sending domain so the UI can show the domain + verification.
+export type Sender = {
+  id: string;
+  sendingDomainId: string;
+  fromName: string;
+  fromEmail: string;
+  replyTo: string | null;
+  isDefault: boolean;
+  createdAt: string;
+  // Joined from the sending domain (present on list/create responses).
+  domain?: string;
+  verificationStatus?: string;
+  adminOverrideVerified?: boolean;
+};
+
 // A DNS record the user must publish to verify a sending domain. Mirrors the
 // server shape in services/ses-identity.ts — keep the two in lockstep.
 export type DnsRecord = {
@@ -157,8 +173,10 @@ export type Campaign = {
   previewText: string | null;
   audienceId: string;
   sendingDomainId: string;
+  senderId: string | null;
   fromName: string;
   fromEmail: string;
+  replyTo: string | null;
   htmlBody: string;
   textBody: string | null;
   status: string;
@@ -166,6 +184,7 @@ export type Campaign = {
   riskScore: number | null;
   riskSummary: string | null;
   pausedReason: string | null;
+  scheduledAt: string | null;
   sentAt: string | null;
   createdAt: string;
 };

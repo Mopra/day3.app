@@ -2,6 +2,7 @@ import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { enforceAiBudget, recordAiUsage } from "@/lib/ai-budget";
 import { aiEnabled, rewriteText } from "@/services/ai";
 
 const RewriteSchema = z.object({
@@ -14,9 +15,11 @@ export const POST = route(async (req) => {
   const { account } = await requireAccount();
   if (!aiEnabled()) throw new HttpError(503, "AI assistance isn't configured.");
   await enforceRateLimit("ai", account.id);
+  await enforceAiBudget(account.id);
   const input = await parseJson(req, RewriteSchema);
   try {
-    const text = await rewriteText(input);
+    const { text, usage } = await rewriteText(input);
+    await recordAiUsage(account.id, usage);
     return json({ text });
   } catch (err) {
     console.error("[ai/rewrite] generation failed", err);

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { enforceAiBudget, recordAiUsage } from "@/lib/ai-budget";
 import { aiEnabled, writePreviewText } from "@/services/ai";
 
 const PreviewSchema = z.object({
@@ -14,9 +15,11 @@ export const POST = route(async (req) => {
   const { account } = await requireAccount();
   if (!aiEnabled()) throw new HttpError(503, "AI assistance isn't configured.");
   await enforceRateLimit("ai", account.id);
+  await enforceAiBudget(account.id);
   const input = await parseJson(req, PreviewSchema);
   try {
-    const previewText = await writePreviewText(input);
+    const { previewText, usage } = await writePreviewText(input);
+    await recordAiUsage(account.id, usage);
     return json({ previewText });
   } catch (err) {
     console.error("[ai/preview-text] generation failed", err);

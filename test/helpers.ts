@@ -7,10 +7,12 @@ import {
   audiences,
   campaigns,
   sendingDomains,
+  senders,
   subscribers,
   type Account,
   type Audience,
   type Campaign,
+  type Sender,
   type SendingDomain,
   type Subscriber,
 } from "../src/db/schema";
@@ -107,6 +109,28 @@ export async function seedDomain(
     ...overrides,
   });
   return (await db.query.sendingDomains.findFirst({ where: (t, { eq }) => eq(t.id, id) }))!;
+}
+
+export async function seedSender(
+  db: Db,
+  accountId: string,
+  sendingDomainId: string,
+  overrides: Partial<Sender> = {},
+): Promise<Sender> {
+  const now = nowIso();
+  const id = newId("snd");
+  await db.insert(senders).values({
+    id,
+    accountId,
+    sendingDomainId,
+    fromName: "Test Co",
+    fromEmail: "news@updates.test.co",
+    isDefault: false,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  });
+  return (await db.query.senders.findFirst({ where: (t, { eq }) => eq(t.id, id) }))!;
 }
 
 export async function seedAudience(db: Db, accountId: string): Promise<Audience> {

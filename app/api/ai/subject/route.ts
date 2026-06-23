@@ -2,6 +2,7 @@ import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { enforceAiBudget, recordAiUsage } from "@/lib/ai-budget";
 import { aiEnabled, suggestSubjects } from "@/services/ai";
 
 const SubjectSchema = z
@@ -19,9 +20,11 @@ export const POST = route(async (req) => {
   const { account } = await requireAccount();
   if (!aiEnabled()) throw new HttpError(503, "AI assistance isn't configured.");
   await enforceRateLimit("ai", account.id);
+  await enforceAiBudget(account.id);
   const input = await parseJson(req, SubjectSchema);
   try {
-    const subjects = await suggestSubjects({ ...input, companyName: account.name });
+    const { subjects, usage } = await suggestSubjects({ ...input, companyName: account.name });
+    await recordAiUsage(account.id, usage);
     return json({ subjects });
   } catch (err) {
     console.error("[ai/subject] generation failed", err);

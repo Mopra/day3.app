@@ -102,6 +102,36 @@ export const sendingDomains = pgTable(
   ],
 );
 
+// A saved "From" identity — a from-name + from-address pair bound to a sending
+// domain. Replaces free-text From entry in the campaign composer: users pick a
+// sender from a dropdown. The from address must live on the referenced (verified)
+// sending domain. One default sender is auto-created when a domain is added.
+// NOTE: campaigns still snapshot fromName/fromEmail at save time (see campaigns),
+// so editing or deleting a sender never changes what an already-sent campaign used.
+export const senders = pgTable(
+  "senders",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    sendingDomainId: text("sending_domain_id").notNull(),
+    fromName: text("from_name").notNull(),
+    fromEmail: text("from_email").notNull(),
+    // Optional default Reply-To suggested into the composer when this sender is
+    // picked (null = none; the From address is used).
+    replyTo: text("reply_to"),
+    // The sender pre-selected in the composer when nothing else is chosen. The
+    // first sender for an account (e.g. auto-created with the domain) is default.
+    isDefault: boolean("is_default").notNull().default(false),
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_senders_account_email").on(t.accountId, t.fromEmail),
+    index("idx_senders_account_id").on(t.accountId),
+    index("idx_senders_domain_id").on(t.sendingDomainId),
+  ],
+);
+
 // A customer's connected DNS provider (currently Cloudflare only), authorized via
 // OAuth. Tokens are AES-256-GCM encrypted at rest (see lib/crypto.ts) — they are
 // credentials to the customer's DNS. One connection per account.
@@ -265,6 +295,7 @@ export const imports = pgTable(
 
 export const CAMPAIGN_STATUSES = [
   "draft",
+  "scheduled",
   "pending_review",
   "approved",
   "generating_recipients",
@@ -283,12 +314,17 @@ export const campaigns = pgTable(
     accountId: text("account_id").notNull(),
     audienceId: text("audience_id").notNull(),
     sendingDomainId: text("sending_domain_id").notNull(),
+    // The sender picked in the composer. Nullable: provenance only (so a reopened
+    // draft re-selects the right option). fromName/fromEmail below remain the
+    // authoritative snapshot used at send time, independent of this reference.
+    senderId: text("sender_id"),
 
     name: text("name").notNull(),
     subject: text("subject").notNull(),
     previewText: text("preview_text"),
     fromName: text("from_name").notNull(),
     fromEmail: text("from_email").notNull(),
+    replyTo: text("reply_to"),
 
     htmlBody: text("html_body").notNull(),
     textBody: text("text_body"),
@@ -463,6 +499,7 @@ export const jobLogs = pgTable("job_logs", {
 export type Account = typeof accounts.$inferSelect;
 export type AccountUser = typeof accountUsers.$inferSelect;
 export type SendingDomain = typeof sendingDomains.$inferSelect;
+export type Sender = typeof senders.$inferSelect;
 export type DnsIntegration = typeof dnsIntegrations.$inferSelect;
 export type Audience = typeof audiences.$inferSelect;
 export type Subscriber = typeof subscribers.$inferSelect;

@@ -1,7 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../db/client";
-import { audiences, campaignRecipients, sendingDomains } from "../db/schema";
+import { audiences, campaignRecipients, sendingDomains, subscribers } from "../db/schema";
 
 export const CampaignFieldsSchema = z.object({
   name: z.string().trim().min(1).max(150),
@@ -9,8 +9,16 @@ export const CampaignFieldsSchema = z.object({
   previewText: z.string().trim().max(200).optional(),
   audienceId: z.string().min(1),
   sendingDomainId: z.string().min(1),
+  // The sender picked in the composer (provenance only; fromName/fromEmail below
+  // are the authoritative snapshot). Optional for backward compatibility.
+  senderId: z.string().optional(),
   fromName: z.string().trim().min(1).max(100),
   fromEmail: z.email().toLowerCase(),
+  // Optional Reply-To: any valid address (often support@ on a different domain),
+  // or empty to omit it. Normalised to lowercase; "" is treated as "no reply-to".
+  replyTo: z
+    .union([z.literal(""), z.email().toLowerCase()])
+    .optional(),
   htmlBody: z.string().min(1).max(500_000),
   textBody: z.string().max(500_000).optional(),
 });
@@ -38,6 +46,37 @@ export async function validateOwnershipAndSender(
   if (!fields.fromEmail.endsWith(`@${domain.domain}`)) {
     return "From email must use the selected sending domain";
   }
+  return null;
+}
+
+// Campaign-level send gates shared by the submit route, the schedule route, and
+// the cron release of due scheduled campaigns: the sending domain must be
+// verified (or admin-overridden) and the audience must have at least one
+// subscribed recipient. Returns an error string or null. (Account-level
+// eligibility — billing/plan/health — is checked separately by the caller.)
+export async function campaignSendGateError(
+  db: Db,
+  accountId: string,
+  campaign: { sendingDomainId: string; audienceId: string },
+): Promise<string | null> {
+  const domain = await db.query.sendingDomains.findFirst({
+    where: and(
+      eq(sendingDomains.id, campaign.sendingDomainId),
+      eq(sendingDomains.accountId, accountId),
+    ),
+  });
+  const domainVerified =
+    domain && (domain.verificationStatus === "verified" || domain.adminOverrideVerified);
+  if (!domainVerified) return "Sending domain is not verified";
+
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)`.as("count") })
+    .from(subscribers)
+    .where(
+      and(eq(subscribers.audienceId, campaign.audienceId), eq(subscribers.status, "subscribed")),
+    );
+  if (Number(count) === 0) return "The audience has no subscribed recipients";
+
   return null;
 }
 

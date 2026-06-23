@@ -2,6 +2,7 @@ import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { enforceAiBudget, recordAiUsage } from "@/lib/ai-budget";
 import { aiEnabled, draftEmail } from "@/services/ai";
 
 const DraftSchema = z.object({
@@ -17,15 +18,17 @@ export const POST = route(async (req) => {
   const { account } = await requireAccount();
   if (!aiEnabled()) throw new HttpError(503, "AI assistance isn't configured.");
   await enforceRateLimit("ai", account.id);
+  await enforceAiBudget(account.id);
   const input = await parseJson(req, DraftSchema);
   try {
-    const draft = await draftEmail({
+    const { usage, ...draft } = await draftEmail({
       brief: input.brief,
       tone: input.tone,
       audienceName: input.audienceName,
       fromName: input.fromName,
       companyName: account.name,
     });
+    await recordAiUsage(account.id, usage);
     return json(draft);
   } catch (err) {
     console.error("[ai/draft] generation failed", err);

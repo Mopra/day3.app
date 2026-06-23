@@ -346,6 +346,7 @@ async function sendToClaimed(
       recipientId: recipient.id,
       fromEmail: campaign.fromEmail,
       fromName: campaign.fromName,
+      replyTo: campaign.replyTo ?? undefined,
       toEmail: recipient.email,
       subject: rendered.subject,
       html: rendered.html,

@@ -196,56 +196,45 @@
   }
 }
 
-/* OrbitLoader — brand loading animation (see src/components/ui/orbit-loader.tsx).
-   Three squares orbiting a shared center, the accent square tinted with the
-   brand color. Colors use theme tokens so it works in light and dark. */
+/* OrbitLoader — brand loading mark (see src/components/ui/orbit-loader.tsx).
+   The Day3 three-block mark "thinking": blocks bounce in an equalizer wave while
+   a glow washes across them to the brand accent. Base blocks inherit
+   currentColor so the mark reads on any surface (light pages, dark buttons); the
+   wash uses the primary token. `--d3-size` is the overall footprint. */
 .d3-orbit {
   --d3-size: 120px;
-  --d3-square: calc(var(--d3-size) * 0.233);
-  --d3-speed: 3.2s;
-  position: relative;
-  display: inline-block;
+  --d3-block: calc(var(--d3-size) * 0.28);
+  --d3-gap: calc(var(--d3-size) * 0.085);
+  display: inline-flex;
+  align-items: flex-end;
+  gap: var(--d3-gap);
   vertical-align: middle;
-  width: var(--d3-size);
-  height: var(--d3-size);
-  animation: d3spin var(--d3-speed) linear infinite;
+  line-height: 0;
 }
 .d3-orbit i {
-  position: absolute;
-  width: var(--d3-square);
-  height: var(--d3-square);
-  border-radius: calc(var(--d3-square) * 0.18);
-  background: var(--foreground);
-  animation: d3spinRev var(--d3-speed) linear infinite;
+  display: block;
+  width: var(--d3-block);
+  height: var(--d3-block);
+  border-radius: calc(var(--d3-block) * 0.25);
+  transform-origin: bottom;
+  background: currentColor;
+  animation: d3orbitBounce 1.5s ease-in-out infinite,
+             d3orbitGlow 1.5s ease-in-out infinite;
 }
-.d3-orbit i:nth-child(1) {
-  left: 50%;
-  top: 6.7%;
-  margin-left: calc(var(--d3-square) / -2);
+.d3-orbit i:nth-child(1) { animation-delay: 0s, 0s; }
+.d3-orbit i:nth-child(2) { animation-delay: 0.18s, 0.18s; }
+.d3-orbit i:nth-child(3) { animation-delay: 0.36s, 0.36s; }
+
+@keyframes d3orbitBounce {
+  0%, 100% { transform: scaleY(1); }
+  50%      { transform: scaleY(1.34); }
 }
-.d3-orbit i:nth-child(2) {
-  left: 76.7%;
-  top: 58.3%;
-  margin-left: calc(var(--d3-square) / -2);
-}
-.d3-orbit i:nth-child(3) {
-  left: 23.3%;
-  top: 58.3%;
-  margin-left: calc(var(--d3-square) / -2);
-  background: var(--primary);
-}
-@keyframes d3spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-@keyframes d3spinRev {
-  to {
-    transform: rotate(-360deg);
-  }
+/* the glow washes from the inherited base color to the caramel accent */
+@keyframes d3orbitGlow {
+  0%, 62%, 100% { background: currentColor; }
+  31%           { background: var(--primary); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .d3-orbit,
   .d3-orbit i {
     animation: none;
   }
@@ -334,6 +323,59 @@
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;
+  }
+}
+
+/* "Draft with AI" call-to-action (see src/components/campaign-composer.tsx).
+   A quietly animated, on-brand button that invites — but never forces — AI help.
+   Warm gradient + a slow sheen sweep + a twinkling sparkle, all theme-token based. */
+.d3-ai-cta {
+  position: relative;
+  overflow: hidden;
+  border: 0;
+  color: var(--primary-foreground);
+  background: linear-gradient(
+    110deg,
+    var(--primary) 0%,
+    color-mix(in oklab, var(--primary) 68%, oklch(0.78 0.13 72)) 100%
+  );
+  box-shadow: 0 1px 2px oklch(0 0 0 / 0.08);
+  transition: filter 0.2s ease, box-shadow 0.2s ease;
+}
+.d3-ai-cta:hover {
+  filter: brightness(1.06) saturate(1.05);
+  box-shadow: 0 2px 10px color-mix(in oklab, var(--primary) 35%, transparent);
+}
+.d3-ai-cta::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 35%,
+    oklch(1 0 0 / 0.32) 50%,
+    transparent 65%
+  );
+  transform: translateX(-160%);
+  animation: d3aiSheen 5s ease-in-out infinite;
+  pointer-events: none;
+}
+.d3-ai-cta .d3-ai-spark {
+  animation: d3aiSpark 2.6s ease-in-out infinite;
+  transform-origin: center;
+}
+@keyframes d3aiSheen {
+  0%, 62% { transform: translateX(-160%); }
+  86%, 100% { transform: translateX(160%); }
+}
+@keyframes d3aiSpark {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 0.9; }
+  50% { transform: scale(1.18) rotate(14deg); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .d3-ai-cta::after,
+  .d3-ai-cta .d3-ai-spark {
+    animation: none;
   }
 }
 

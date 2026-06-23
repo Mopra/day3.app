@@ -5,9 +5,16 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { toast } from "sonner";
+import { CalendarClock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { OrbitLoaderScreen } from "@/components/ui/orbit-loader";
 import { LaunchStream, SendDots } from "@/components/ui/send-loader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -45,6 +52,13 @@ function fixLinkFor(reason: string): { href: string; label: string } | null {
     return { href: "/audiences", label: "Import subscribers" };
   }
   return null;
+}
+
+// Formats a Date as the value a <input type="datetime-local"> expects
+// ("YYYY-MM-DDTHH:mm") in the user's local timezone.
+function toLocalInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // Numeric per-status keys only (excludes `total` and the `undeliverable` array).
@@ -118,6 +132,8 @@ export default function CampaignDetailPage() {
   const [recipients, setRecipients] = useState<Recipient[] | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [busy, setBusy] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleAt, setScheduleAt] = useState("");
 
   const load = useCallback(() => {
     api
@@ -172,6 +188,42 @@ export default function CampaignDetailPage() {
     load();
   }
 
+  // Quiet autosave — same PATCH, but no toast or refetch so it doesn't disrupt
+  // the user mid-edit.
+  async function onAutosave(values: CampaignFormValues) {
+    await api.patch(`/api/campaigns/${id}`, values);
+  }
+
+  // Open the schedule dialog seeded with the existing time, or a sensible
+  // default an hour out.
+  function openSchedule() {
+    setScheduleAt(
+      campaign?.scheduledAt
+        ? toLocalInput(new Date(campaign.scheduledAt))
+        : toLocalInput(new Date(Date.now() + 60 * 60 * 1000)),
+    );
+    setScheduleOpen(true);
+  }
+
+  async function submitSchedule() {
+    const when = new Date(scheduleAt);
+    if (Number.isNaN(when.getTime()) || when.getTime() < Date.now() + 60_000) {
+      toast.error("Pick a time at least a minute from now");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post(`/api/campaigns/${id}/schedule`, { scheduledAt: when.toISOString() });
+      toast.success("Send scheduled");
+      setScheduleOpen(false);
+      load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't schedule");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!campaign) return <OrbitLoaderScreen />;
 
   const ownEmail = user?.primaryEmailAddress?.emailAddress;
@@ -183,56 +235,109 @@ export default function CampaignDetailPage() {
     ? fixLinkFor(sendBlocked.sendBlockedReason)
     : null;
 
+  const statusBadge = (
+    <Badge variant={statusVariant(campaign.status)}>{statusLabel(campaign.status)}</Badge>
+  );
+
+  const actionButtons = (
+    <>
+      {ownEmail && (
+        <Button
+          variant="outline"
+          disabled={busy}
+          onClick={() => action("test-email", { toEmail: ownEmail }, `Test sent to ${ownEmail}`)}
+        >
+          Send test to me
+        </Button>
+      )}
+      {submittable && (
+        <Button
+          variant="outline"
+          disabled={busy || !!sendBlocked}
+          onClick={openSchedule}
+        >
+          <CalendarClock className="size-4" />
+          Schedule
+        </Button>
+      )}
+      {submittable && (
+        <Button
+          disabled={busy || !!sendBlocked}
+          onClick={() => action("submit", undefined, "Campaign submitted")}
+        >
+          {busy || previewSend === "submitting" ? (
+            <>
+              <SendDots />
+              Sending…
+            </>
+          ) : (
+            "Submit & send"
+          )}
+        </Button>
+      )}
+      {campaign.status === "sending" && (
+        <Button variant="destructive" disabled={busy} onClick={() => action("pause")}>
+          Pause
+        </Button>
+      )}
+      {campaign.status === "paused" && (
+        <Button disabled={busy} onClick={() => action("resume", undefined, "Resumed")}>
+          Resume
+        </Button>
+      )}
+    </>
+  );
+
+  // Drafts get an editable title inside the composer, so the status badge and
+  // actions move into the composer's title row. Other statuses keep the static
+  // page heading.
+  const isDraft = campaign.status === "draft";
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">{campaign.name}</h1>
-          <Badge variant={statusVariant(campaign.status)}>{statusLabel(campaign.status)}</Badge>
+      {!isDraft && (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight">{campaign.name}</h1>
+            {statusBadge}
+          </div>
+          <div className="flex gap-2">{actionButtons}</div>
         </div>
-        <div className="flex gap-2">
-          {ownEmail && (
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => action("test-email", { toEmail: ownEmail }, `Test sent to ${ownEmail}`)}
-            >
-              Send test to me
-            </Button>
-          )}
-          {submittable && (
-            <Button
-              disabled={busy || !!sendBlocked}
-              onClick={() => action("submit", undefined, "Campaign submitted")}
-            >
-              {busy || previewSend === "submitting" ? (
-                <>
-                  <SendDots />
-                  Sending…
-                </>
-              ) : (
-                "Submit & send"
-              )}
-            </Button>
-          )}
-          {campaign.status === "sending" && (
-            <Button variant="destructive" disabled={busy} onClick={() => action("pause")}>
-              Pause
-            </Button>
-          )}
-          {campaign.status === "paused" && (
-            <Button disabled={busy} onClick={() => action("resume", undefined, "Resumed")}>
-              Resume
-            </Button>
-          )}
-        </div>
-      </div>
+      )}
 
       {(inFlight || previewSend) && (
         <SendingBanner
           status={(previewSend as Campaign["status"]) ?? campaign.status}
           stats={stats}
         />
+      )}
+
+      {campaign.status === "scheduled" && (
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-muted/30 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <CalendarClock className="size-5 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <h2 className="font-medium">Scheduled to send</h2>
+              <p className="text-sm text-muted-foreground">
+                Goes out {formatDateTime(campaign.scheduledAt)} — sending starts within ~15
+                minutes of that time.
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button variant="outline" size="sm" disabled={busy} onClick={openSchedule}>
+              Reschedule
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => action("unschedule", undefined, "Moved back to draft")}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
       )}
 
       {campaign.pausedReason && campaign.status !== "sent" && (
@@ -345,8 +450,15 @@ export default function CampaignDetailPage() {
         </Card>
       )}
 
-      {campaign.status === "draft" ? (
-        <CampaignComposer initial={campaign} onSave={onSave} submitLabel="Save draft" />
+      {isDraft ? (
+        <CampaignComposer
+          initial={campaign}
+          onSave={onSave}
+          onAutosave={onAutosave}
+          submitLabel="Save draft"
+          titleBadge={statusBadge}
+          titleActions={actionButtons}
+        />
       ) : (
         <Card>
           <CardHeader>
@@ -416,6 +528,44 @@ export default function CampaignDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Schedule send</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Pick when this campaign should go out. We&apos;ll run the safety review and start
+              sending at that time (within ~15 minutes).
+            </p>
+            <div className="space-y-1.5">
+              <label htmlFor="scheduleAt" className="text-sm font-medium">
+                Date &amp; time
+              </label>
+              <input
+                id="scheduleAt"
+                type="datetime-local"
+                value={scheduleAt}
+                min={toLocalInput(new Date())}
+                onChange={(e) => setScheduleAt(e.target.value)}
+                className="h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+              />
+              <p className="text-xs text-muted-foreground">
+                Uses your computer&apos;s timezone.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="ghost" disabled={busy} onClick={() => setScheduleOpen(false)}>
+                Cancel
+              </Button>
+              <Button disabled={busy} onClick={submitSchedule}>
+                {busy ? "Scheduling…" : "Schedule send"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -17,6 +17,11 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import { sanitizeHtml } from "@/services/render";
+import type { TokenUsage } from "@/lib/ai-budget";
+
+// Token counts a call consumed, returned alongside every result so the route can
+// charge it against the account's AI budget (see lib/ai-budget.ts).
+export type Usage = TokenUsage;
 
 const DEFAULT_MODEL = "anthropic/claude-sonnet-4.6";
 
@@ -66,11 +71,12 @@ export type DraftResult = {
   subject: string;
   previewText: string;
   html: string;
+  usage: Usage;
 };
 
 /** Draft a full email (subject + inbox preview + body) from a one-line brief. */
 export async function draftEmail(input: DraftInput): Promise<DraftResult> {
-  const { object } = await generateObject({
+  const { object, usage } = await generateObject({
     model: model(),
     schema: z.object({
       subject: z.string().describe("Compelling subject line, under ~60 characters, no clickbait."),
@@ -94,6 +100,7 @@ ${HTML_RULES}`,
     subject: object.subject.trim(),
     previewText: object.previewText.trim(),
     html: sanitizeHtml(object.html),
+    usage,
   };
 }
 
@@ -105,7 +112,9 @@ export type SubjectInput = {
 };
 
 /** Suggest 5 subject-line options from a brief and/or the current draft. */
-export async function suggestSubjects(input: SubjectInput): Promise<string[]> {
+export async function suggestSubjects(
+  input: SubjectInput,
+): Promise<{ subjects: string[]; usage: Usage }> {
   const context = [
     input.brief ? `Brief: ${input.brief}` : "",
     input.subject ? `Current subject: ${input.subject}` : "",
@@ -113,7 +122,7 @@ export async function suggestSubjects(input: SubjectInput): Promise<string[]> {
   ]
     .filter(Boolean)
     .join("\n\n");
-  const { object } = await generateObject({
+  const { object, usage } = await generateObject({
     model: model(),
     // NOTE: no array min/max here — Anthropic's structured-output schema rejects
     // array minItems/maxItems other than 0/1. Count is steered by the prompt and
@@ -129,15 +138,18 @@ export async function suggestSubjects(input: SubjectInput): Promise<string[]> {
 
 ${context || "A product update newsletter."}`,
   });
-  return object.subjects
+  const subjects = object.subjects
     .map((s) => s.trim())
     .filter(Boolean)
     .slice(0, 5);
+  return { subjects, usage };
 }
 
 /** Write the inbox preview snippet from the subject + body. */
-export async function writePreviewText(input: { subject: string; html: string }): Promise<string> {
-  const { object } = await generateObject({
+export async function writePreviewText(
+  input: { subject: string; html: string },
+): Promise<{ previewText: string; usage: Usage }> {
+  const { object, usage } = await generateObject({
     model: model(),
     schema: z.object({
       previewText: z
@@ -153,7 +165,7 @@ Subject: ${input.subject}
 Body:
 ${input.html}`,
   });
-  return object.previewText.trim();
+  return { previewText: object.previewText.trim(), usage };
 }
 
 const REWRITE_INSTRUCTIONS: Record<string, string> = {
@@ -168,9 +180,11 @@ export type RewriteAction = keyof typeof REWRITE_INSTRUCTIONS;
 export const REWRITE_ACTIONS = Object.keys(REWRITE_INSTRUCTIONS) as RewriteAction[];
 
 /** Rewrite a selected snippet of plain text per the chosen action. */
-export async function rewriteText(input: { text: string; action: string }): Promise<string> {
+export async function rewriteText(
+  input: { text: string; action: string },
+): Promise<{ text: string; usage: Usage }> {
   const instruction = REWRITE_INSTRUCTIONS[input.action] ?? REWRITE_INSTRUCTIONS.improve;
-  const { text } = await generateText({
+  const { text, usage } = await generateText({
     model: model(),
     temperature: input.action === "grammar" ? 0.2 : 0.5,
     system: `${SYSTEM}
@@ -179,5 +193,5 @@ You are editing a fragment of an email. ${instruction}
 Preserve any merge tags such as {{first_name}} exactly. Return ONLY the rewritten text with no quotes, no preamble, no explanation, and no markdown.`,
     prompt: input.text,
   });
-  return text.trim();
+  return { text: text.trim(), usage };
 }

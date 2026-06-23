@@ -1,6 +1,7 @@
-import { and, eq, gt, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull, lte, lt, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { accounts, campaignRecipients, campaigns, sendingDomains } from "../db/schema";
+import { campaignSendGateError } from "../api/campaigns";
 import { nowIso } from "../lib/ids";
 import { DOMAIN_RECHECK_WINDOW_DAYS } from "../lib/domain";
 import { logJob } from "../lib/job-log";
@@ -78,6 +79,60 @@ async function reconcileSendingCampaigns(db: Db, jobsQueue: JobQueue): Promise<v
       await enforceAccountHealth(db, campaign.accountId);
     }
   }
+}
+
+// Scheduled campaigns whose time has come. Each is handed to the normal send
+// pipeline exactly as the submit route would (status → pending_review, enqueue
+// review_campaign), after re-checking the send gates — a domain may have lapsed
+// or the audience emptied since scheduling. If a gate now fails, the campaign is
+// returned to "draft" with a reason rather than silently dropped, so the user
+// can see why it didn't go out. Granularity is the 15-minute sweep, so a send
+// fires within ~15 minutes of its scheduled time.
+export async function releaseDueCampaigns(
+  db: Db,
+  jobsQueue: JobQueue,
+  now: Date,
+): Promise<number> {
+  const due = await db
+    .select()
+    .from(campaigns)
+    .where(
+      and(eq(campaigns.status, "scheduled"), lte(campaigns.scheduledAt, now.toISOString())),
+    )
+    .limit(50);
+
+  let released = 0;
+  for (const campaign of due) {
+    const gateError = await campaignSendGateError(db, campaign.accountId, campaign);
+    if (gateError) {
+      await db
+        .update(campaigns)
+        .set({
+          status: "draft",
+          scheduledAt: null,
+          pausedReason: `Scheduled send didn't start: ${gateError}`,
+          updatedAt: nowIso(),
+        })
+        .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "scheduled")));
+      continue;
+    }
+
+    // Claim the transition atomically so a concurrent sweep can't double-enqueue.
+    const claimed = await db
+      .update(campaigns)
+      .set({ status: "pending_review", scheduledAt: null, pausedReason: null, updatedAt: nowIso() })
+      .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "scheduled")))
+      .returning({ id: campaigns.id });
+    if (claimed.length === 0) continue;
+
+    await jobsQueue.send({
+      type: "review_campaign",
+      campaignId: campaign.id,
+      accountId: campaign.accountId,
+    });
+    released += 1;
+  }
+  return released;
 }
 
 // Pull the SES identity for a domain. Injected so the sweep is testable without
@@ -196,6 +251,7 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
   const { db, queue } = deps;
 
   const failed = await failStuckRecipients(db);
+  const released = await releaseDueCampaigns(db, queue, now);
   await reconcileSendingCampaigns(db, queue);
 
   // SES re-check only when this process has SES configured.
@@ -214,6 +270,6 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
   await logJob(db, {
     jobType: "cron",
     status: "completed",
-    payload: { stuckFailed: failed, domainsVerified, daily: isDaily },
+    payload: { stuckFailed: failed, released, domainsVerified, daily: isDaily },
   });
 }

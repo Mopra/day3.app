@@ -87,8 +87,9 @@ Key pricing facts:
 | **Account user** | A team member (Clerk user) belonging to an account, with a role (`admin` / `member`). |
 | **Audience** | A named list of subscribers. |
 | **Subscriber** | A contact in an audience. Status: `subscribed`, `pending` (awaiting double opt-in), `unsubscribed`, `bounced`, `complained`, or `suppressed`. Only `subscribed` contacts receive campaigns. |
-| **Sending domain** | A verified email-sending identity (e.g. `news@yourcompany.com`), set up via AWS SES with DKIM/SPF/DMARC DNS records. Campaigns require a verified domain. |
-| **Campaign** | A single email send to one audience. Lifecycle: `draft` → `pending_review` → `approved` → `generating_recipients` → `sending` → `sent` (or `paused`, `blocked`, `failed`). |
+| **Sending domain** | A verified email-sending identity (e.g. `news.yourcompany.com`), set up via AWS SES with DKIM/SPF/DMARC DNS records. Campaigns require a verified domain. Adding one auto-creates its first **sender**. |
+| **Sender** | A saved **From** identity — a from-name + from-address pair (e.g. `Jane from Acme <jane@news.acme.com>`) on a verified sending domain. Campaigns pick a sender instead of typing the From each time; an account can keep several per domain, with one marked default. |
+| **Campaign** | A single email send to one audience. Lifecycle: `draft` → (optionally `scheduled`) → `pending_review` → `approved` → `generating_recipients` → `sending` → `sent` (or `paused`, `blocked`, `failed`). |
 | **Campaign recipient** | A per-email send record — the source of truth for idempotent, no-duplicate delivery. Tracks delivery status (`pending`, `sending`, `sent`, `delivered`, `bounced`, `complained`, `unsubscribed`, `failed`, `skipped`). |
 | **Form** | A hosted/embeddable signup form that captures new subscribers into an audience. |
 | **Suppression entry** | A blocklist record (per-account or global) that prevents sending to an address that unsubscribed, bounced, complained, or was manually suppressed. |
@@ -100,13 +101,31 @@ Key pricing facts:
 ## 6. Features
 
 ### 6.1 Campaigns
-- Create a campaign with name, subject, preview text, from name/email, and an HTML body.
+- Create a campaign with name, subject, preview text, a **sender** (From), and an HTML
+  body. The **name is an editable page title** at the top of the composer (falls back to
+  the subject if left blank).
+- **Email-style composer:** the settings (From, Reply-To, To/segment, Subject, Preview)
+  read as the header rows at the top of a real email, with the body flowing directly
+  beneath — one continuous message surface.
+- **From is a sender picker:** the From row is a dropdown of the account's saved senders
+  (the default / sole sender auto-selects), not free text. A new sender can be added
+  inline without leaving the composer.
+- **Reply-To (optional):** set a separate address for replies (e.g. `support@…`);
+  defaults to the From address when left blank.
+- **Autosave:** drafts save automatically ~10s after editing stops (once the draft has
+  everything a send needs), with a live "Saving… / Saved" indicator. An explicit
+  **Save draft** button remains.
 - **Rich-text WYSIWYG editor** (TipTap) constrained to an email-safe HTML allowlist —
   what you see is exactly what recipients get.
 - **Merge tags:** `{{first_name}}`, `{{last_name}}`, `{{email}}`, plus an auto-appended
   unsubscribe footer and `{{company_address}}`.
 - **Send a test email** to yourself before sending for real.
 - **Submit & send** kicks off a review → recipient-generation → batched-send pipeline.
+- **Schedule for later:** pick a future date/time and the campaign parks in `scheduled`;
+  a cron sweep releases it into the same review→send pipeline when due (granularity ~15
+  min). Reschedule or cancel (back to `draft`) any time before it fires. If a send gate
+  (verified domain, non-empty audience) has lapsed by release time, it returns to `draft`
+  with a reason instead of sending.
 - **Pause / resume** an in-flight send.
 - **Live delivery stats:** total recipients, sent, delivered, bounced, complained,
   unsubscribed, failed, skipped — plus a recipient-level table and an undeliverable list.
@@ -124,6 +143,21 @@ hidden and the app works normally. Powered by **OpenRouter**, defaulting to
 - **Select-to-rewrite** — highlight text in the editor and rewrite it (improve,
   shorten, friendlier, more professional, fix grammar).
 - AI output is run through the same HTML sanitizer; merge tags are preserved.
+
+**AI usage budget (per organization).** AI calls are metered against a shared,
+per-org allowance so AI spend stays inside the plan's margin. A single quiet
+usage meter (a percentage) lives in the sidebar, just above the organization
+switcher — it's the only place the budget is shown. When the allowance is spent,
+the meter shows a subtle "resets in Xh Ym", the composer's AI tools disable
+themselves, and manual writing continues unaffected.
+
+- The visible allowance is a **rolling 5-hour window** that resets automatically
+  (anchored to first use), generous enough for a normal composing session.
+- A **monthly ceiling** per org sits underneath as a silent backstop against
+  runaway use; normal users never reach it.
+- There is currently **no way to buy more** — the allowance simply replenishes on
+  reset. Usage is measured from actual model tokens. All limits are
+  configuration-tunable.
 
 ### 6.3 Audiences & subscribers
 - Create named audiences.
@@ -162,7 +196,16 @@ toggle, and a **double opt-in** toggle.
 - **One-click DNS auto-configuration via Cloudflare OAuth** (connect a Cloudflare
   account; Day3 writes the records for you).
 
-### 6.6 Compliance & reputation
+### 6.6 Senders (From identities)
+- A **Senders** page manages the From name + address pairs campaigns send as. Each
+  sender lives on a verified sending domain (its address must be at that domain).
+- The From details entered when adding a domain become that domain's **first (default)
+  sender** automatically; an account can keep several senders per domain and mark one
+  default (the one the composer preselects).
+- Add / edit / remove senders, or add one inline from the campaign composer. Removing a
+  sender never affects campaigns already sent — each campaign snapshots its From at send.
+
+### 6.7 Compliance & reputation
 - **One-click unsubscribe** (RFC 8058 / `List-Unsubscribe`) with HMAC-signed tokens,
   plus a public unsubscribe page.
 - **Automatic suppression** of bounced/complained/unsubscribed addresses (per-account
@@ -170,13 +213,13 @@ toggle, and a **double opt-in** toggle.
 - **Bounce/complaint handling** via SES → SNS webhooks updates recipient status and
   suppresses bad addresses; sustained bad reputation can auto-pause an account.
 
-### 6.7 Billing & account settings
+### 6.8 Billing & account settings
 - Billing page: current plan, subscription status, monthly usage, renewal date, and
   Clerk's pricing table for upgrade/checkout.
 - Settings: company mailing address (legally required in email footers) and Clerk's
   organization management (team members, org name, logo).
 
-### 6.8 Admin (staff only)
+### 6.9 Admin (staff only)
 - Platform overview: account counts, campaigns by status, recent failed/dead-letter jobs.
 - Per-account drill-down: pause/resume sending, usage, bounce/complaint rates, domains, campaigns.
 - **Campaign review queue:** approve & send, or block (with reason) flagged campaigns.
@@ -207,8 +250,10 @@ Day3 is split into two cooperating tiers that share one Postgres database:
   never content — the worker re-reads everything from Postgres.
 
 ### 7.1 The send pipeline
-1. **Submit** — user submits a campaign; it's validated (eligible account, verified
-   domain, audience has subscribers) and moves to `pending_review`.
+1. **Submit** — user submits a campaign (now, or scheduled for later); it's validated
+   (eligible account, verified domain, audience has subscribers) and moves to
+   `pending_review`. A scheduled campaign waits in `scheduled` until a cron sweep
+   re-checks the gates and releases it at its due time.
 2. **Review** — an automated risk check approves it (or routes it to admin review /
    blocks it).
 3. **Generate recipients** — eligible (`subscribed`, non-suppressed) subscribers are
@@ -218,8 +263,8 @@ Day3 is split into two cooperating tiers that share one Postgres database:
    re-enqueues until done.
 5. **Events** — SES delivery/bounce/complaint events flow back via SNS webhooks and
    update recipient status + suppression.
-6. **Sweeps** — cron recovers stuck sends, re-checks pending domains, and reconciles
-   campaign completion.
+6. **Sweeps** — cron recovers stuck sends, re-checks pending domains, releases due
+   scheduled campaigns, and reconciles campaign completion.
 
 ### 7.2 Reliability rules (non-negotiable)
 - **Idempotent jobs:** a retried message never duplicates a send. `campaign_recipients.status`

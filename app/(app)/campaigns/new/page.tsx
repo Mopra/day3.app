@@ -15,10 +15,16 @@ export default function CampaignNewPage() {
     router.push(`/campaigns/${res.id}`);
   }
 
+  // First autosave creates the draft, then moves to its own page where autosave
+  // continues. `replace` so Back doesn't return to the empty /new form.
+  async function onAutosave(values: CampaignFormValues) {
+    const res = await api.post<{ id: string }>("/api/campaigns", values);
+    router.replace(`/campaigns/${res.id}`);
+  }
+
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">New campaign</h1>
-      <CampaignComposer onSave={onSave} submitLabel="Save draft" />
+      <CampaignComposer onSave={onSave} onAutosave={onAutosave} submitLabel="Save draft" />
     </div>
   );
 }

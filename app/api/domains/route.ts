@@ -4,7 +4,7 @@ import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findDomain } from "@/api/finders";
-import { sendingDomains } from "@/db/schema";
+import { sendingDomains, senders } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { createDomainIdentity } from "@/services/ses-identity";
 
@@ -56,6 +56,26 @@ export const POST = route(async (req: NextRequest) => {
   } catch {
     throw new HttpError(409, "That domain is already added");
   }
+
+  // Auto-create the domain's first sender from the From identity entered here, so
+  // the campaign composer always has a sender to pick. The account's first sender
+  // becomes its default. Best-effort: a duplicate address is harmless.
+  const existingSender = await db.query.senders.findFirst({
+    where: eq(senders.accountId, account.id),
+  });
+  await db
+    .insert(senders)
+    .values({
+      id: newId("snd"),
+      accountId: account.id,
+      sendingDomainId: id,
+      fromName,
+      fromEmail,
+      isDefault: !existingSender,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoNothing();
 
   // Headline feature: register the domain with SES (Easy DKIM) and store the
   // CNAME records to show the customer. Best-effort — if SES isn't configured or

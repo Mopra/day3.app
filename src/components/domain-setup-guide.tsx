@@ -79,7 +79,12 @@ export function DomainSetupGuide({
   const [checking, setChecking] = useState(false);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [dns, setDns] = useState<DnsStatus>({ records: [], requiredResolved: false });
-  const [hostFormat, setHostFormat] = useState<"full" | "relative">("full");
+  // Default to the relative ("subdomain only") form: it's what the hosted DNS
+  // dashboards the vast majority of users have (Cloudflare, GoDaddy, Namecheap,
+  // Route 53, Google) expect — they append the zone themselves. The subtle toggle
+  // in the records header covers raw zone-file hosts that want the full name.
+  const [hostFormat, setHostFormat] = useState<"full" | "relative">("relative");
+  const [selectedStep, setSelectedStep] = useState<1 | 2 | 3>(1);
   const prevState = useRef(state);
 
   const resolvedByKey = useMemo(() => {
@@ -167,6 +172,23 @@ export function DomainSetupGuide({
     };
   }, [verified, check]);
 
+  // The step the user should be looking at, derived from real state: step 1 (add
+  // records) until the required DKIM records resolve in public DNS, then step 2
+  // (verification) carries the rest — it owns the finalizing, failed, stale, and
+  // verified states, which are all "what's the status" concerns, not "do this".
+  const currentStep: 1 | 2 = verified || stale || state === "failed" || dns.requiredResolved ? 2 : 1;
+
+  // Auto-advance the selected step when real progress moves currentStep — but
+  // never fight a manual selection that didn't cross a threshold (clicking back
+  // to review the records while pending stays put until DNS actually resolves).
+  const lastCurrentStep = useRef(0);
+  useEffect(() => {
+    if (lastCurrentStep.current !== currentStep) {
+      lastCurrentStep.current = currentStep;
+      setSelectedStep(currentStep);
+    }
+  }, [currentStep]);
+
   const verifyRecords = records.filter((r) => (r.group ?? "verify") === "verify");
   const deliverabilityRecords = records.filter((r) => (r.group ?? "verify") === "deliverability");
   const dmarcRecords = deliverabilityRecords.filter((r) => r.name.startsWith("_dmarc"));
@@ -179,46 +201,144 @@ export function DomainSetupGuide({
   const displayName = (name: string) =>
     hostFormat === "relative" ? relativeHost(name, root) : name;
 
+  const hasDeliverability = deliverabilityRecords.length > 0;
+  const totalSteps = hasDeliverability ? 3 : 2;
+
+  // Per-step state for the rail. The dot encodes progress; selection is separate
+  // (handled in StepRail), so a user can review a completed step without it
+  // looking unfinished.
+  const steps: StepItem[] = [
+    {
+      n: 1,
+      title: "Add DNS records",
+      hint:
+        verified || dns.requiredResolved
+          ? "Records detected"
+          : state === "failed"
+            ? "Needs a fix"
+            : "Copy them to your DNS host",
+      status:
+        verified || dns.requiredResolved
+          ? "complete"
+          : state === "failed"
+            ? "attention"
+            : "current",
+    },
+    {
+      n: 2,
+      title: "Verify domain",
+      hint: verified
+        ? "Verified"
+        : state === "failed"
+          ? "Couldn't verify"
+          : stale
+            ? "Needs attention"
+            : dns.requiredResolved
+              ? "Finalizing…"
+              : "Checking automatically",
+      status: verified
+        ? "complete"
+        : state === "failed" || stale
+          ? "attention"
+          : dns.requiredResolved
+            ? "current"
+            : "upcoming",
+    },
+    ...(hasDeliverability
+      ? [
+          {
+            n: 3 as const,
+            title: "Improve deliverability",
+            hint: domain.mailFromStatus === "success" ? "Return-Path active" : "Optional",
+            status: (domain.mailFromStatus === "success" ? "complete" : "upcoming") as StepStatus,
+          },
+        ]
+      : []),
+  ];
+
   return (
-    <div className="space-y-6">
-      <StatusHero
-        domain={domain}
-        state={state}
-        stale={stale}
-        checking={checking}
-        lastChecked={lastChecked}
-        dnsResolved={dns.requiredResolved}
-        onCheck={() => check({ manual: true })}
-      />
+    <div className="grid gap-8 pt-4 sm:pt-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+      <StepRail steps={steps} selected={selectedStep} onSelect={setSelectedStep} />
 
-      {domain.dnsWriteError && !verified && <DnsWriteErrorNotice error={domain.dnsWriteError} />}
+      <div className="min-w-0 space-y-6">
+        {selectedStep === 1 && (
+          <div className="space-y-5">
+            <StepHeader
+              n={1}
+              total={totalSteps}
+              title="Add your DNS records"
+              description={
+                <>
+                  Sign in to wherever you manage{" "}
+                  <span className="font-medium text-foreground">{root}</span> and open its DNS
+                  settings. Add each record below — copy the Name and Value across, and leave TTL at
+                  its default. We detect them automatically; there&apos;s nothing to submit here.
+                </>
+              }
+            />
 
-      {!fullyConfigured && (
-        <CloudflareAutoConfig domain={domain} onChange={onChange} onConfigured={check} />
-      )}
+            {!fullyConfigured && (
+              <CloudflareAutoConfig domain={domain} onChange={onChange} onConfigured={check} />
+            )}
 
-      {verifyRecords.length === 0 ? (
-        <RecordsNotReady checking={checking} onCheck={() => check({ manual: true })} />
-      ) : (
-        <>
-          <HostFormatToggle root={root} value={hostFormat} onChange={setHostFormat} />
+            {domain.dnsWriteError && !verified && (
+              <DnsWriteErrorNotice error={domain.dnsWriteError} />
+            )}
 
-          <ChecklistSection
-            title={verified ? "Domain verification" : "Verify your domain"}
-            subtitle={
-              <>
-                These DKIM records prove you own{" "}
-                <span className="font-medium text-foreground">{root}</span> and let inboxes trust
-                your mail. You don&apos;t need to understand them — just copy each value across.
-              </>
-            }
-            records={verifyRecords}
-            resolvedByKey={resolvedByKey}
-            displayName={displayName}
-            showCopyAll
-          />
+            {verifyRecords.length === 0 ? (
+              <RecordsNotReady checking={checking} onCheck={() => check({ manual: true })} />
+            ) : (
+              <ChecklistSection
+                title="Records to add"
+                subtitle={
+                  <>
+                    Each card below is one record. In your DNS settings, choose{" "}
+                    <span className="font-medium text-foreground">Add record</span>, then copy our{" "}
+                    <span className="font-medium text-foreground">Type</span>,{" "}
+                    <span className="font-medium text-foreground">Name</span>, and{" "}
+                    <span className="font-medium text-foreground">Value</span> into the matching
+                    boxes. Some hosts call the Name “Host”, and the Value “Target”, “Points to”, or
+                    “Content”.
+                  </>
+                }
+                records={verifyRecords}
+                resolvedByKey={resolvedByKey}
+                displayName={displayName}
+                showCopyAll
+                hostFormat={hostFormat}
+                onHostFormatChange={setHostFormat}
+                root={root}
+              />
+            )}
+          </div>
+        )}
 
-          {deliverabilityRecords.length > 0 && (
+        {selectedStep === 2 && (
+          <div className="space-y-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Step 2 of {totalSteps}
+            </p>
+            <StatusHero
+              domain={domain}
+              state={state}
+              stale={stale}
+              checking={checking}
+              lastChecked={lastChecked}
+              dnsResolved={dns.requiredResolved}
+              onCheck={() => check({ manual: true })}
+            />
+          </div>
+        )}
+
+        {selectedStep === 3 && hasDeliverability && (
+          <div className="space-y-5">
+            <StepHeader
+              n={3}
+              total={totalSteps}
+              optional
+              title="Improve deliverability"
+              description="A custom Return-Path and DMARC strengthen SPF/DMARC alignment, so more of your mail lands in the inbox. Entirely optional — add these whenever you like."
+            />
             <DeliverabilitySection
               returnPath={returnPathRecords}
               dmarc={dmarcRecords}
@@ -226,11 +346,118 @@ export function DomainSetupGuide({
               displayName={displayName}
               mailFromStatus={domain.mailFromStatus}
             />
-          )}
-        </>
-      )}
+          </div>
+        )}
 
-      <HelpSection root={root} />
+        <HelpSection root={root} />
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------- */
+
+type StepStatus = "complete" | "current" | "upcoming" | "attention";
+type StepItem = { n: 1 | 2 | 3; title: string; hint: string; status: StepStatus };
+
+// The left-hand guide rail: a vertical, clickable stepper. Each step's dot shows
+// real progress (done / in progress / waiting / needs attention) while the ring
+// shows which step is open — so reviewing a finished step never looks unfinished.
+function StepRail({
+  steps,
+  selected,
+  onSelect,
+}: {
+  steps: StepItem[];
+  selected: 1 | 2 | 3;
+  onSelect: (n: 1 | 2 | 3) => void;
+}) {
+  return (
+    <nav aria-label="Domain setup steps" className="lg:sticky lg:top-6 lg:self-start">
+      <ol>
+        {steps.map((s, i) => {
+          const isLast = i === steps.length - 1;
+          const active = selected === s.n;
+          return (
+            <li key={s.n}>
+              <button
+                type="button"
+                onClick={() => onSelect(s.n)}
+                aria-current={active ? "step" : undefined}
+                className="group flex w-full items-stretch gap-3 text-left"
+              >
+                <div className="flex flex-col items-center">
+                  <StepDot status={s.status} n={s.n} active={active} />
+                  {!isLast && <span className="mt-1 w-px flex-1 bg-border" />}
+                </div>
+                <div className={cn("pb-7", isLast && "pb-0")}>
+                  <span
+                    className={cn(
+                      "block text-sm font-medium transition-colors",
+                      active
+                        ? "text-foreground"
+                        : s.status === "upcoming"
+                          ? "text-muted-foreground group-hover:text-foreground"
+                          : "text-foreground/90 group-hover:text-foreground",
+                    )}
+                  >
+                    {s.title}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">{s.hint}</span>
+                </div>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+}
+
+function StepDot({ status, n, active }: { status: StepStatus; n: number; active: boolean }) {
+  return (
+    <span
+      className={cn(
+        "relative flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-colors",
+        status === "complete" && "border-primary bg-primary text-primary-foreground",
+        status === "current" && "border-primary bg-primary text-primary-foreground",
+        status === "attention" && "border-amber-500/60 bg-background text-amber-500",
+        status === "upcoming" && "border-border bg-background text-muted-foreground",
+        active && "ring-2 ring-primary/40 ring-offset-2 ring-offset-background",
+      )}
+    >
+      {status === "complete" ? (
+        <Check className="size-3.5" />
+      ) : status === "attention" ? (
+        <AlertCircle className="size-3.5" />
+      ) : (
+        n
+      )}
+    </span>
+  );
+}
+
+function StepHeader({
+  n,
+  total,
+  title,
+  description,
+  optional,
+}: {
+  n: number;
+  total: number;
+  title: string;
+  description?: ReactNode;
+  optional?: boolean;
+}) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Step {n} of {total}
+        {optional ? " · Optional" : ""}
+      </p>
+      <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
+      {description && <p className="text-sm text-muted-foreground">{description}</p>}
     </div>
   );
 }
@@ -585,6 +812,9 @@ function ChecklistSection({
   resolvedByKey,
   displayName,
   showCopyAll,
+  hostFormat,
+  onHostFormatChange,
+  root,
 }: {
   title: string;
   subtitle?: ReactNode;
@@ -592,6 +822,9 @@ function ChecklistSection({
   resolvedByKey: Map<string, boolean>;
   displayName: (name: string) => string;
   showCopyAll?: boolean;
+  hostFormat?: "full" | "relative";
+  onHostFormatChange?: (f: "full" | "relative") => void;
+  root?: string;
 }) {
   const found = records.filter((r) => resolvedByKey.get(recordKey(r))).length;
   return (
@@ -610,6 +843,9 @@ function ChecklistSection({
           )}
         </div>
       </div>
+      {hostFormat && onHostFormatChange && root && (
+        <HostFormatToggle root={root} value={hostFormat} onChange={onHostFormatChange} />
+      )}
       <div className="space-y-3">
         {records.map((r) => (
           <RecordRow
@@ -640,24 +876,17 @@ function DeliverabilitySection({
   displayName: (name: string) => string;
   mailFromStatus?: string;
 }) {
+  // Rendered expanded inside its own step — the stepper provides the disclosure,
+  // so this just lays out the two optional groups: the custom Return-Path (MX +
+  // SPF) with SES's live status, and the recommended DMARC record.
   return (
-    <section className="space-y-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="flex items-center gap-2 font-medium">
-            Improve deliverability
-            <Badge variant="secondary">Optional</Badge>
-          </h3>
-          <p className="mt-1 text-sm text-muted-foreground">
-            A custom Return-Path and DMARC strengthen SPF/DMARC alignment, so more of your mail
-            lands in the inbox. Add these now or come back later.
-          </p>
-        </div>
-        {returnPath.length > 0 && <ReturnPathStatus status={mailFromStatus} />}
-      </div>
-
+    <div className="space-y-6">
       {returnPath.length > 0 && (
-        <div className="space-y-3">
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-medium">Custom Return-Path</h3>
+            <ReturnPathStatus status={mailFromStatus} />
+          </div>
           {returnPath.map((r) => (
             <RecordRow
               key={recordKey(r)}
@@ -666,34 +895,31 @@ function DeliverabilitySection({
               resolved={!!resolvedByKey.get(recordKey(r))}
             />
           ))}
-        </div>
+        </section>
       )}
 
       {dmarc.length > 0 && (
-        <details className="group rounded-lg border bg-card">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-sm">
-            <span className="flex items-center gap-2">
-              <span className="font-medium">Add a DMARC record</span>
+        <section className="space-y-3">
+          <div className="space-y-1">
+            <h3 className="flex items-center gap-2 text-sm font-medium">
+              DMARC
               <Badge variant="secondary">Recommended</Badge>
-            </span>
-            <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
-          </summary>
-          <div className="space-y-3 border-t p-3">
+            </h3>
             <p className="text-xs text-muted-foreground">
-              Recommended — it improves inbox placement. You can add it now or come back later.
+              Improves inbox placement. Add it now or come back later.
             </p>
-            {dmarc.map((r) => (
-              <RecordRow
-                key={recordKey(r)}
-                record={r}
-                displayName={displayName(r.name)}
-                resolved={!!resolvedByKey.get(recordKey(r))}
-              />
-            ))}
           </div>
-        </details>
+          {dmarc.map((r) => (
+            <RecordRow
+              key={recordKey(r)}
+              record={r}
+              displayName={displayName(r.name)}
+              resolved={!!resolvedByKey.get(recordKey(r))}
+            />
+          ))}
+        </section>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -723,8 +949,9 @@ function ReturnPathStatus({ status }: { status?: string }) {
   );
 }
 
-// A single record as a checklist item: status pill first, then the big
-// click-to-copy Name and Value. MX rows surface their priority.
+// A single record laid out like the form the user fills in at their DNS host:
+// the record's Type as a plain-language title, its live status on the right, and
+// the Name and Value as big click-to-copy fields. MX rows surface their priority.
 function RecordRow({
   record,
   displayName,
@@ -735,21 +962,21 @@ function RecordRow({
   resolved: boolean;
 }) {
   return (
-    <div className="rounded-lg border p-3">
-      <div className="mb-2.5 flex flex-wrap items-center gap-2">
-        <StatusPill resolved={resolved} />
-        <Badge variant="outline" className="font-mono">
-          {record.type}
-        </Badge>
+    <div className="rounded-xl border bg-card p-4 sm:p-5">
+      <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-semibold">{record.type} record</span>
         {record.description && (
-          <span className="text-sm text-muted-foreground">{record.description}</span>
+          <span className="text-sm text-muted-foreground">· {record.description}</span>
         )}
         {record.type === "MX" && record.priority != null && (
           <Badge variant="secondary">Priority {record.priority}</Badge>
         )}
+        <span className="ml-auto">
+          <StatusPill resolved={resolved} />
+        </span>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <CopyField label="Name / Host" value={displayName} />
+      <div className="space-y-3">
+        <CopyField label="Name" value={displayName} />
         <CopyField label="Value" value={record.value} />
       </div>
     </div>
@@ -790,6 +1017,10 @@ function copyAllText(records: DnsRecord[], displayName: (name: string) => string
 
 /* ----------------------------------------------------------------------------- */
 
+// Deliberately understated: most users never touch this. We default to the
+// "subdomain only" form that hosted DNS dashboards expect, and only those on a
+// raw zone-file host need the full name. The hint explains the choice on hover
+// so it doesn't add to the visual load.
 function HostFormatToggle({
   root,
   value,
@@ -800,19 +1031,21 @@ function HostFormatToggle({
   onChange: (f: "full" | "relative") => void;
 }) {
   return (
-    <div className="flex flex-col gap-1.5 rounded-lg bg-muted/40 p-2.5 sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-xs text-muted-foreground">
-        Some DNS hosts want the full record name; others want only the part before{" "}
-        <span className="font-medium text-foreground">{root}</span>.
-      </p>
+    <div className="flex items-center justify-end gap-1.5">
+      <span
+        className="text-xs text-muted-foreground"
+        title={`Most DNS hosts append ${root} for you, so paste only the part before it. Pick "Full name" if your host wants the complete record name.`}
+      >
+        Name format
+      </span>
       <div className="inline-flex shrink-0 rounded-md border bg-background p-0.5 text-xs">
-        {(["full", "relative"] as const).map((opt) => (
+        {(["relative", "full"] as const).map((opt) => (
           <button
             key={opt}
             type="button"
             onClick={() => onChange(opt)}
             className={cn(
-              "rounded px-2.5 py-1 font-medium transition-colors",
+              "rounded px-2 py-0.5 font-medium transition-colors",
               value === opt
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:text-foreground",
@@ -845,19 +1078,21 @@ function CopyField({ label, value }: { label: string; value: string }) {
   }
 
   return (
-    <div className="min-w-0 space-y-1">
-      <div className="text-xs font-medium text-muted-foreground">{label}</div>
+    <div className="min-w-0 space-y-1.5">
+      <div className="text-xs font-medium text-foreground">{label}</div>
       <button
         type="button"
         onClick={onCopy}
-        title={value}
-        className="group/field flex w-full min-w-0 items-center gap-2 rounded-md border bg-muted/40 py-2 pr-2 pl-2.5 text-left transition-colors hover:bg-muted"
+        title={`${value}\n\nClick to copy`}
+        className="group/field flex w-full min-w-0 items-center gap-2 rounded-lg border bg-muted/40 py-2.5 pr-2.5 pl-3 text-left transition-colors hover:border-primary/40 hover:bg-muted"
       >
-        <code className="min-w-0 flex-1 truncate font-mono text-xs">{value}</code>
+        <code className="min-w-0 flex-1 truncate font-mono text-sm">{value}</code>
         <span
           className={cn(
-            "flex shrink-0 items-center gap-1 text-xs font-medium",
-            copied ? "text-primary" : "text-muted-foreground group-hover/field:text-foreground",
+            "flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+            copied
+              ? "bg-primary/10 text-primary"
+              : "bg-background text-muted-foreground group-hover/field:text-foreground",
           )}
         >
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
@@ -905,9 +1140,11 @@ function HelpSection({ root }: { root: string }) {
           <ul className="mt-1 list-disc space-y-1 pl-5">
             <li>DNS changes can take up to 48 hours to spread across the internet.</li>
             <li>
-              If your host added your domain to the Name automatically, switch to{" "}
-              <span className="font-medium text-foreground">Subdomain only</span> above so the
-              name isn&apos;t duplicated (e.g. <code>…_domainkey.{root}.{root}</code>).
+              We show the <span className="font-medium text-foreground">Subdomain only</span> name
+              by default, which most hosts expect. If your host saves the name exactly as typed
+              (so the record ends up missing <span className="font-medium text-foreground">{root}</span>),
+              switch the Name format to <span className="font-medium text-foreground">Full name</span>{" "}
+              by the records above.
             </li>
             <li>Make sure the record Type matches (CNAME, TXT, or MX) and there are no extra spaces.</li>
             <li>
