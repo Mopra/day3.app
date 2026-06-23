@@ -4,7 +4,6 @@ import { route } from "@/api/http";
 import { getDb } from "@/db/client";
 import { requireUnsubscribeSecret } from "@/lib/env";
 import { enforceRateLimit, clientIp } from "@/lib/rate-limit";
-import { formsPathPrefix } from "@/lib/public-url";
 import { verifyFormConfirmToken } from "@/services/form-token";
 import { confirmFormSignup } from "@/services/form-confirm";
 
@@ -14,9 +13,7 @@ import { confirmFormSignup } from "@/services/form-confirm";
 // logic in the API route and the rendering in the page keeps the page purely
 // presentational.
 function resultRedirect(req: NextRequest, formId: string | null, state: string): NextResponse {
-  const prefix = formsPathPrefix(req.headers.get("host"));
-  const path = formId ? `${prefix}/f/${formId}` : `${prefix}/f/unknown`;
-  const url = new URL(path, req.nextUrl.origin);
+  const url = new URL(`/f/${formId ?? "unknown"}`, req.nextUrl.origin);
   url.searchParams.set("state", state);
   return NextResponse.redirect(url, 303);
 }

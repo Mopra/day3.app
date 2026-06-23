@@ -3,10 +3,13 @@ import { getDb } from "@/db/client";
 import { loadPublicFormBySlugs } from "@/services/public-form";
 import { PublicFormView } from "@/components/public-form-view";
 
-// Pretty share URL (go.day3.app/<account-slug>/<form-slug>). Renders the same
-// form as the stable /f/<id> page; this URL is for humans (bios, social, email),
-// while embeds use the rename-proof id URL. The proxy rewrites the forms host's
-// /<a>/<b> here.
+// Pretty share URL: /f/<account-slug>/<form-slug> (go.day3.app/f/acme/newsletter).
+// Renders the same form as the stable /f/<id> page; this URL is for humans (bios,
+// social, email), while embeds use the rename-proof id URL.
+//
+// The first dynamic segment is [handle] to match the sibling /f/[handle] route
+// (Next requires a shared name at the same level); here `handle` is the account
+// slug.
 export const dynamic = "force-dynamic";
 
 type SearchParams = Promise<{ state?: string; reason?: string; embed?: string }>;
@@ -15,12 +18,12 @@ export default async function PrettyFormPage({
   params,
   searchParams,
 }: {
-  params: Promise<{ accountSlug: string; formSlug: string }>;
+  params: Promise<{ handle: string; formSlug: string }>;
   searchParams: SearchParams;
 }) {
-  const { accountSlug, formSlug } = await params;
+  const { handle, formSlug } = await params;
   const { state, reason, embed } = await searchParams;
-  const data = await loadPublicFormBySlugs(getDb(), accountSlug, formSlug);
+  const data = await loadPublicFormBySlugs(getDb(), handle, formSlug);
   if (!data) notFound();
 
   const isResultState = !!state && state !== "default";

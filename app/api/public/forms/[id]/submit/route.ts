@@ -7,7 +7,6 @@ import { forms } from "@/db/schema";
 import { getQueue } from "@/queue/producer";
 import { isValidEmail } from "@/lib/csv";
 import { enforceRateLimit, clientIp } from "@/lib/rate-limit";
-import { formsPathPrefix } from "@/lib/public-url";
 import { submitFormSignup } from "@/services/form-signup";
 
 // The single public ingestion endpoint behind every signup surface. It accepts
@@ -53,15 +52,13 @@ function successRedirect(req: NextRequest, form: { id: string; doubleOptIn: bool
     return NextResponse.redirect(form.redirectUrl, 303);
   }
   const state = form.doubleOptIn ? "check-inbox" : "subscribed";
-  const prefix = formsPathPrefix(req.headers.get("host"));
-  const url = new URL(`${prefix}/f/${form.id}`, req.nextUrl.origin);
+  const url = new URL(`/f/${form.id}`, req.nextUrl.origin);
   url.searchParams.set("state", state);
   return NextResponse.redirect(url, 303);
 }
 
 function errorRedirect(req: NextRequest, formId: string, reason: string): NextResponse {
-  const prefix = formsPathPrefix(req.headers.get("host"));
-  const url = new URL(`${prefix}/f/${formId}`, req.nextUrl.origin);
+  const url = new URL(`/f/${formId}`, req.nextUrl.origin);
   url.searchParams.set("state", "error");
   url.searchParams.set("reason", reason);
   return NextResponse.redirect(url, 303);
