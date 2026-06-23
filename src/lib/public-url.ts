@@ -1,25 +1,9 @@
-// The public signup-form surface lives on its own host (go.day3.app) so the
-// pretty share path go.day3.app/<account-slug>/<form-slug> can occupy the root
-// namespace without colliding with the authenticated app's routes. The proxy
-// (proxy.ts) rewrites that host's page paths under /hosted; the API
-// (/api/public/...) and Next internals are left untouched. In local dev there is
-// no such host, so the same pages are reachable directly at /hosted/... .
-// (The segment must not be underscore-prefixed — Next treats _folders as private
-// and excludes them from routing.)
-
-export const FORMS_HOST = (process.env.FORMS_HOST ?? "go.day3.app").toLowerCase();
-
-export function isFormsHost(host: string | null | undefined): boolean {
-  if (!host) return false;
-  // Strip a port (dev/proxies) before comparing.
-  return host.split(":")[0].toLowerCase() === FORMS_HOST.split(":")[0];
-}
-
-// Page paths are served verbatim on the forms host (rewritten to /hosted by the
-// proxy) and under the explicit /hosted prefix everywhere else (dev / app host).
-export function formsPathPrefix(host: string | null | undefined): string {
-  return isFormsHost(host) ? "" : "/hosted";
-}
+// Public signup forms live under /f on the app domain (production runs on
+// go.day3.app, so the forms are at go.day3.app/f/...). They are intentionally
+// NOT on a separate host — a host-based rewrite would hijack the whole app.
+//   • stable / embed URL:  /f/<id>                       (rename-proof)
+//   • pretty share URL:    /f/<account-slug>/<form-slug>
+// Both are plain public routes (see proxy.ts); the two depths never collide.
 
 /** Absolute, public-facing URL of a hosted form's stable page (used for embeds). */
 export function hostedFormUrl(baseUrl: string, formId: string): string {
@@ -28,12 +12,13 @@ export function hostedFormUrl(baseUrl: string, formId: string): string {
 
 /** Absolute, public-facing pretty URL (account slug + form slug). */
 export function prettyFormUrl(baseUrl: string, accountSlug: string, formSlug: string): string {
-  return `${baseUrl.replace(/\/$/, "")}/${accountSlug}/${formSlug}`;
+  return `${baseUrl.replace(/\/$/, "")}/f/${accountSlug}/${formSlug}`;
 }
 
-// Absolute base of the public forms host, for links built off-request (e.g. the
-// worker's confirmation email). Falls back to APP_URL so a single-domain dev
-// setup still produces working links.
+// Absolute base for form links built off-request (e.g. the worker's confirmation
+// email, and the dashboard install snippets). Defaults to APP_URL — which in
+// production is the app domain (go.day3.app) — and can be overridden with
+// FORMS_URL if forms are ever served from a different base.
 export function formsBaseUrl(): string {
   const explicit = process.env.FORMS_URL;
   if (explicit) return explicit.replace(/\/$/, "");
