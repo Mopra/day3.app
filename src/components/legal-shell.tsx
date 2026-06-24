@@ -4,9 +4,7 @@ import Link from "next/link";
 import { SiteFooter } from "@/components/site-footer";
 
 // Shared chrome for the public legal pages: a logo header that links home, a
-// constrained readable column, the "last updated" line, and the footer. The
-// review banner is a deliberate, visible reminder that the templated copy below
-// must be checked by counsel before launch — remove it once the content is final.
+// constrained readable column, the "last updated" line, and the footer.
 export function LegalShell({
   title,
   lastUpdated,
@@ -33,12 +31,6 @@ export function LegalShell({
       </header>
 
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-10">
-        <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-          <strong>Template — not yet legal advice.</strong> This page is a structured
-          starting point. Have it reviewed by qualified counsel and complete every{" "}
-          <em>[bracketed]</em> field before launch.
-        </div>
-
         <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
         <p className="mt-2 text-sm text-muted-foreground">Last updated: {lastUpdated}</p>
 

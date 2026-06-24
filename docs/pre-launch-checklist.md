@@ -9,35 +9,20 @@ that needs your review, and an external monitor. Work top to bottom.
 ## 1. Legal content to fill in
 
 Both pages render but contain `[bracketed]` placeholders and a visible amber
-"Template — not yet legal advice" banner. Have the copy reviewed by counsel, fill
-every bracket, then **remove the banner** (delete the amber `<div>` block in
-`src/components/legal-shell.tsx`).
+"Template — not yet legal advice" banner.
 
-### `app/privacy/page.tsx`
-| Placeholder | What to put |
-|---|---|
-| `[legal entity name, address, country]` | The legal company operating Day3 |
-| `[region]` (Supabase) | Where your Supabase project is hosted, e.g. "EU (Frankfurt)" |
-| `[Redis host]` | Your Redis provider, e.g. "Upstash" or "self-hosted on our VPS" |
-| `[retention period, e.g. 12 months]` | How long you keep open/click/event data |
-| `[timeframe]` | How fast you delete data after an account/subscriber is deleted |
-| `[postal address]` | A real contact postal address |
+**Status (2026-06-24):** all `[brackets]` are filled (Pradsgaard Labs; EU/Frankfurt;
+12-month retention / 30-day deletion; Denmark governing law; non-refundable), and
+the contact is now `connect@day3.app`. Two things remain, both your call:
 
-### `app/terms/page.tsx`
-| Placeholder | What to put |
-|---|---|
-| `[legal entity name, address, country]` | Same operating company |
-| `[Add refund/cancellation policy.]` | Your refund / cancellation terms |
-| `[12]` (liability cap) | The liability-cap window, confirm with counsel |
-| `[Confirm with counsel for your jurisdiction.]` | Review the whole liability clause |
-| `[jurisdiction]` | Governing-law country/state |
+1. **Optional but recommended:** have the copy reviewed by counsel — these are
+   self-drafted. A DPA (referenced by both pages) doesn't exist yet.
+2. **Remove the review banner** once you're comfortable — delete the amber `<div>`
+   block in `src/components/legal-shell.tsx`. (Left in place for now since I won't
+   pull a "not legal advice" disclaimer without your say-so.)
 
-### Both pages + footer
-- The **"Last updated" date** in each page (`LegalShell` `lastUpdated` prop).
-- The contact address **`support@day3.app`** appears in both pages and the footer
-  (`src/components/site-footer.tsx`). Change it everywhere if that's not your real
-  support inbox.
-- Footer company line `© <year> Day3` — adjust if the legal name differs.
+- The **"Last updated" date** lives in each page's `LegalShell lastUpdated` prop.
+- Footer company line `© <year> Day3` — adjust if you want the legal name instead.
 
 > Nice-to-have: also link `/privacy` from the email footer (right now it's only in
 > the marketing footer). Tell me and I'll add it to `src/services/render.ts`.

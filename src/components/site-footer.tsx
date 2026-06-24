@@ -17,7 +17,7 @@ export function SiteFooter() {
             Terms
           </Link>
           <a
-            href="mailto:support@day3.app"
+            href="mailto:connect@day3.app"
             className="transition-colors hover:text-foreground"
           >
             Contact

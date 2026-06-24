@@ -67,6 +67,46 @@ function escapeForPreview(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+// Fills {{merge_tags}} with representative sample values so the preview reads like
+// a real, personalized message rather than showing raw tokens. Function replacers
+// avoid String.replace treating "$" in values as a pattern; the optional
+// `(?:\|[^}]*)?` swallows a fallback (e.g. {{first_name|there}}) so the preview
+// shows the "field is filled" case.
+function fillMergeTags(s: string, company: string): string {
+  return s
+    .replace(/\{\{\s*first_name\s*(?:\|[^}]*)?\}\}/gi, () => "Alex")
+    .replace(/\{\{\s*last_name\s*(?:\|[^}]*)?\}\}/gi, () => "Rivera")
+    .replace(/\{\{\s*email\s*(?:\|[^}]*)?\}\}/gi, () => "alex@example.com")
+    .replace(/\{\{\s*company_name\s*(?:\|[^}]*)?\}\}/gi, () => company);
+}
+
+// Flattens sanitized body HTML to a one-line plain-text snippet — used as the
+// inbox-list preview line when the campaign has no explicit preview text, exactly
+// as real mail clients fall back to the start of the body.
+function htmlToSnippet(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// A small, stable palette + hash so a given sender always gets the same avatar
+// colour (like Gmail/Apple Mail). Deterministic — no Math.random — so the preview
+// doesn't flicker between renders.
+const AVATAR_COLORS = [
+  "#ef4444", "#f97316", "#d97706", "#16a34a", "#0891b2",
+  "#2563eb", "#7c3aed", "#db2777", "#0d9488", "#4f46e5",
+];
+function avatarColor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+
 // Builds an honest "as delivered" preview: the body sanitized exactly as on send,
 // with sample merge values filled in, the editable footer wording, and the real
 // company name + mailing address (the per-recipient unsubscribe link is appended
@@ -78,17 +118,8 @@ function buildPreviewDoc(
   companyAddress: string,
 ): string {
   const company = companyName.trim() || "Your Company";
-  // Function replacers avoid String.replace treating "$" in values as a pattern.
-  // The optional `(?:\|[^}]*)?` swallows a fallback (e.g. {{first_name|there}});
-  // the preview shows the "field is filled" case with sample values.
-  const fill = (s: string) =>
-    s
-      .replace(/\{\{\s*first_name\s*(?:\|[^}]*)?\}\}/gi, () => "Alex")
-      .replace(/\{\{\s*last_name\s*(?:\|[^}]*)?\}\}/gi, () => "Rivera")
-      .replace(/\{\{\s*email\s*(?:\|[^}]*)?\}\}/gi, () => "alex@example.com")
-      .replace(/\{\{\s*company_name\s*(?:\|[^}]*)?\}\}/gi, () => company);
-  const body = fill(sanitizeHtml(html));
-  const footer = escapeForPreview(fill(footerText.trim() || DEFAULT_FOOTER_TEXT));
+  const body = fillMergeTags(sanitizeHtml(html), company);
+  const footer = escapeForPreview(fillMergeTags(footerText.trim() || DEFAULT_FOOTER_TEXT, company));
   const addr = companyAddress.trim()
     ? escapeForPreview(companyAddress)
     : "[Add your business address]";
@@ -352,10 +383,13 @@ export function CampaignComposer({
 
   const name = watch("name");
   const subject = watch("subject");
+  const previewText = watch("previewText");
   const htmlBody = watch("htmlBody");
   const footerText = watch("footerText");
   const senderId = watch("senderId");
   const audienceId = watch("audienceId");
+  const fromName = watch("fromName");
+  const fromEmail = watch("fromEmail");
 
   // Real footer values from the account. Company name is the org name; the
   // mailing address is legally required and may not be set yet.
@@ -366,6 +400,22 @@ export function CampaignComposer({
   const addressMissing = account !== null && !companyAddress;
   // The Clerk default org name — emails reading "from My Organization" look unset.
   const companyNameDefault = account !== null && companyName.trim() === "My Organization";
+
+  // Derived "how it lands in the inbox" values for the preview dialog. The from
+  // name/address, subject, and snippet are exactly what the recipient sees in
+  // their mail client's list and reading pane; the snippet falls back to the start
+  // of the body (with sample merge values) when no preview text is set, just as
+  // real clients do.
+  const previewCompany = companyName.trim() || "Your Company";
+  const fromDisplayName = fromName?.trim() || "Your name";
+  const fromDisplayEmail = fromEmail?.trim() || "you@yourdomain.com";
+  const avatarInitial = (fromName?.trim() || fromEmail?.trim() || "?")
+    .charAt(0)
+    .toUpperCase();
+  const subjectDisplay = subject?.trim() || "(no subject)";
+  const inboxSnippet =
+    fillMergeTags(previewText?.trim() ?? "", previewCompany) ||
+    htmlToSnippet(fillMergeTags(sanitizeHtml(htmlBody ?? ""), previewCompany));
 
   // Base UI's <SelectValue /> renders the raw selected value (an id) unless the
   // root is given an items map of value→label. Map ids to friendly labels so the
@@ -1075,29 +1125,89 @@ export function CampaignComposer({
       </div>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Preview</DialogTitle>
+        <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-2xl">
+          {/* Mail-client chrome bar — frames everything below as an inbox view. */}
+          <DialogHeader className="border-b border-border bg-muted/40 px-4 py-2.5">
+            <DialogTitle className="flex items-center gap-2 text-sm font-medium">
+              <Eye className="size-4 text-muted-foreground" />
+              Inbox preview
+            </DialogTitle>
           </DialogHeader>
-          <div className="space-y-2">
-            {subject?.trim() && (
-              <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
-                <span className="text-muted-foreground">Subject: </span>
-                {subject}
+
+          <div className="max-h-[80vh] overflow-y-auto">
+            {/* The inbox list row — how the message lands in the list, before it's
+                opened: sender, subject, and the grey preview snippet. */}
+            <div className="border-b border-border px-4 py-3">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                In the inbox
+              </p>
+              <div className="flex items-start gap-3 rounded-lg border border-border bg-card px-3 py-2.5">
+                <span
+                  aria-hidden
+                  className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full text-sm font-semibold text-white"
+                  style={{ backgroundColor: avatarColor(fromDisplayName) }}
+                >
+                  {avatarInitial}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-sm font-semibold text-foreground">
+                      {fromDisplayName}
+                    </span>
+                    <span className="shrink-0 text-xs text-muted-foreground">Now</span>
+                  </div>
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {subjectDisplay}
+                  </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {inboxSnippet || "No preview text yet"}
+                  </p>
+                </div>
               </div>
-            )}
-            <div className="overflow-hidden rounded-lg border border-border bg-white">
+            </div>
+
+            {/* The opened message — reading-pane header (subject, sender, recipient,
+                time) above the email body rendered exactly as it sends. */}
+            <div className="px-5 pt-5">
+              <h2 className="font-heading text-xl font-semibold leading-snug text-foreground">
+                {subjectDisplay}
+              </h2>
+              <div className="mt-4 flex items-center gap-3">
+                <span
+                  aria-hidden
+                  className="flex size-10 shrink-0 items-center justify-center rounded-full text-base font-semibold text-white"
+                  style={{ backgroundColor: avatarColor(fromDisplayName) }}
+                >
+                  {avatarInitial}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline gap-x-1.5">
+                    <span className="text-sm font-semibold text-foreground">
+                      {fromDisplayName}
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      &lt;{fromDisplayEmail}&gt;
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">to me</p>
+                </div>
+                <span className="shrink-0 self-start text-xs text-muted-foreground">Now</span>
+              </div>
+            </div>
+
+            <div className="mt-4 border-t border-border bg-white">
               <iframe
                 title="Email preview"
                 sandbox=""
                 srcDoc={buildPreviewDoc(htmlBody ?? "", footerText ?? "", companyName, companyAddress)}
-                className="h-[60vh] w-full border-0"
+                className="h-[50vh] w-full border-0"
               />
             </div>
-            <p className="text-xs text-muted-foreground">
-              Sample personalization shown. The unsubscribe footer is added automatically on send.
-            </p>
           </div>
+
+          <p className="border-t border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+            Sample personalization shown. The unsubscribe footer is added automatically on send.
+          </p>
         </DialogContent>
       </Dialog>
 

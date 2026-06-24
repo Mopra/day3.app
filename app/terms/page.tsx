@@ -11,7 +11,7 @@ export default function TermsPage() {
     <LegalShell title="Terms of Service" lastUpdated="24 June 2026">
       <p>
         These Terms govern your access to and use of Day3 (the &quot;Service&quot;), operated
-        by <em>[legal entity name, address, country]</em>. By creating an account or using the
+        by <em>Pradsgaard Labs, Bogfinkevej 2, 7400 Herning, Denmark</em>. By creating an account or using the
         Service, you agree to these Terms.
       </p>
 
@@ -55,16 +55,18 @@ export default function TermsPage() {
       <p>
         You retain ownership of the contact and content data you upload. With respect to
         personal data of your subscribers, you are the controller and Day3 is your processor;
-        our processing is governed by our Data Processing Agreement and Privacy Policy. You
-        are responsible for having a lawful basis to process and email your contacts.
+        our processing is governed by our Privacy Policy, and a separate data processing
+        agreement is available on request. You are responsible for having a lawful basis to
+        process and email your contacts.
       </p>
 
       <h2>5. Plans, billing &amp; changes</h2>
       <p>
         Paid plans are billed through our billing provider on a recurring basis. Limits and
         pricing are described in the app. We may change pricing or features with reasonable
-        notice. Failure to pay may result in suspension of sending. <em>[Add refund/cancellation
-        policy.]</em>
+        notice. Failure to pay may result in suspension of sending. You can cancel at any
+        time; your subscription stays active until the end of the current billing period and
+        then expires automatically. Payments are non-refundable.
       </p>
 
       <h2>6. Suspension &amp; termination</h2>
@@ -80,14 +82,13 @@ export default function TermsPage() {
         The Service is provided &quot;as is&quot; without warranties of any kind. To the
         maximum extent permitted by law, Day3 is not liable for indirect, incidental, or
         consequential damages, and our total liability is limited to the amounts you paid in
-        the <em>[12]</em> months preceding the claim. <em>[Confirm with counsel for your
-        jurisdiction.]</em>
+        the 12 months preceding the claim.
       </p>
 
       <h2>8. Governing law &amp; contact</h2>
       <p>
-        These Terms are governed by the laws of <em>[jurisdiction]</em>. Questions:{" "}
-        <a href="mailto:support@day3.app">support@day3.app</a>.
+        These Terms are governed by the laws of Denmark. Questions:{" "}
+        <a href="mailto:connect@day3.app">connect@day3.app</a>.
       </p>
     </LegalShell>
   );
