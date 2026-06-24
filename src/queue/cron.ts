@@ -1,7 +1,7 @@
 import { and, eq, gt, isNotNull, isNull, lte, lt, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { accounts, campaignRecipients, campaigns, sendingDomains } from "../db/schema";
-import { campaignSendGateError } from "../api/campaigns";
+import { campaignContentError, campaignSendGateError } from "../api/campaigns";
 import { nowIso } from "../lib/ids";
 import { DOMAIN_RECHECK_WINDOW_DAYS } from "../lib/domain";
 import { logJob } from "../lib/job-log";
@@ -103,7 +103,9 @@ export async function releaseDueCampaigns(
 
   let released = 0;
   for (const campaign of due) {
-    const gateError = await campaignSendGateError(db, campaign.accountId, campaign);
+    const gateError =
+      campaignContentError(campaign) ??
+      (await campaignSendGateError(db, campaign.accountId, campaign));
     if (gateError) {
       await db
         .update(campaigns)

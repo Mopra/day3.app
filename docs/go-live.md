@@ -97,12 +97,20 @@ The app passes this name on every send; if it doesn't exist, sends fail.
 4. **Create** → copy the **Signing Secret** (`whsec_…`).
 5. Set `CLERK_WEBHOOK_SIGNING_SECRET` on Vercel → redeploy.
 
-### 2B. Billing (so the paid plan actually gates sending)
+### 2B. Billing (bandwidth plans)
 1. Clerk dashboard → **Configure → Billing** → enable (beta; backed by Stripe).
-2. Create a plan **for Organizations** (not users) with slug **`tiny`** (must match
-   `PAID_PLAN_SLUG`), priced as you like ($9/mo).
-3. The app gates sending on `has({ plan: "org:tiny" })`: an org without an active `tiny`
-   subscription has `sendingEnabled = false`, so campaigns can't send.
+2. Create one plan **for Organizations** (not users) per paid tier, with slugs that
+   **exactly match the plan keys** in `src/lib/plans-catalog.ts`: `1k_plan` ($1),
+   `5k_plan` ($3), `10k_plan` ($5), `25k_plan` ($12), `50k_plan` ($24),
+   `100k_plan` ($49). The Free tier (`free_org`) is the default and needs no paid plan.
+3. The app resolves the held tier from `has({ plan: "org:<slug>" })` (highest tier
+   wins) and sets `monthlyEmailLimit` accordingly. The **Free tier is set-up-only**
+   — an org can configure domains/senders/audiences and draft, but **cannot send**
+   (and is capped at 500 subscribers) until it subscribes to a paid plan. A lapsed
+   subscription gracefully downgrades back to Free rather than locking the account out.
+4. **AI is gated to 10k and up.** If you offer the AI assistant, only the `10k_plan`+
+   tiers expose it; `free_org`/`1k_plan`/`5k_plan` accounts get an upgrade prompt and
+   the AI routes return 403. (AI also needs `OPENROUTER_API_KEY` configured.)
 
 ### Note on Clerk environments
 The app is currently on the **test** Clerk instance (`pk_test_…`, `expert-feline-46`) —

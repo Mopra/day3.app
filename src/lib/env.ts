@@ -37,6 +37,18 @@ const required = (name: string) =>
 
 const fullSchema = z.object({
   DATABASE_URL: required("DATABASE_URL"),
+  // Public base URL of the app. REQUIRED on every tier: the worker stamps it into
+  // every campaign email's unsubscribe link and open/click tracking URLs, so a
+  // missing value silently ships broken (relative) unsubscribe links — a direct
+  // CAN-SPAM / SES-suspension risk. The web tier needs it for form + test-email
+  // links. (Previously read with a `?? ""` fallback in the worker.)
+  APP_URL: required("APP_URL"),
+  // The BullMQ broker (both tiers enqueue) and Supabase Storage (web uploads
+  // CSVs, worker reads them during imports). Hard runtime deps — fail fast rather
+  // than surface as a confusing runtime error on the first import/send.
+  REDIS_URL: required("REDIS_URL"),
+  SUPABASE_URL: required("SUPABASE_URL"),
+  SUPABASE_SERVICE_ROLE_KEY: secret("SUPABASE_SERVICE_ROLE_KEY"),
   UNSUBSCRIBE_SECRET: secret("UNSUBSCRIBE_SECRET"),
   OAUTH_STATE_SECRET: secret("OAUTH_STATE_SECRET"),
   // DNS token encryption accepts either the single-key form (DNS_TOKEN_ENC_KEY)
@@ -56,6 +68,11 @@ const fullSchema = z.object({
   // to boot. OPENROUTER_MODEL overrides the default model slug.
   OPENROUTER_API_KEY: secret("OPENROUTER_API_KEY").optional(),
   OPENROUTER_MODEL: z.string().optional(),
+  // Error sink (optional). When set, failed/dead-lettered jobs, 500s, and
+  // reputation auto-pauses are POSTed here (see src/lib/logger.ts). Unset → no
+  // error reporting; a production boot without it logs a loud warning below.
+  ERROR_REPORTING_DSN: z.string().optional(),
+  SENTRY_DSN: z.string().optional(),
 });
 
 export type Env = z.infer<typeof fullSchema>;
@@ -65,6 +82,10 @@ export type EnvProfile = "web" | "worker";
 // when sending/checking via SES).
 const workerSchema = fullSchema.pick({
   DATABASE_URL: true,
+  APP_URL: true,
+  REDIS_URL: true,
+  SUPABASE_URL: true,
+  SUPABASE_SERVICE_ROLE_KEY: true,
   UNSUBSCRIBE_SECRET: true,
   EMAIL_PROVIDER: true,
   AWS_REGION: true,
@@ -145,7 +166,26 @@ export function validateEnv(
     );
   }
   cached[profile] = result.data as Env;
+  warnOnUnmonitoredProduction(profile, source);
   return cached[profile]!;
+}
+
+// A production boot with no error sink configured is a silent operability hole:
+// failed jobs, 500s, and reputation auto-pauses would page nobody. Validation
+// shouldn't *fail* on it (the sink is genuinely optional), but it must be loud.
+// Fires at most once per profile (validateEnv memoizes) and never in dev/test.
+function warnOnUnmonitoredProduction(profile: EnvProfile, source: NodeJS.ProcessEnv): void {
+  if (source.NODE_ENV !== "production") return;
+  if (source.ERROR_REPORTING_DSN || source.SENTRY_DSN) return;
+  // Plain console (not the structured logger) to avoid any import cycle at the
+  // very first lines of startup; this is an operator-facing boot warning.
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      msg: "No ERROR_REPORTING_DSN/SENTRY_DSN set in production: errors, dead-lettered jobs, and reputation auto-pauses will not be reported. Configure an error sink and a body-aware /api/health monitor before launch.",
+      profile,
+    }),
+  );
 }
 
 /** Test-only: clear the memoized validation so a fresh env can be re-checked. */
@@ -168,3 +208,18 @@ function requireSecret(name: keyof Env): string {
 
 export const requireUnsubscribeSecret = (): string => requireSecret("UNSUBSCRIBE_SECRET");
 export const requireOAuthStateSecret = (): string => requireSecret("OAUTH_STATE_SECRET");
+
+/**
+ * The app's public base URL. Throws rather than returning an empty string, so a
+ * misconfigured worker can never email broken (relative) unsubscribe links.
+ */
+export function requireAppUrl(): string {
+  const value = process.env.APP_URL;
+  if (!value || value.trim().length === 0) {
+    throw new Error(
+      "APP_URL is not set. Refusing to send: unsubscribe and tracking links need " +
+        "an absolute base URL — see .env.worker.example.",
+    );
+  }
+  return value;
+}

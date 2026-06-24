@@ -1,20 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import {
+  ListCount,
+  ListEmpty,
+  ListFilter,
+  ListNoResults,
+  ListSearch,
+  ListSkeleton,
+  ListToolbar,
+  useListController,
+} from "@/components/ui/data-list";
 import { useApi } from "@/lib/api";
 import { statusLabel, statusVariant } from "@/lib/format";
 import type { AdminReviewRow } from "@/lib/types";
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export default function AdminReviewsPage() {
   const api = useApi();
   const [reviews, setReviews] = useState<AdminReviewRow[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [risk, setRisk] = useState("all");
 
   const load = useCallback(() => {
     api
@@ -25,6 +38,21 @@ export default function AdminReviewsPage() {
   }, []);
 
   useEffect(load, [load]);
+
+  const riskOptions = useMemo(() => {
+    const present = Array.from(
+      new Set((reviews ?? []).map((r) => r.campaign.riskLevel ?? "unscored")),
+    );
+    return [{ value: "all", label: "All risk levels" }, ...present.map((s) => ({ value: s, label: cap(s) }))];
+  }, [reviews]);
+
+  // Highest-risk campaigns surface first — that's what a reviewer wants to see.
+  const list = useListController(reviews, {
+    searchText: (r) => `${r.campaign.name} ${r.accountName} ${r.campaign.subject}`,
+    predicate: (r) => risk === "all" || (r.campaign.riskLevel ?? "unscored") === risk,
+    sortAccessors: { risk: (r) => r.campaign.riskScore ?? -1 },
+    initialSort: { key: "risk", dir: "desc" },
+  });
 
   async function act(campaignId: string, action: "approve" | "block", body?: unknown) {
     setBusyId(campaignId);
@@ -43,18 +71,43 @@ export default function AdminReviewsPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">Campaign reviews</h1>
 
-      {reviews === null ? (
-        <Skeleton className="h-32 w-full" />
-      ) : reviews.length === 0 ? (
+      {reviews !== null && reviews.length > 0 && (
+        <ListToolbar>
+          <ListSearch
+            value={list.search}
+            onChange={list.setSearch}
+            placeholder="Search campaign or account…"
+          />
+          <ListFilter
+            value={risk}
+            onChange={setRisk}
+            options={riskOptions}
+            ariaLabel="Filter by risk level"
+          />
+          <ListCount shown={list.shown} total={list.total} noun="review" className="ml-auto" />
+        </ListToolbar>
+      )}
+
+      {list.view === null ? (
+        <ListSkeleton rows={3} />
+      ) : list.isEmpty ? (
         <Card>
           <CardContent>
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              Nothing needs review right now.
-            </p>
+            <ListEmpty
+              icon={CheckCircle2}
+              title="Nothing to review"
+              description="You're all caught up — no campaigns are waiting for review right now."
+            />
+          </CardContent>
+        </Card>
+      ) : list.isFilteredEmpty ? (
+        <Card>
+          <CardContent>
+            <ListNoResults onClear={() => { list.setSearch(""); setRisk("all"); }} />
           </CardContent>
         </Card>
       ) : (
-        reviews.map(({ campaign, accountName, audienceCount }) => (
+        list.view.map(({ campaign, accountName, audienceCount }) => (
           <Card key={campaign.id}>
             <CardHeader>
               <CardTitle className="flex items-center gap-3 text-base">
@@ -63,9 +116,7 @@ export default function AdminReviewsPage() {
                   {statusLabel(campaign.status)}
                 </Badge>
                 {campaign.riskLevel && (
-                  <Badge
-                    variant={campaign.riskLevel === "medium" ? "secondary" : "destructive"}
-                  >
+                  <Badge variant={campaign.riskLevel === "medium" ? "secondary" : "destructive"}>
                     risk: {campaign.riskLevel} ({campaign.riskScore})
                   </Badge>
                 )}

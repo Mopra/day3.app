@@ -1,7 +1,8 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { accounts, campaignRecipients } from "../db/schema";
 import { nowIso } from "../lib/ids";
+import { logger } from "../lib/logger";
 
 export const BOUNCE_RATE_WARNING = 0.03;
 export const BOUNCE_RATE_PAUSE = 0.04;
@@ -10,6 +11,13 @@ export const COMPLAINT_RATE_PAUSE = 0.0008;
 
 // Below this many attempted sends, rates are too noisy to act on.
 const MIN_ATTEMPTED_FOR_ENFORCEMENT = 50;
+
+// Reputation is judged over a TRAILING WINDOW of recent sends, not the account's
+// lifetime. SES suspends on *recent* bounce/complaint rates, so a long good
+// history must not dilute a current spike — an account that sent cleanly for
+// months can still cross SES's thresholds today, and a lifetime average would
+// react far too slowly. Env-tunable; defaults to 14 days.
+export const HEALTH_WINDOW_DAYS = Math.max(1, Number(process.env.HEALTH_WINDOW_DAYS ?? "14"));
 
 export type AccountHealth = {
   attempted: number;
@@ -22,6 +30,11 @@ export type AccountHealth = {
 };
 
 export async function computeAccountHealth(db: Db, accountId: string): Promise<AccountHealth> {
+  // Only count emails SENT within the trailing window. `sent_at` is set on the
+  // send and preserved through later delivered/bounced/complained transitions,
+  // so this captures "of what we sent recently, how much went wrong" — the rate
+  // SES actually reacts to. (ISO timestamps compare correctly against a tstz col.)
+  const cutoff = new Date(Date.now() - HEALTH_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const rows = await db
     .select({
       status: campaignRecipients.status,
@@ -31,6 +44,7 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
     .where(
       and(
         eq(campaignRecipients.accountId, accountId),
+        gte(campaignRecipients.sentAt, cutoff),
         inArray(campaignRecipients.status, [
           "sent",
           "delivered",
@@ -73,7 +87,10 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
 export async function enforceAccountHealth(db: Db, accountId: string): Promise<AccountHealth> {
   const health = await computeAccountHealth(db, accountId);
   if (health.status === "paused") {
-    await db
+    // The `riskStatus = 'normal'` guard means RETURNING is non-empty only on the
+    // actual normal→paused transition, not on the many later bounce/complaint
+    // webhooks for an already-paused account — so we alert exactly once.
+    const flipped = await db
       .update(accounts)
       .set({
         sendingEnabled: false,
@@ -81,7 +98,28 @@ export async function enforceAccountHealth(db: Db, accountId: string): Promise<A
         pausedReason: health.reason,
         updatedAt: nowIso(),
       })
-      .where(and(eq(accounts.id, accountId), eq(accounts.riskStatus, "normal")));
+      .where(and(eq(accounts.id, accountId), eq(accounts.riskStatus, "normal")))
+      .returning({ id: accounts.id });
+
+    if (flipped.length > 0) {
+      // A reputation auto-pause is one of the highest-severity operational
+      // events (it can precede an SES account-level suspension that affects every
+      // tenant), so ship it to the error sink to page on-call — not just a log
+      // line nobody reads. Best-effort; never block the webhook/send path.
+      void logger.reportError(
+        "account auto-paused for reputation (bounce/complaint rate)",
+        new Error(health.reason ?? "reputation threshold exceeded"),
+        {
+          accountId,
+          attempted: health.attempted,
+          bounced: health.bounced,
+          complained: health.complained,
+          bounceRate: Number(health.bounceRate.toFixed(4)),
+          complaintRate: Number(health.complaintRate.toFixed(5)),
+          windowDays: HEALTH_WINDOW_DAYS,
+        },
+      );
+    }
   }
   return health;
 }

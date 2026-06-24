@@ -90,7 +90,7 @@ describe("applySubscriptionEvent (primary period source)", () => {
 
     await applySubscriptionEvent(db, {
       clerkOrgId: "org_primary",
-      planSlug: "tiny",
+      planSlug: "10k_plan",
       lifecycle: "active",
       periodStart: "2026-06-01T00:00:00.000Z",
       periodEnd: "2026-07-01T00:00:00.000Z",
@@ -112,7 +112,7 @@ describe("applySubscriptionEvent (primary period source)", () => {
 
     await applySubscriptionEvent(db, {
       clerkOrgId: "org_redelivery",
-      planSlug: "tiny",
+      planSlug: "10k_plan",
       lifecycle: "active",
       periodStart: "2026-06-01T00:00:00.000Z",
       periodEnd: "2026-07-01T00:00:00.000Z",
@@ -133,7 +133,7 @@ describe("applySubscriptionEvent lifecycle (deterministic + idempotent)", () => 
     const db = await testDb();
     const acc = await seedAccount(db, {
       clerkOrgId: "org_lifecycle",
-      plan: "tiny",
+      plan: "10k_plan",
       subscriptionStatus: "active",
       sendingEnabled: true,
       monthlyEmailLimit: 10_000,
@@ -148,21 +148,21 @@ describe("applySubscriptionEvent lifecycle (deterministic + idempotent)", () => 
     // Payment fails: past_due blocks sending but keeps the plan/limit and usage.
     await applySubscriptionEvent(db, {
       clerkOrgId: "org_lifecycle",
-      planSlug: "tiny",
+      planSlug: "10k_plan",
       lifecycle: "past_due",
       ...period,
     });
     let row = await read();
     expect(row.subscriptionStatus).toBe("past_due");
     expect(row.sendingEnabled).toBe(false);
-    expect(row.plan).toBe("tiny");
+    expect(row.plan).toBe("10k_plan");
     expect(row.monthlyEmailLimit).toBe(10_000);
     expect(row.monthlyEmailSentCount).toBe(4000);
 
     // Duplicate past_due redelivery is a no-op (same row).
     await applySubscriptionEvent(db, {
       clerkOrgId: "org_lifecycle",
-      planSlug: "tiny",
+      planSlug: "10k_plan",
       lifecycle: "past_due",
       ...period,
     });
@@ -173,7 +173,7 @@ describe("applySubscriptionEvent lifecycle (deterministic + idempotent)", () => 
     // Payment recovers within the same period: re-activates without zeroing usage.
     await applySubscriptionEvent(db, {
       clerkOrgId: "org_lifecycle",
-      planSlug: "tiny",
+      planSlug: "10k_plan",
       lifecycle: "active",
       ...period,
     });
@@ -187,7 +187,7 @@ describe("applySubscriptionEvent lifecycle (deterministic + idempotent)", () => 
     const db = await testDb();
     const acc = await seedAccount(db, {
       clerkOrgId: "org_ooo",
-      plan: "tiny",
+      plan: "10k_plan",
       subscriptionStatus: "active",
       sendingEnabled: true,
       monthlyEmailSentCount: 50,
@@ -199,7 +199,7 @@ describe("applySubscriptionEvent lifecycle (deterministic + idempotent)", () => 
     // not newer, so it must not zero the current usage.
     await applySubscriptionEvent(db, {
       clerkOrgId: "org_ooo",
-      planSlug: "tiny",
+      planSlug: "10k_plan",
       lifecycle: "active",
       periodStart: "2026-05-01T00:00:00.000Z",
       periodEnd: "2026-06-01T00:00:00.000Z",
@@ -209,11 +209,11 @@ describe("applySubscriptionEvent lifecycle (deterministic + idempotent)", () => 
     expect(row?.monthlyEmailSentCount).toBe(50);
   });
 
-  it("ended revokes the plan and blocks sending without zeroing usage", async () => {
+  it("ended gracefully downgrades to the active free tier without zeroing usage", async () => {
     const db = await testDb();
     const acc = await seedAccount(db, {
       clerkOrgId: "org_ended",
-      plan: "tiny",
+      plan: "10k_plan",
       subscriptionStatus: "active",
       sendingEnabled: true,
       monthlyEmailSentCount: 7,
@@ -222,15 +222,17 @@ describe("applySubscriptionEvent lifecycle (deterministic + idempotent)", () => 
 
     await applySubscriptionEvent(db, {
       clerkOrgId: "org_ended",
-      planSlug: "tiny",
+      planSlug: "10k_plan",
       lifecycle: "ended",
       ...period,
     });
 
+    // A lapsed subscription drops to the always-active free tier (set-up + drafts,
+    // no sending), not a locked-out "inactive" state. Usage is preserved.
     const row = await db.query.accounts.findFirst({ where: eq(accounts.id, acc.id) });
-    expect(row?.subscriptionStatus).toBe("inactive");
+    expect(row?.subscriptionStatus).toBe("active");
     expect(row?.sendingEnabled).toBe(false);
-    expect(row?.plan).toBe("none");
+    expect(row?.plan).toBe("free_org");
     expect(row?.monthlyEmailLimit).toBe(0);
     expect(row?.monthlyEmailSentCount).toBe(7);
   });

@@ -71,9 +71,18 @@ https://go.day3.app/api/health
 ```
 
 - Alert when the status code is **not 200** (covers the DB-down 503).
-- Optionally also alert on the JSON body: `status != "ok"` or
-  `checks.worker.ok == false` to catch a stalled/dead worker — this is the
-  signal that "campaigns stopped sending" before any customer reports it.
+- **REQUIRED (not optional): also assert on the JSON body.** A dead/stalled
+  worker keeps the HTTP status at **200** by design — a status-code-only monitor
+  stays green while campaigns have silently stopped sending. Configure a
+  body/content assertion so the check FAILS when either is true:
+  - `status != "ok"`, or
+  - `checks.worker.ok == false`
+
+  Most monitors support this directly (Checkly: a Playwright/`expect` assertion
+  on the JSON; Better Uptime / UptimeRobot: "keyword" / "response body" rule —
+  alert when the body does **not** contain `"status":"ok"`). Without this, the
+  single most important failure (worker down) is invisible. Treat wiring it as a
+  go-live blocker.
 - Recommended interval: 60s.
 
 Vercel itself does not health-gate serverless functions, so this endpoint exists
@@ -122,6 +131,25 @@ journalctl -u day3-worker -f
 The supervisor restarts the *process*; the **heartbeat + cron checks on
 `/api/health`** are how you detect a worker that's running but wedged (e.g.
 blocked on a hung Redis connection) — the process is up but not beating.
+
+## Error reporting (the other half of "nothing pages")
+
+`/api/health` catches a *dead* component. It does **not** catch errors in
+otherwise-healthy code — a 500 on an API route, a dead-lettered job (retries
+exhausted), or a **reputation auto-pause** (an account auto-disabled for a high
+bounce/complaint rate, which can precede an SES account-level suspension that
+affects every tenant). Those are shipped to the error sink instead.
+
+Set `ERROR_REPORTING_DSN` (or `SENTRY_DSN`) on **both** tiers (Vercel env + the
+worker `.env`). It's an HTTP collector URL; the app POSTs redacted JSON
+(`{ message, error, context }` — never secrets) fire-and-forget (see
+`src/lib/logger.ts`). A vanilla Sentry DSN needs a small collector/shim to accept
+this shape; any HTTP endpoint (a webhook-to-Slack, a log drain's HTTP intake)
+works directly.
+
+If it is unset in production, both tiers log a loud boot warning
+(`No ERROR_REPORTING_DSN/SENTRY_DSN set in production…`). **Set it before
+launch** — without it, dead-lettered jobs and reputation auto-pauses page no one.
 
 ## Build/version info
 

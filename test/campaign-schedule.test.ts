@@ -73,6 +73,32 @@ describe("releaseDueCampaigns", () => {
     expect(queue.messages).toHaveLength(0);
   });
 
+  it("blocks release when the account has no mailing address (CAN-SPAM)", async () => {
+    const db = await testDb();
+    // A sendable account in every other respect, but with no postal address.
+    const account = await seedAccount(db, { companyAddress: null });
+    const domain = await seedDomain(db, account.id); // verified by default
+    const audience = await seedAudience(db, account.id);
+    await seedSubscribers(db, account.id, audience.id, ["a@example.com"]);
+    const campaign = await seedCampaign(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      sendingDomainId: domain.id,
+    });
+    await schedule(db, campaign.id, new Date(Date.now() - 60_000));
+
+    const queue = new FakeQueue();
+    const released = await releaseDueCampaigns(db, queue, new Date());
+
+    expect(released).toBe(0);
+    const after = await db.query.campaigns.findFirst({
+      where: (t, { eq }) => eq(t.id, campaign.id),
+    });
+    expect(after?.status).toBe("draft");
+    expect(after?.pausedReason).toMatch(/mailing address/i);
+    expect(queue.messages).toHaveLength(0);
+  });
+
   it("returns a due campaign to draft (with a reason) when a gate now fails", async () => {
     const db = await testDb();
     const account = await seedAccount(db);

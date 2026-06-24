@@ -7,6 +7,7 @@ import { subscribers } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { isValidEmail } from "@/lib/csv";
 import { isEmailSuppressed } from "@/services/suppression";
+import { subscriberHeadroom, subscriberLimitMessage } from "@/services/subscriber-limit";
 
 const ListSubscribersSchema = z.object({
   status: z.string().optional(),
@@ -61,6 +62,10 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
   if (!isValidEmail(email)) throw new HttpError(400, "Invalid email");
   if (await isEmailSuppressed(db, account.id, email)) {
     throw new HttpError(409, "This email is on the suppression list");
+  }
+  // Free-tier subscriber cap (spam/abuse protection). Paid tiers are unlimited.
+  if ((await subscriberHeadroom(db, account.id, account.plan)) < 1) {
+    throw new HttpError(403, subscriberLimitMessage(account.plan));
   }
 
   const now = nowIso();

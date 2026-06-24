@@ -5,7 +5,7 @@ import { canonicalizeEmail } from "../../lib/csv";
 import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
 import { getSuppressedEmails } from "../../services/suppression";
-import { SEND_BATCH_SIZE, type JobQueue } from "../messages";
+import { SEND_BATCH_SIZE, SEND_LANES, type JobQueue } from "../messages";
 
 // Postgres allows up to 65535 bound params per statement; chunk large audiences
 // into comfortably-sized multi-row inserts.
@@ -86,12 +86,22 @@ export async function generateCampaignRecipients(
     .set({ status: "sending", updatedAt: nowIso() })
     .where(eq(campaigns.id, campaign.id));
 
-  await jobsQueue.send({
-    type: "send_campaign_batch",
-    campaignId: campaign.id,
-    accountId: campaign.accountId,
-    batchSize: SEND_BATCH_SIZE,
-  });
+  // Fan out independent send lanes so the worker actually sends in parallel.
+  // Each lane is a self-chaining `send_campaign_batch` that claims a disjoint
+  // slice of pending rows (FOR UPDATE SKIP LOCKED), so the lanes never collide
+  // and never double-send. We never enqueue more lanes than there are batches of
+  // work — a small audience still gets exactly one lane, identical to before.
+  // Re-running this handler after a crash safely re-enqueues lanes (they just
+  // find no pending rows, or claim disjoint sets, and stop).
+  const laneCount = Math.max(1, Math.min(SEND_LANES, Math.ceil(eligible.length / SEND_BATCH_SIZE)));
+  for (let lane = 0; lane < laneCount; lane++) {
+    await jobsQueue.send({
+      type: "send_campaign_batch",
+      campaignId: campaign.id,
+      accountId: campaign.accountId,
+      batchSize: SEND_BATCH_SIZE,
+    });
+  }
 
   await logJob(db, {
     jobType: "generate_campaign_recipients",

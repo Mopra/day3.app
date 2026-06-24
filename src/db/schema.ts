@@ -22,8 +22,11 @@ export const accounts = pgTable(
     clerkOrgId: text("clerk_org_id").notNull().unique(),
     name: text("name").notNull(),
 
-    plan: text("plan").notNull().default("none"),
-    subscriptionStatus: text("subscription_status").notNull().default("inactive"),
+    // Bandwidth pricing: every org starts on the always-active free tier (set-up
+    // + drafts only, no sending) and buys a monthly send allowance by subscribing
+    // to a paid plan. See lib/plans-catalog.ts.
+    plan: text("plan").notNull().default("free_org"),
+    subscriptionStatus: text("subscription_status").notNull().default("active"),
     monthlyEmailLimit: integer("monthly_email_limit").notNull().default(0),
     monthlyEmailSentCount: integer("monthly_email_sent_count").notNull().default(0),
     currentPeriodStart: tstz("current_period_start"),
@@ -328,6 +331,12 @@ export const campaigns = pgTable(
 
     htmlBody: text("html_body").notNull(),
     textBody: text("text_body"),
+
+    // Editable footer wording (the "you're receiving this because…" line). The
+    // physical address + the per-recipient unsubscribe link are appended
+    // canonically at send time (see services/render.ts) and are never editable.
+    // Null falls back to the default sentence.
+    footerText: text("footer_text"),
 
     status: text("status").$type<CampaignStatus>().notNull().default("draft"),
 

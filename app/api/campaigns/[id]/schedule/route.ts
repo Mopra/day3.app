@@ -3,7 +3,7 @@ import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findCampaign } from "@/api/finders";
-import { campaignSendGateError } from "@/api/campaigns";
+import { campaignContentError, campaignSendGateError } from "@/api/campaigns";
 import { campaigns } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 import { checkSendEligibility } from "@/services/plans";
@@ -37,6 +37,9 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
   if (when.getTime() < Date.now() + 60_000) {
     throw new HttpError(400, "Pick a time at least a minute from now");
   }
+
+  const contentError = campaignContentError(campaign);
+  if (contentError) throw new HttpError(400, contentError);
 
   const gateError = await campaignSendGateError(db, account.id, campaign);
   if (gateError) throw new HttpError(gateError.includes("verified") ? 403 : 400, gateError);

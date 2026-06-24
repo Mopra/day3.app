@@ -4,13 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
-import {
-  AlertCircle,
-  CheckCircle2,
-  ChevronRight,
-  Clock,
-  Globe,
-} from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, Globe } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -24,7 +18,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import { OrbitLoader } from "@/components/ui/orbit-loader";
 import {
   Table,
@@ -34,6 +27,19 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  ListCount,
+  ListEmpty,
+  ListFilter,
+  ListNoResults,
+  ListSearch,
+  ListSkeleton,
+  ListToolbar,
+  RowOpen,
+  SortableHead,
+  rowLinkProps,
+  useListController,
+} from "@/components/ui/data-list";
 import { useApi } from "@/lib/api";
 import { domainState, recheckWindowExpired } from "@/lib/domain";
 import { formatDate } from "@/lib/format";
@@ -55,6 +61,28 @@ const STATUS_UI: Record<DomainState, { label: string; icon: typeof CheckCircle2;
   verified: { label: "Verified", icon: CheckCircle2, className: "text-primary" },
   pending: { label: "Verifying…", icon: Clock, className: "text-muted-foreground" },
   failed: { label: "Action needed", icon: AlertCircle, className: "text-destructive" },
+};
+
+const STATUS_OPTIONS = [
+  { value: "all", label: "All statuses" },
+  { value: "verified", label: "Verified" },
+  { value: "pending", label: "Verifying" },
+  { value: "attention", label: "Action needed" },
+];
+
+// Collapses the derived domain state (+ stale recheck window) into the three
+// buckets the filter and sort use.
+function filterState(d: SendingDomain): "verified" | "pending" | "attention" {
+  const state = domainState(d);
+  if (state === "verified") return "verified";
+  if (state === "failed" || recheckWindowExpired(d)) return "attention";
+  return "pending";
+}
+// Most-urgent-first when sorting ascending.
+const STATE_RANK: Record<ReturnType<typeof filterState>, number> = {
+  attention: 0,
+  pending: 1,
+  verified: 2,
 };
 
 function StatusCell({ domain }: { domain: SendingDomain }) {
@@ -89,6 +117,7 @@ export default function DomainsPage() {
   const [domains, setDomains] = useState<SendingDomain[] | null>(null);
   const [open, setOpen] = useState(false);
   const [autoEmail, setAutoEmail] = useState(true);
+  const [status, setStatus] = useState("all");
   const { register, handleSubmit, reset, watch, setValue, formState } = useForm<DomainForm>();
 
   const load = useCallback(() => {
@@ -100,6 +129,17 @@ export default function DomainsPage() {
   }, []);
 
   useEffect(load, [load]);
+
+  const list = useListController(domains, {
+    searchText: (d) => `${d.domain} ${d.fromName ?? ""} ${d.fromEmail ?? ""}`,
+    predicate: (d) => status === "all" || filterState(d) === status,
+    sortAccessors: {
+      domain: (d) => d.domain,
+      status: (d) => STATE_RANK[filterState(d)],
+      createdAt: (d) => d.createdAt,
+    },
+    initialSort: { key: "createdAt", dir: "desc" },
+  });
 
   // Suggest a sensible from-address (news@domain) until the user edits it.
   const domainValue = watch("domain");
@@ -202,42 +242,46 @@ export default function DomainsPage() {
         </Dialog>
       </div>
 
+      {domains && domains.length > 0 && (
+        <ListToolbar>
+          <ListSearch value={list.search} onChange={list.setSearch} placeholder="Search domains…" />
+          <ListFilter
+            value={status}
+            onChange={setStatus}
+            options={STATUS_OPTIONS}
+            ariaLabel="Filter by status"
+          />
+          <ListCount shown={list.shown} total={list.total} noun="domain" className="ml-auto" />
+        </ListToolbar>
+      )}
+
       <Card>
         <CardContent>
-          {domains === null ? (
-            <Skeleton className="h-24 w-full" />
-          ) : domains.length === 0 ? (
-            <div className="flex flex-col items-center py-10 text-center">
-              <div className="flex size-11 items-center justify-center rounded-full bg-muted">
-                <Globe className="size-5 text-muted-foreground" />
-              </div>
-              <p className="mt-3 font-medium">Add your first sending domain</p>
-              <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                This is the domain your newsletters are sent from. After adding it, you&apos;ll add a
-                few DNS records so inboxes trust your email — we guide you through it.
-              </p>
-              <Button className="mt-4" onClick={() => setOpen(true)}>
-                Add domain
-              </Button>
-            </div>
+          {list.view === null ? (
+            <ListSkeleton />
+          ) : list.isEmpty ? (
+            <ListEmpty
+              icon={Globe}
+              title="Add your first sending domain"
+              description="This is the domain your newsletters are sent from. After adding it, you'll add a few DNS records so inboxes trust your email — we guide you through it."
+              action={<Button onClick={() => setOpen(true)}>Add domain</Button>}
+            />
+          ) : list.isFilteredEmpty ? (
+            <ListNoResults onClear={() => { list.setSearch(""); setStatus("all"); }} />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Domain</TableHead>
+                  <SortableHead label="Domain" sortKey="domain" sort={list.sort} onSort={list.toggleSort} />
                   <TableHead>From</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Added</TableHead>
+                  <SortableHead label="Status" sortKey="status" sort={list.sort} onSort={list.toggleSort} />
+                  <SortableHead label="Added" sortKey="createdAt" sort={list.sort} onSort={list.toggleSort} />
                   <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {domains.map((d) => (
-                  <TableRow
-                    key={d.id}
-                    onClick={() => router.push(`/domains/${d.id}`)}
-                    className="cursor-pointer"
-                  >
+                {list.view.map((d) => (
+                  <TableRow key={d.id} {...rowLinkProps(() => router.push(`/domains/${d.id}`))}>
                     <TableCell className="font-medium">
                       <Link
                         href={`/domains/${d.id}`}
@@ -253,14 +297,12 @@ export default function DomainsPage() {
                     <TableCell>
                       <StatusCell domain={d} />
                     </TableCell>
-                    <TableCell>{formatDate(d.createdAt)}</TableCell>
+                    <TableCell className="text-muted-foreground">{formatDate(d.createdAt)}</TableCell>
                     <TableCell className="text-right">
-                      <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
-                        {domainState(d) !== "verified" && (
-                          <span className="hidden sm:inline">Finish setup</span>
-                        )}
-                        <ChevronRight className="size-4" />
-                      </span>
+                      <RowOpen
+                        href={`/domains/${d.id}`}
+                        label={domainState(d) === "verified" ? "Open" : "Finish setup"}
+                      />
                     </TableCell>
                   </TableRow>
                 ))}

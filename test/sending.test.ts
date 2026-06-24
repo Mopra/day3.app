@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { sendCampaignBatch } from "../src/queue/handlers/send-batch";
 import { generateCampaignRecipients } from "../src/queue/handlers/generate-recipients";
-import { campaignRecipients, campaigns, accounts } from "../src/db/schema";
+import { campaignRecipients, campaigns, accounts, subscribers } from "../src/db/schema";
 import { addSuppression } from "../src/services/suppression";
+import { campaignPersonalizationGaps } from "../src/api/campaigns";
+import { newId, nowIso } from "../src/lib/ids";
 import {
   FakeQueue,
   RecordingProvider,
@@ -250,5 +252,81 @@ describe("send_campaign_batch", () => {
     expect(email.html).toContain("Unsubscribe");
     expect(email.html).toContain("Hi alice,"); // {{first_name}} substituted
     expect(email.headers?.["List-Unsubscribe"]).toContain("http");
+  });
+});
+
+describe("campaignPersonalizationGaps", () => {
+  // Seed an audience where some subscribed members are missing a first name.
+  async function seedMixedAudience() {
+    const db = await testDb();
+    const account = await seedAccount(db);
+    const domain = await seedDomain(db, account.id);
+    const audience = await seedAudience(db, account.id);
+    const now = nowIso();
+    const sub = (
+      email: string,
+      firstName: string | null,
+      status: "subscribed" | "unsubscribed" = "subscribed",
+    ) => ({
+      id: newId("sub"),
+      accountId: account.id,
+      audienceId: audience.id,
+      email,
+      firstName,
+      status,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await db.insert(subscribers).values([
+      sub("a@x.co", "Alice"),
+      sub("b@x.co", "Bob"),
+      sub("c@x.co", null),
+      sub("d@x.co", ""), // empty counts as missing
+      sub("e@x.co", null),
+      sub("f@x.co", null, "unsubscribed"), // not a recipient — excluded
+    ]);
+    return { db, account, domain, audience };
+  }
+
+  it("counts subscribed recipients missing a field the campaign uses", async () => {
+    const { db, account, domain, audience } = await seedMixedAudience();
+    const campaign = await seedCampaign(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      sendingDomainId: domain.id,
+      subject: "Hi {{first_name|there}}",
+      htmlBody: "<p>Hi {{first_name|there}}, welcome.</p>",
+    });
+
+    const gaps = await campaignPersonalizationGaps(db, account.id, campaign);
+    // 3 of 5 subscribed members (c, d, e) have no first name; the unsubscribed one
+    // is excluded from both counts.
+    expect(gaps).toEqual([{ field: "first_name", fallback: "there", missing: 3, total: 5 }]);
+  });
+
+  it("flags a bare tag as a blank (null fallback)", async () => {
+    const { db, account, domain, audience } = await seedMixedAudience();
+    const campaign = await seedCampaign(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      sendingDomainId: domain.id,
+      htmlBody: "<p>Hi {{first_name}}</p>", // no fallback
+    });
+    const gaps = await campaignPersonalizationGaps(db, account.id, campaign);
+    expect(gaps).toEqual([{ field: "first_name", fallback: null, missing: 3, total: 5 }]);
+  });
+
+  it("returns nothing when no recipient is missing the used field", async () => {
+    const { db, account, domain, audience } = await seedMixedAudience();
+    // last_name is used, but nobody has one either — wait, that's missing for all.
+    // Use a campaign that personalizes nothing instead.
+    const campaign = await seedCampaign(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      sendingDomainId: domain.id,
+      subject: "Monthly update",
+      htmlBody: "<p>No personalization here.</p>",
+    });
+    expect(await campaignPersonalizationGaps(db, account.id, campaign)).toEqual([]);
   });
 });

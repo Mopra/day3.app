@@ -3,11 +3,12 @@ import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findCampaign } from "@/api/finders";
 import {
-  CampaignFieldsSchema,
+  CampaignDraftSchema,
+  campaignPersonalizationGaps,
   campaignStats,
-  validateOwnershipAndSender,
+  validateDraftOwnership,
 } from "@/api/campaigns";
-import { campaigns, riskReviews } from "@/db/schema";
+import { campaignRecipients, campaigns, riskReviews } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 
 export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
@@ -18,10 +19,16 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
   const review = await db.query.riskReviews.findFirst({
     where: and(eq(riskReviews.campaignId, campaign.id), eq(riskReviews.accountId, account.id)),
   });
+  // Personalization gaps only matter pre-send (draft/approved); skip the extra
+  // count query once the campaign is in flight or done.
+  const submittable = campaign.status === "draft" || campaign.status === "approved";
   return json({
     campaign,
     riskReview: review ?? null,
     stats: await campaignStats(db, campaign.id),
+    personalization: submittable
+      ? await campaignPersonalizationGaps(db, account.id, campaign)
+      : [],
   });
 });
 
@@ -34,26 +41,54 @@ export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { pa
     throw new HttpError(409, "Only draft campaigns can be edited");
   }
 
-  const data = await parseJson(req, CampaignFieldsSchema);
-  const error = await validateOwnershipAndSender(db, account.id, data);
+  // Autosave sends a full snapshot of the draft on each change; partial content
+  // is fine (empty strings stored). Send-readiness is enforced on submit/schedule.
+  const data = await parseJson(req, CampaignDraftSchema);
+  const error = await validateDraftOwnership(db, account.id, data);
   if (error) throw new HttpError(400, error);
 
   await db
     .update(campaigns)
     .set({
-      name: data.name,
-      subject: data.subject,
+      name: data.name ?? "",
+      subject: data.subject ?? "",
       previewText: data.previewText ?? null,
-      audienceId: data.audienceId,
-      sendingDomainId: data.sendingDomainId,
-      senderId: data.senderId ?? null,
-      fromName: data.fromName,
-      fromEmail: data.fromEmail,
+      audienceId: data.audienceId ?? "",
+      sendingDomainId: data.sendingDomainId ?? "",
+      senderId: data.senderId || null,
+      fromName: data.fromName ?? "",
+      fromEmail: data.fromEmail ?? "",
       replyTo: data.replyTo || null,
-      htmlBody: data.htmlBody,
+      htmlBody: data.htmlBody ?? "",
       textBody: data.textBody ?? null,
+      footerText: data.footerText || null,
       updatedAt: nowIso(),
     })
     .where(eq(campaigns.id, campaign.id));
+  return json({ ok: true });
+});
+
+export const DELETE = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
+  const { id } = await params;
+  const { db, account } = await requireAccount();
+  const campaign = await findCampaign(db, account.id, id);
+  if (!campaign) throw new HttpError(404, "Not found");
+
+  // Block deletion only while the send pipeline is actively touching this
+  // campaign: the worker is building the recipient list or draining sends and
+  // re-reads rows by id (hard rule: idempotency / no duplicate sends). Pause it
+  // first. Every other status — draft, scheduled, paused, sent, failed, blocked
+  // — is safe to delete; cron and the queue look the campaign up by id, so a
+  // missing row is simply a no-op.
+  if (campaign.status === "generating_recipients" || campaign.status === "sending") {
+    throw new HttpError(409, "Pause the campaign before deleting it");
+  }
+
+  // Remove the per-recipient rows and any risk review first, then the campaign.
+  // email_events are kept as an immutable analytics/audit log (campaign_id there
+  // is nullable provenance), mirroring how senders keep historical snapshots.
+  await db.delete(campaignRecipients).where(eq(campaignRecipients.campaignId, campaign.id));
+  await db.delete(riskReviews).where(eq(riskReviews.campaignId, campaign.id));
+  await db.delete(campaigns).where(eq(campaigns.id, campaign.id));
   return json({ ok: true });
 });

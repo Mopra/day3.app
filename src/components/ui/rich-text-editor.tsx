@@ -5,9 +5,16 @@
 // only the tags in the render.ts sanitizer allowlist, so sanitizeHtml() is a
 // no-op on its output. Anything the allowlist would strip (strikethrough, code
 // blocks, styles, classes, divs) is simply not offered.
-import { useCallback, useEffect, useState } from "react";
+//
+// Interaction model (no persistent toolbar — a "floating" editor):
+//   - Select text → a floating formatting bar appears (bold/italic/headings/link
+//     + AI rewrite). This is the primary way to style existing text.
+//   - Land on an empty line → a floating "+" insert menu appears (headings,
+//     lists, quote, image, divider, and personalization merge tags). This is how
+//     you add new blocks, the way people now expect from Notion/Linear/etc.
+import { useEffect, useState } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
-import { BubbleMenu } from "@tiptap/react/menus";
+import { BubbleMenu, FloatingMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { Placeholder } from "@tiptap/extensions";
@@ -22,9 +29,7 @@ import {
   ListOrdered,
   Link2,
   Link2Off,
-  ImageIcon,
   Quote,
-  Minus,
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -41,28 +46,21 @@ import {
   DialogTitle,
   DialogClose,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 
-// Select-to-rewrite actions. Defined here (not imported from services/ai, which
-// is server-only and would pull the AI SDK into the client bundle).
-const REWRITE_OPTIONS: { action: string; label: string }[] = [
-  { action: "improve", label: "Improve" },
-  { action: "shorten", label: "Shorten" },
-  { action: "friendly", label: "Friendlier" },
-  { action: "grammar", label: "Fix grammar" },
+// `insert` is the exact token dropped into the body. Name tags carry a fallback
+// (after `|`) so an empty field never renders as "Hi ," — first name falls back
+// to a friendly greeting word; last name drops cleanly to nothing. Email is
+// always present, so it needs no fallback.
+const MERGE_TAGS: { label: string; insert: string }[] = [
+  { label: "First name", insert: "{{first_name|there}}" },
+  { label: "Last name", insert: "{{last_name}}" },
+  { label: "Email", insert: "{{email}}" },
 ];
 
-const MERGE_TAGS: { value: string; label: string }[] = [
-  { value: "first_name", label: "First name" },
-  { value: "last_name", label: "Last name" },
-  { value: "email", label: "Email" },
-];
+// Shared look for both floating surfaces: a frosted, elevated pill that reads as
+// "floating above" the canvas rather than docked chrome.
+const floatingBarClass =
+  "z-50 flex items-center gap-1 rounded-xl border border-border bg-background p-1.5 shadow-lg";
 
 export type RichTextEditorProps = {
   value: string;
@@ -93,13 +91,14 @@ function ToolbarButton({
           <Button
             type="button"
             variant="ghost"
-            size="icon-sm"
+            size="icon"
             aria-label={label}
             data-active={active ? "true" : undefined}
             disabled={disabled}
+            // Keep the editor's selection alive while clicking floating controls.
             onMouseDown={(e) => e.preventDefault()}
             onClick={onClick}
-            className="text-muted-foreground data-[active=true]:bg-muted data-[active=true]:text-foreground"
+            className="text-muted-foreground [&_svg]:size-[18px] data-[active=true]:bg-muted data-[active=true]:text-foreground"
           />
         }
       >
@@ -111,18 +110,27 @@ function ToolbarButton({
 }
 
 function Divider() {
-  return <span aria-hidden className="mx-0.5 h-5 w-px self-center bg-border" />;
+  return <span aria-hidden className="mx-0.5 h-6 w-px self-center bg-border" />;
 }
 
-// Link dialog: add/edit/remove a link on the current selection.
-function LinkDialog({ editor }: { editor: Editor }) {
-  const [open, setOpen] = useState(false);
+// Link dialog: add/edit/remove a link on the current selection. Controlled by the
+// parent so it can be opened from the floating selection bar.
+function LinkDialog({
+  editor,
+  open,
+  onOpenChange,
+}: {
+  editor: Editor;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const [url, setUrl] = useState("");
 
-  function openDialog() {
-    setUrl(editor.getAttributes("link").href ?? "");
-    setOpen(true);
-  }
+  // Seed the field with any existing link each time the dialog opens.
+  useEffect(() => {
+    if (open) setUrl(editor.getAttributes("link").href ?? "");
+  }, [open, editor]);
+
   function apply() {
     const href = url.trim();
     if (!href) {
@@ -130,112 +138,39 @@ function LinkDialog({ editor }: { editor: Editor }) {
     } else {
       editor.chain().focus().extendMarkRange("link").setLink({ href }).run();
     }
-    setOpen(false);
-  }
-
-  const hasLink = editor.isActive("link");
-  return (
-    <>
-      <ToolbarButton label="Link" active={hasLink} onClick={openDialog}>
-        <Link2 />
-      </ToolbarButton>
-      {hasLink && (
-        <ToolbarButton
-          label="Remove link"
-          onClick={() => editor.chain().focus().extendMarkRange("link").unsetLink().run()}
-        >
-          <Link2Off />
-        </ToolbarButton>
-      )}
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add a link</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="link-url">Link URL</Label>
-            <Input
-              id="link-url"
-              placeholder="https://example.com"
-              value={url}
-              autoFocus
-              onChange={(e) => setUrl(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  apply();
-                }
-              }}
-            />
-          </div>
-          <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-            <Button type="button" onClick={apply}>
-              Apply
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
-  );
-}
-
-// Image dialog: insert an image by URL (with alt text). No base64/uploads — email
-// images must be hosted, and the sanitizer only keeps src/alt/width/height.
-function ImageDialog({ editor }: { editor: Editor }) {
-  const [open, setOpen] = useState(false);
-  const [url, setUrl] = useState("");
-  const [alt, setAlt] = useState("");
-
-  function insert() {
-    const src = url.trim();
-    if (!src) return;
-    editor.chain().focus().setImage({ src, alt: alt.trim() || undefined }).run();
-    setOpen(false);
-    setUrl("");
-    setAlt("");
+    onOpenChange(false);
   }
 
   return (
-    <>
-      <ToolbarButton label="Image" onClick={() => setOpen(true)}>
-        <ImageIcon />
-      </ToolbarButton>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Insert an image</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <Label htmlFor="img-url">Image URL</Label>
-              <Input
-                id="img-url"
-                placeholder="https://example.com/image.png"
-                value={url}
-                autoFocus
-                onChange={(e) => setUrl(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="img-alt">Alt text (optional)</Label>
-              <Input
-                id="img-alt"
-                placeholder="Describe the image"
-                value={alt}
-                onChange={(e) => setAlt(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
-            <Button type="button" onClick={insert} disabled={!url.trim()}>
-              Insert
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add a link</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2">
+          <Label htmlFor="link-url">Link URL</Label>
+          <Input
+            id="link-url"
+            placeholder="https://example.com"
+            value={url}
+            autoFocus
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                apply();
+              }
+            }}
+          />
+        </div>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline" />}>Cancel</DialogClose>
+          <Button type="button" onClick={apply}>
+            Apply
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -246,7 +181,16 @@ export function RichTextEditor({
   onRewrite,
   className,
 }: RichTextEditorProps) {
-  const [rewriting, setRewriting] = useState<string | null>(null);
+  const [rewriting, setRewriting] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
+  // AI rewrite-by-prompt: the user selects text, opens this, and describes the
+  // change they want. The selection is captured on open (focus moves to the
+  // dialog input, so the live editor selection is no longer reliable at submit).
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiSelection, setAiSelection] = useState<
+    { from: number; to: number; text: string } | null
+  >(null);
 
   const editor = useEditor({
     immediatelyRender: false, // SSR safety in Next
@@ -293,25 +237,41 @@ export function RichTextEditor({
     }
   }, [value, editor]);
 
-  const runRewrite = useCallback(
-    async (action: string) => {
-      if (!editor || !onRewrite) return;
-      const { from, to, empty } = editor.state.selection;
-      if (empty) return;
-      const selected = editor.state.doc.textBetween(from, to, " ").trim();
-      if (!selected) return;
-      setRewriting(action);
-      try {
-        const result = await onRewrite(selected, action);
-        if (result) {
-          editor.chain().focus().deleteSelection().insertContent(result).run();
-        }
-      } finally {
-        setRewriting(null);
+  // Snapshot the current selection and open the "edit with AI" prompt.
+  function openAiRewrite() {
+    if (!editor) return;
+    const { from, to, empty } = editor.state.selection;
+    if (empty) return;
+    const text = editor.state.doc.textBetween(from, to, " ").trim();
+    if (!text) return;
+    setAiSelection({ from, to, text });
+    setAiPrompt("");
+    setAiOpen(true);
+  }
+
+  // Send the captured selection + the user's instruction to the rewrite endpoint,
+  // then swap the result in over the original range.
+  async function submitAiRewrite() {
+    const sel = aiSelection;
+    const instruction = aiPrompt.trim();
+    if (!editor || !onRewrite || !sel || !instruction || rewriting) return;
+    setRewriting(true);
+    try {
+      const result = await onRewrite(sel.text, instruction);
+      if (result) {
+        editor
+          .chain()
+          .focus()
+          .setTextSelection({ from: sel.from, to: sel.to })
+          .deleteSelection()
+          .insertContent(result)
+          .run();
       }
-    },
-    [editor, onRewrite],
-  );
+      setAiOpen(false);
+    } finally {
+      setRewriting(false);
+    }
+  }
 
   if (!editor) {
     return (
@@ -326,10 +286,21 @@ export function RichTextEditor({
     );
   }
 
+  const linkActive = editor.isActive("link");
+
   return (
     <TooltipProvider delay={300}>
       <div className={cn("overflow-hidden rounded-xl border border-border bg-card", className)}>
-        <div className="flex flex-wrap items-center gap-0.5 border-b border-border bg-muted/30 p-1.5">
+        {/* Floating selection bar — appears whenever text is selected. Holds inline
+            formatting, block "turn into" actions, links, and AI rewrite. Appended
+            to <body> so the editor's overflow-hidden wrapper never clips it. */}
+        <BubbleMenu
+          editor={editor}
+          shouldShow={({ editor: e }) => !e.state.selection.empty}
+          appendTo={() => document.body}
+          options={{ strategy: "fixed", placement: "top", offset: 8 }}
+          className={floatingBarClass}
+        >
           <ToolbarButton
             label="Bold"
             active={editor.isActive("bold")}
@@ -367,28 +338,6 @@ export function RichTextEditor({
             <Heading2 />
           </ToolbarButton>
           <ToolbarButton
-            label="Heading 3"
-            active={editor.isActive("heading", { level: 3 })}
-            onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
-          >
-            <Heading3 />
-          </ToolbarButton>
-          <Divider />
-          <ToolbarButton
-            label="Bulleted list"
-            active={editor.isActive("bulletList")}
-            onClick={() => editor.chain().focus().toggleBulletList().run()}
-          >
-            <List />
-          </ToolbarButton>
-          <ToolbarButton
-            label="Numbered list"
-            active={editor.isActive("orderedList")}
-            onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          >
-            <ListOrdered />
-          </ToolbarButton>
-          <ToolbarButton
             label="Quote"
             active={editor.isActive("blockquote")}
             onClick={() => editor.chain().focus().toggleBlockquote().run()}
@@ -396,69 +345,147 @@ export function RichTextEditor({
             <Quote />
           </ToolbarButton>
           <Divider />
-          <LinkDialog editor={editor} />
-          <ImageDialog editor={editor} />
-          <ToolbarButton
-            label="Divider"
-            onClick={() => editor.chain().focus().setHorizontalRule().run()}
-          >
-            <Minus />
+          <ToolbarButton label="Link" active={linkActive} onClick={() => setLinkOpen(true)}>
+            <Link2 />
           </ToolbarButton>
-          <Divider />
-          {/* Merge tags — Select used as an insert menu (value reset to null so the
-              trigger always shows the placeholder). */}
-          <Select
-            value={null}
-            onValueChange={(v) => {
-              if (v) editor.chain().focus().insertContent(`{{${v}}}`).run();
-            }}
-          >
-            <SelectTrigger size="sm" className="h-7 gap-1 text-xs text-muted-foreground">
-              <SelectValue placeholder="Personalize" />
-            </SelectTrigger>
-            <SelectContent>
-              {MERGE_TAGS.map((t) => (
-                <SelectItem key={t.value} value={t.value}>
-                  {t.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        {onRewrite && (
-          // Appended to <body> with a fixed strategy so the menu is never clipped
-          // by the editor's overflow-hidden wrapper (it would be by default, since
-          // the plugin otherwise mounts into the editor's DOM parent).
-          <BubbleMenu
-            editor={editor}
-            shouldShow={({ editor: e }) => !e.state.selection.empty}
-            appendTo={() => document.body}
-            options={{ strategy: "fixed", placement: "top", offset: 8 }}
-            className="z-50 flex items-center gap-0.5 rounded-lg border border-border bg-popover p-1 shadow-md"
-          >
-            <span className="flex items-center gap-1 pr-1 pl-1.5 text-xs font-medium text-muted-foreground">
-              <Sparkles className="size-3 text-primary" />
-              AI
-            </span>
-            {REWRITE_OPTIONS.map((opt) => (
+          {linkActive && (
+            <ToolbarButton
+              label="Remove link"
+              onClick={() => editor.chain().focus().extendMarkRange("link").unsetLink().run()}
+            >
+              <Link2Off />
+            </ToolbarButton>
+          )}
+          {onRewrite && (
+            <>
+              <Divider />
               <Button
-                key={opt.action}
                 type="button"
                 variant="ghost"
-                size="xs"
-                disabled={rewriting !== null}
+                size="sm"
+                className="gap-1 font-medium text-primary"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => runRewrite(opt.action)}
+                onClick={openAiRewrite}
               >
-                {rewriting === opt.action ? <OrbitLoader size={16} /> : opt.label}
+                <Sparkles className="size-3.5" />
+                Edit with AI
               </Button>
-            ))}
-          </BubbleMenu>
-        )}
+            </>
+          )}
+        </BubbleMenu>
+
+        {/* Floating insert menu — appears on an empty line. The modern "+" that
+            adds new blocks and personalization without a docked toolbar. */}
+        <FloatingMenu
+          editor={editor}
+          appendTo={() => document.body}
+          options={{ strategy: "fixed", placement: "bottom-start", offset: 6 }}
+          className={floatingBarClass}
+        >
+          <ToolbarButton
+            label="Heading 1"
+            onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+          >
+            <Heading1 />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Heading 2"
+            onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+          >
+            <Heading2 />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Heading 3"
+            onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+          >
+            <Heading3 />
+          </ToolbarButton>
+          <Divider />
+          <ToolbarButton
+            label="Bulleted list"
+            onClick={() => editor.chain().focus().toggleBulletList().run()}
+          >
+            <List />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Numbered list"
+            onClick={() => editor.chain().focus().toggleOrderedList().run()}
+          >
+            <ListOrdered />
+          </ToolbarButton>
+          <ToolbarButton
+            label="Quote"
+            onClick={() => editor.chain().focus().toggleBlockquote().run()}
+          >
+            <Quote />
+          </ToolbarButton>
+          <Divider />
+          <span className="pl-1 text-sm font-medium text-muted-foreground">Personalize</span>
+          {MERGE_TAGS.map((t) => (
+            <Button
+              key={t.label}
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => editor.chain().focus().insertContent(t.insert).run()}
+            >
+              {t.label}
+            </Button>
+          ))}
+        </FloatingMenu>
 
         <EditorContent editor={editor} />
       </div>
+
+      <LinkDialog editor={editor} open={linkOpen} onOpenChange={setLinkOpen} />
+
+      <Dialog open={aiOpen} onOpenChange={(o) => !rewriting && setAiOpen(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="size-4 text-primary" />
+              Edit with AI
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="ai-prompt">What would you like to change?</Label>
+            <Input
+              id="ai-prompt"
+              placeholder="e.g. make this punchier and add a clear call to action"
+              value={aiPrompt}
+              autoFocus
+              disabled={rewriting}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void submitAiRewrite();
+                }
+              }}
+            />
+            {aiSelection?.text && (
+              <p className="line-clamp-2 text-xs text-muted-foreground">
+                Editing: &ldquo;{aiSelection.text}&rdquo;
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <DialogClose render={<Button variant="outline" disabled={rewriting} />}>
+              Cancel
+            </DialogClose>
+            <Button
+              type="button"
+              onClick={() => void submitAiRewrite()}
+              disabled={!aiPrompt.trim() || rewriting}
+            >
+              {rewriting ? <OrbitLoader size={16} /> : <Sparkles className="size-4" />}
+              Rewrite
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </TooltipProvider>
   );
 }

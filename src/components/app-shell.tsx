@@ -5,14 +5,16 @@ import type { ComponentType, RefAttributes } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { OrganizationSwitcher, UserButton } from "@clerk/nextjs";
+import { OrganizationSwitcher, UserButton, useAuth } from "@clerk/nextjs";
 import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useApi } from "@/lib/api";
 import { formatDuration } from "@/lib/format";
 import { AiBudgetProvider, useAiBudget } from "@/components/ai-budget-context";
+import { HelpButton } from "@/components/help-button";
 import { LayoutGridIcon } from "@/components/ui/animated-icons/layout-grid";
 import { MailCheckIcon } from "@/components/ui/animated-icons/mail-check";
+import { ChartColumnIcon } from "@/components/ui/animated-icons/chart-column";
 import { UsersIcon } from "@/components/ui/animated-icons/users";
 import { FormInputIcon } from "@/components/ui/animated-icons/form-input";
 import { AtSignIcon } from "@/components/ui/animated-icons/at-sign";
@@ -33,6 +35,7 @@ type NavEntry = { to: string; label: string; icon: AnimatedIcon };
 const NAV: NavEntry[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutGridIcon },
   { to: "/campaigns", label: "Campaigns", icon: MailCheckIcon },
+  { to: "/metrics", label: "Metrics", icon: ChartColumnIcon },
   { to: "/audiences", label: "Audiences", icon: UsersIcon },
   { to: "/forms", label: "Forms", icon: FormInputIcon },
   { to: "/senders", label: "Senders", icon: AtSignIcon },
@@ -67,7 +70,10 @@ function SidebarAiBudget() {
   if (!enabled || !budget) return null;
   const fill = budget.exhausted ? 100 : budget.percentUsed;
   return (
-    <div className="px-3 pb-1">
+    // px-5 (20px) so the sparkle lines up with the nav/Help icons (nav px-2 +
+    // item px-3 = 20px), not the shallower px-3 it used before. pt-3 gives the
+    // meter breathing room below the Help item (only applied when it renders).
+    <div className="px-5 pt-3 pb-1">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span className="flex items-center gap-1.5">
           <Sparkles className="size-3" />
@@ -95,10 +101,35 @@ function SidebarAiBudget() {
   );
 }
 
+// Switching the active org (via OrganizationSwitcher) only updates Clerk's
+// client session — it doesn't navigate, so the server layout's org gate and the
+// pages' client-side fetches (keyed off the cookie, not React state) keep their
+// stale data until a manual refresh. Watch the active orgId and hard-reload on a
+// real change so every page re-resolves against the new org, exactly like the
+// manual refresh that already works.
+function useReloadOnOrgChange() {
+  const { isLoaded, orgId } = useAuth();
+  const prevOrgId = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!isLoaded) return;
+    const current = orgId ?? null;
+    // First loaded render establishes the baseline without reloading.
+    if (prevOrgId.current === undefined) {
+      prevOrgId.current = current;
+      return;
+    }
+    if (prevOrgId.current !== current) {
+      prevOrgId.current = current;
+      window.location.reload();
+    }
+  }, [isLoaded, orgId]);
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const api = useApi();
   const pathname = usePathname();
   const [isAdmin, setIsAdmin] = useState(false);
+  useReloadOnOrgChange();
 
   useEffect(() => {
     api
@@ -112,8 +143,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const adminNav: NavEntry[] = isAdmin
     ? [{ to: "/admin", label: "Admin", icon: ShieldCheckIcon }]
     : [];
-  const activeItem = [...NAV, ...adminNav].find(({ to }) => isActive(to));
-  const title = activeItem?.label ?? "Day3";
 
   return (
     <AiBudgetProvider>
@@ -133,17 +162,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <NavItem key={item.to} {...item} active={isActive(item.to)} />
             ))}
           </nav>
+          {/* Help — a navigation-style item, kept above the AI budget meter.
+              No docs site yet, so the popover is the whole help surface. */}
+          <div className="px-2 pb-1">
+            <HelpButton />
+          </div>
           <SidebarAiBudget />
-          <div className="flex items-center justify-between gap-2 p-3 mb-5">
-            <OrganizationSwitcher hidePersonal />
+          {/* Workspace + account controls, bottom-left of the sidebar — the
+              conventional placement. px-5 (20px) matches the nav/Help/AI gutter;
+              the org switcher's own left padding is zeroed so its avatar sits
+              flush at that gutter rather than a few px to the right. */}
+          <div className="flex items-center justify-between gap-2 px-5 py-3 mb-5">
+            <OrganizationSwitcher
+              hidePersonal
+              appearance={{ elements: { organizationSwitcherTrigger: { paddingLeft: 0 } } }}
+            />
             <UserButton />
           </div>
         </aside>
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="flex h-14 shrink-0 items-center px-6">
-            <h1 className="text-sm font-medium tracking-tight">{title}</h1>
-          </header>
-          <main className="min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-card mr-5 mb-5 ml-5 px-8 py-6">
+          {/* No top chrome bar: each page renders its own heading, and the
+              account controls live in the sidebar. The content panel floats. */}
+          <main className="m-5 min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-card px-8 py-6">
             {children}
           </main>
         </div>

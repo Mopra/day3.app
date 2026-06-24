@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { route, json, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findCampaign } from "@/api/finders";
-import { campaignSendGateError } from "@/api/campaigns";
+import { campaignContentError, campaignSendGateError } from "@/api/campaigns";
 import { campaigns } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 import { checkSendEligibility } from "@/services/plans";
@@ -22,6 +22,11 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
   if (campaign.status !== "draft" && campaign.status !== "approved") {
     throw new HttpError(409, `Campaign cannot be submitted from status "${campaign.status}"`);
   }
+
+  // Drafts can be saved incomplete (autosave), so confirm the content is complete
+  // before sending.
+  const contentError = campaignContentError(campaign);
+  if (contentError) throw new HttpError(400, contentError);
 
   // Domain-verified + audience-has-subscribers gates (account-scoped so a
   // cross-tenant id can never satisfy the verified check).

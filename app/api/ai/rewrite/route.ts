@@ -4,16 +4,18 @@ import { requireAccount } from "@/api/context";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { enforceAiBudget, recordAiUsage } from "@/lib/ai-budget";
 import { aiEnabled, rewriteText } from "@/services/ai";
+import { AI_UPGRADE_MESSAGE, planHasAI } from "@/services/plans";
 
 const RewriteSchema = z.object({
   text: z.string().trim().min(1).max(10_000),
-  action: z.enum(["improve", "shorten", "friendly", "professional", "grammar"]),
+  instruction: z.string().trim().min(1).max(500),
 });
 
 // Returns { text: string } — the rewritten selection.
 export const POST = route(async (req) => {
   const { account } = await requireAccount();
   if (!aiEnabled()) throw new HttpError(503, "AI assistance isn't configured.");
+  if (!planHasAI(account.plan)) throw new HttpError(403, AI_UPGRADE_MESSAGE);
   await enforceRateLimit("ai", account.id);
   await enforceAiBudget(account.id);
   const input = await parseJson(req, RewriteSchema);

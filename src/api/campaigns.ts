@@ -1,7 +1,11 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../db/client";
-import { audiences, campaignRecipients, sendingDomains, subscribers } from "../db/schema";
+import { accounts, audiences, campaignRecipients, sendingDomains, subscribers } from "../db/schema";
+import {
+  personalizationFieldsUsed,
+  type PersonalizableField,
+} from "../services/render";
 
 export const CampaignFieldsSchema = z.object({
   name: z.string().trim().min(1).max(150),
@@ -21,37 +25,87 @@ export const CampaignFieldsSchema = z.object({
     .optional(),
   htmlBody: z.string().min(1).max(500_000),
   textBody: z.string().max(500_000).optional(),
+  // Editable footer wording only. The physical address and unsubscribe link are
+  // appended canonically at send time and are not part of this. Empty/omitted
+  // falls back to the default sentence.
+  footerText: z.string().trim().max(2_000).optional(),
 });
 export type CampaignFields = z.infer<typeof CampaignFieldsSchema>;
 
-// Confirms the audience + sending domain belong to the account and the from
-// address aligns with the domain. Returns an error string or null.
-export async function validateOwnershipAndSender(
+// Loose schema for autosaving a draft: every field is optional so a draft can be
+// persisted from the very first keystroke (just a title, just some body text…).
+// The strict requirements a *sendable* campaign needs are enforced again at
+// submit/schedule time by `campaignContentError`. Empty strings are accepted and
+// stored as-is for the NOT NULL columns (they read back as "not chosen yet").
+export const CampaignDraftSchema = z.object({
+  name: z.string().trim().max(150).optional(),
+  subject: z.string().trim().max(200).optional(),
+  previewText: z.string().trim().max(200).optional(),
+  audienceId: z.string().max(100).optional(),
+  sendingDomainId: z.string().max(100).optional(),
+  senderId: z.string().max(100).optional(),
+  fromName: z.string().trim().max(100).optional(),
+  fromEmail: z.union([z.literal(""), z.email().toLowerCase()]).optional(),
+  replyTo: z.union([z.literal(""), z.email().toLowerCase()]).optional(),
+  htmlBody: z.string().max(500_000).optional(),
+  textBody: z.string().max(500_000).optional(),
+  footerText: z.string().trim().max(2_000).optional(),
+});
+export type CampaignDraft = z.infer<typeof CampaignDraftSchema>;
+
+// Validates only the fields a draft actually provides: the audience/domain must
+// belong to the account if chosen, and a from address (if set alongside a domain)
+// must align with it. Unset fields are simply skipped — a draft can be incomplete.
+export async function validateDraftOwnership(
   db: Db,
   accountId: string,
-  fields: CampaignFields,
+  fields: CampaignDraft,
 ): Promise<string | null> {
-  const audience = await db.query.audiences.findFirst({
-    where: and(eq(audiences.id, fields.audienceId), eq(audiences.accountId, accountId)),
-  });
-  if (!audience) return "Audience not found";
-
-  const domain = await db.query.sendingDomains.findFirst({
-    where: and(
-      eq(sendingDomains.id, fields.sendingDomainId),
-      eq(sendingDomains.accountId, accountId),
-    ),
-  });
-  if (!domain) return "Sending domain not found";
-  if (!fields.fromEmail.endsWith(`@${domain.domain}`)) {
-    return "From email must use the selected sending domain";
+  if (fields.audienceId) {
+    const audience = await db.query.audiences.findFirst({
+      where: and(eq(audiences.id, fields.audienceId), eq(audiences.accountId, accountId)),
+    });
+    if (!audience) return "Audience not found";
+  }
+  if (fields.sendingDomainId) {
+    const domain = await db.query.sendingDomains.findFirst({
+      where: and(
+        eq(sendingDomains.id, fields.sendingDomainId),
+        eq(sendingDomains.accountId, accountId),
+      ),
+    });
+    if (!domain) return "Sending domain not found";
+    if (fields.fromEmail && !fields.fromEmail.endsWith(`@${domain.domain}`)) {
+      return "From email must use the selected sending domain";
+    }
   }
   return null;
 }
 
+// A draft can be saved incomplete (autosave persists partial work). Before a
+// campaign can be sent or scheduled, confirm every field a real email needs is
+// present. Returns a user-facing error string, or null when it's send-ready.
+export function campaignContentError(campaign: {
+  subject: string;
+  fromName: string;
+  fromEmail: string;
+  htmlBody: string;
+  audienceId: string;
+  sendingDomainId: string;
+}): string | null {
+  if (!campaign.audienceId) return "Choose an audience to send to";
+  if (!campaign.sendingDomainId) return "Choose a sending domain";
+  if (!campaign.fromName.trim()) return "Add a From name";
+  if (!campaign.fromEmail.trim()) return "Add a From email";
+  if (!campaign.subject.trim()) return "Add a subject line";
+  if (!campaign.htmlBody.trim()) return "Write some email content";
+  return null;
+}
+
 // Campaign-level send gates shared by the submit route, the schedule route, and
-// the cron release of due scheduled campaigns: the sending domain must be
-// verified (or admin-overridden) and the audience must have at least one
+// the cron release of due scheduled campaigns: the account must have a physical
+// mailing address (legally required in every email), the sending domain must be
+// verified (or admin-overridden), and the audience must have at least one
 // subscribed recipient. Returns an error string or null. (Account-level
 // eligibility — billing/plan/health — is checked separately by the caller.)
 export async function campaignSendGateError(
@@ -59,6 +113,17 @@ export async function campaignSendGateError(
   accountId: string,
   campaign: { sendingDomainId: string; audienceId: string },
 ): Promise<string | null> {
+  // CAN-SPAM (and equivalents) require a valid physical postal address in every
+  // marketing email. The footer renders {{company_address}} from the account, so
+  // a blank address ships a non-compliant email — and repeated complaints over
+  // missing footers are a fast path to SES suspension. Refuse to send until set.
+  const account = await db.query.accounts.findFirst({
+    where: eq(accounts.id, accountId),
+  });
+  if (!account?.companyAddress?.trim()) {
+    return "Add your business mailing address in Settings before sending — it's legally required in every email.";
+  }
+
   const domain = await db.query.sendingDomains.findFirst({
     where: and(
       eq(sendingDomains.id, campaign.sendingDomainId),
@@ -78,6 +143,69 @@ export async function campaignSendGateError(
   if (Number(count) === 0) return "The audience has no subscribed recipients";
 
   return null;
+}
+
+export type PersonalizationGap = {
+  field: PersonalizableField;
+  // The fallback recipients will see when the field is empty (null = blank).
+  fallback: string | null;
+  missing: number;
+  total: number;
+};
+
+// Pre-send personalization check. The merge fallback means an empty {{first_name}}
+// never renders broken, but a sender may not want a generic greeting going to a
+// large slice of the list — so we count how many subscribed recipients are missing
+// each field the campaign actually uses, and let the UI surface it. Returns one
+// entry per used field that at least one recipient is missing; [] when there's
+// nothing to flag. Scoped by account (hard rule: every query is account-scoped).
+export async function campaignPersonalizationGaps(
+  db: Db,
+  accountId: string,
+  campaign: {
+    subject: string;
+    htmlBody: string;
+    previewText: string | null;
+    footerText: string | null;
+    audienceId: string;
+  },
+): Promise<PersonalizationGap[]> {
+  const used = personalizationFieldsUsed(
+    campaign.subject,
+    campaign.htmlBody,
+    campaign.previewText,
+    campaign.footerText,
+  );
+  if (used.length === 0 || !campaign.audienceId) return [];
+
+  // One pass over the audience's subscribed members, counting blanks per field
+  // with FILTER aggregates. Mirrors the recipient-generation eligibility (status
+  // = 'subscribed'); suppression isn't applied here — this is an estimate to
+  // inform the sender, not the exact send list.
+  const [counts] = await db
+    .select({
+      total: sql<number>`count(*)`,
+      missingFirst: sql<number>`count(*) filter (where ${subscribers.firstName} is null or ${subscribers.firstName} = '')`,
+      missingLast: sql<number>`count(*) filter (where ${subscribers.lastName} is null or ${subscribers.lastName} = '')`,
+    })
+    .from(subscribers)
+    .where(
+      and(
+        eq(subscribers.accountId, accountId),
+        eq(subscribers.audienceId, campaign.audienceId),
+        eq(subscribers.status, "subscribed"),
+      ),
+    );
+
+  const total = Number(counts?.total ?? 0);
+  if (total === 0) return [];
+  const missingByField: Record<PersonalizableField, number> = {
+    first_name: Number(counts?.missingFirst ?? 0),
+    last_name: Number(counts?.missingLast ?? 0),
+  };
+  return used
+    .map((u) => ({ field: u.field, fallback: u.fallback, missing: missingByField[u.field], total }))
+    .filter((g) => g.missing > 0);
 }
 
 export async function campaignStats(db: Db, campaignId: string) {

@@ -8,14 +8,14 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-06-23**.
+> Last verified against the codebase: **2026-06-24**.
 
 ---
 
 ## 1. One-liner
 
 **Simple product update emails for small SaaS teams. No marketing suite. No contact
-tax. No free tier.**
+tax. Set up and draft for free — pay only when you're ready to send.**
 
 Day3 is a deliberately minimal newsletter/email tool for small software teams that
 just want to send product updates and changelogs to their users — without learning,
@@ -29,15 +29,19 @@ become a marketing suite.
 - **For small SaaS teams**, not agencies or large marketing departments.
 - **Product updates, not campaigns-in-the-marketing-sense.** Changelogs, release
   notes, "what's new" emails.
-- **No contact tax.** You are not billed per subscriber. Pricing is a flat plan.
-- **No free tier.** Day3 is a paid product; there is no free plan and no perpetual
-  trial. (This is a hard product rule.)
+- **No contact tax.** You are not billed per subscriber. Pricing is bandwidth:
+  you pick a monthly email allowance.
+- **Free to build, paid to send.** A free account can set up domains, audiences,
+  senders and draft campaigns (up to **500 subscribers**), but **cannot send** —
+  sending is what a paid plan unlocks. Paid tiers differ only by monthly email
+  allowance, with the **AI writing assistant** included on the **10k tier and up**.
 - **Deliverability and compliance are built in, not add-ons:** verified sending
   domains, double opt-in, one-click unsubscribe, automatic bounce/complaint
   suppression, and account auto-pause on bad reputation.
 - **Deliberately excluded:** marketing automation flows, audience segmentation,
-  A/B testing, drag-and-drop template builders, open/click analytics dashboards
-  beyond basic delivery stats, and a free tier. These are out of scope by design.
+  A/B testing, and drag-and-drop template builders. Open and click tracking plus a
+  deliverability/reputation/engagement dashboard are included (see §6.10); the rest
+  are out of scope by design.
 
 ## 3. Who it's for
 
@@ -51,31 +55,53 @@ HubSpot, ConvertKit, etc.
 ## 4. Pricing & tiers
 
 Billing runs through **Clerk Billing** (Stripe-backed) and is scoped to the
-**organization** (the tenant), not individual users.
+**organization** (the tenant), not individual users. **Day3 sells sending
+bandwidth:** a paid plan is a monthly email allowance at a price. The free tier is
+set-up-only (no sending); the only feature gated by tier is the **AI assistant**
+(10k and up).
 
-| Plan | Clerk slug | Monthly email limit | Sending | Notes |
-|------|-----------|---------------------|---------|-------|
-| **None** | `none` | 0 | ❌ Disabled | Default state before subscribing, or after a subscription ends. |
-| **Tiny** | `tiny` | **10,000 emails / month** | ✅ Enabled | The paid plan. Priced ~**$9/mo** (price is configured in the Clerk dashboard, not in code). |
+| Plan | Clerk slug | Emails / month | Subscribers | AI assistant | Price |
+|------|-----------|----------------|-------------|--------------|-------|
+| **Free** | `free_org` | **0 — cannot send** | up to **500** | ❌ | **$0** |
+| **1k** | `1k_plan` | **1,000** | unlimited | ❌ | **$1 / mo** |
+| **5k** | `5k_plan` | **5,000** | unlimited | ❌ | **$3 / mo** |
+| **10k** | `10k_plan` | **10,000** | unlimited | ✅ | **$5 / mo** |
+| **25k** | `25k_plan` | **25,000** | unlimited | ✅ | **$12 / mo** |
+| **50k** | `50k_plan` | **50,000** | unlimited | ✅ | **$24 / mo** |
+| **100k** | `100k_plan` | **100,000** | unlimited | ✅ | **$49 / mo** |
 
 Key pricing facts:
 
-- **There is exactly one paid plan today (`tiny`).** No free tier, no annual
-  option, no usage-based overages — sending hard-stops at the monthly limit.
-- **The 10,000/month limit is a hard cap**, enforced atomically at send time so
-  concurrent workers can never over-send.
+- **Every org starts on the always-active Free tier.** It can do everything except
+  send: verify domains, add senders, import/collect subscribers, and draft
+  campaigns. **Sending requires a paid plan** (from $1/mo).
+- **The free tier is capped at 500 subscribers** (spam/abuse protection — a
+  set-up-only account can't hoard a giant list). Paid tiers are unlimited. The cap
+  is enforced on every insert path: manual add, CSV import, and public signup forms.
+- **The AI writing assistant (draft / subjects / preview / rewrite) is gated to the
+  10k tier and up.** Free/1k/5k accounts see an "upgrade to unlock AI" prompt; the
+  AI routes return 403 for those tiers. AI usage on enabled tiers is still bounded
+  by the per-org AI credit budget (rolling window + monthly backstop).
+- **Each monthly allowance is a hard cap**, enforced atomically at send time so
+  concurrent workers can never over-send. Sending hard-stops at the limit (no
+  usage-based overages); the UI surfaces upgrade prompts as the cap approaches.
 - **Usage resets** at the start of each billing period (driven by the Clerk
   `subscriptionItem.active` webhook; a monthly cron sweep is the fallback).
 - **No per-contact / per-subscriber pricing.** Subscriber count does not affect price.
 - **Subscription lifecycle → behavior:**
-  - `active` → can send.
+  - `active` → can send up to the plan's allowance.
   - `past_due` → plan still visible, but **sending is blocked** until payment is fixed.
-  - `ended` → plan drops to `none`, sending disabled.
+  - `ended` → **gracefully downgrades to the Free tier** (still active, set-up +
+    drafts), rather than locking the account out.
 - **Risk-paused accounts never send**, regardless of plan, until an admin clears them.
 
-> Source of truth in code: `src/services/plans.ts` (plan entitlements), Clerk
-> webhook `app/api/webhooks/clerk/route.ts`, billing UI `app/(app)/billing/page.tsx`.
-> If you change pricing, plan slugs, or limits, update this table.
+> Source of truth in code: `src/lib/plans-catalog.ts` (plan catalog + send/AI/
+> subscriber gating + upgrade-path helpers), `src/services/plans.ts` (send
+> eligibility), `src/services/subscriber-limit.ts` (subscriber cap), the AI routes
+> under `app/api/ai/**`, Clerk webhook `app/api/webhooks/clerk/route.ts`, billing UI
+> `app/(app)/billing/page.tsx`. The plan keys above ARE the Clerk Billing plan slugs
+> — they must match the plans configured in the Clerk dashboard. If you change
+> pricing, plan slugs, limits, or gating, update this table.
 
 ---
 
@@ -112,13 +138,28 @@ Key pricing facts:
   inline without leaving the composer.
 - **Reply-To (optional):** set a separate address for replies (e.g. `support@…`);
   defaults to the From address when left blank.
-- **Autosave:** drafts save automatically ~10s after editing stops (once the draft has
-  everything a send needs), with a live "Saving… / Saved" indicator. An explicit
-  **Save draft** button remains.
+- **Autosave only (no Save button):** drafts save automatically a beat (~1s) after each
+  edit, with a live "Saving… / Saved" indicator. Partial drafts are persisted from the
+  first keystroke, so nothing is ever lost; everything a send needs is enforced at
+  submit/schedule time instead. A brand-new draft is created on the first autosave and
+  the URL switches to the campaign in place.
 - **Rich-text WYSIWYG editor** (TipTap) constrained to an email-safe HTML allowlist —
-  what you see is exactly what recipients get.
-- **Merge tags:** `{{first_name}}`, `{{last_name}}`, `{{email}}`, plus an auto-appended
-  unsubscribe footer and `{{company_address}}`.
+  what you see is exactly what recipients get. Formatting floats in on selection and a
+  "+" insert menu appears on empty lines (no fixed toolbar). Insert options: headings,
+  lists, and quotes.
+- **Merge tags:** `{{first_name}}`, `{{last_name}}`, `{{email}}`. Tags can carry a
+  **fallback** for when the field is empty (`{{first_name|there}}` → "there"), so
+  personalized copy never degrades to "Hi ,". Inserting "First name" from the toolbar
+  drops in a fallback automatically.
+- **Pre-send personalization check:** before sending, the campaign page warns when
+  recipients in the chosen audience are missing a field the email uses (e.g. "312 of
+  1,200 recipients have no first name — they'll see 'there'"), so a generic greeting
+  to a large slice is a deliberate choice, not a surprise.
+- **Footer:** shown in the message and editable — you control the wording (the
+  "you're receiving this because…" line, which can use merge tags). The physical
+  mailing address and the per-recipient one-click unsubscribe link are appended
+  automatically at send time and can't be edited or removed (required by law; exactly
+  one working link is guaranteed).
 - **Send a test email** to yourself before sending for real.
 - **Submit & send** kicks off a review → recipient-generation → batched-send pipeline.
 - **Schedule for later:** pick a future date/time and the campaign parks in `scheduled`;
@@ -127,8 +168,12 @@ Key pricing facts:
   (verified domain, non-empty audience) has lapsed by release time, it returns to `draft`
   with a reason instead of sending.
 - **Pause / resume** an in-flight send.
+- **Delete a campaign** from the list or its detail page — removes the campaign and its
+  recipient records (sent campaigns included). Blocked only while a send is actively
+  in flight (`generating_recipients` / `sending`); pause it first.
 - **Live delivery stats:** total recipients, sent, delivered, bounced, complained,
   unsubscribed, failed, skipped — plus a recipient-level table and an undeliverable list.
+  (Account-wide and per-campaign rates, including opens, live on the Metrics page — §6.10.)
 - **Risk review** runs before send; risky campaigns can be routed to admin review.
 
 ### 6.2 AI assist (optional)
@@ -136,12 +181,13 @@ AI features are **optional and gated** — if no AI key is configured, the AI UI
 hidden and the app works normally. Powered by **OpenRouter**, defaulting to
 **Claude Sonnet 4.6** (`anthropic/claude-sonnet-4.6`, configurable).
 
-- **Draft a full campaign** from a short brief + tone (friendly / professional /
-  excited / casual / concise) → generates subject, preview text, and body.
+- **Draft a full campaign** from a short brief → generates subject, preview text,
+  and body.
 - **Subject line ideas** — generates 5 alternatives.
 - **Preview text** — auto-writes an inbox preview from the subject + body.
-- **Select-to-rewrite** — highlight text in the editor and rewrite it (improve,
-  shorten, friendlier, more professional, fix grammar).
+- **Edit with AI** — highlight text in the editor and describe the change you want in
+  a free-form prompt (e.g. "make this punchier and add a clear call to action"); the
+  selection is rewritten to match.
 - AI output is run through the same HTML sanitizer; merge tags are preserved.
 
 **AI usage budget (per organization).** AI calls are metered against a shared,
@@ -160,10 +206,12 @@ themselves, and manual writing continues unaffected.
   configuration-tunable.
 
 ### 6.3 Audiences & subscribers
-- Create named audiences.
+- Create, **rename**, and **delete** named audiences. Deleting an audience removes it and
+  all its subscribers (sent campaigns are unaffected).
 - **CSV import** (email, first_name, last_name; up to ~5,000 rows per file) with
   dedup, suppression filtering, progress tracking, and re-upload/retry for failed imports.
-- **Add subscribers manually.**
+- **Add subscribers manually**; **edit** a subscriber's email and name, or **delete** one
+  outright (distinct from unsubscribe, which keeps the record but stops mailing).
 - Search and filter subscribers by status; unsubscribe individuals.
 - Subscriber-status breakdown per audience.
 
@@ -208,14 +256,26 @@ toggle, and a **double opt-in** toggle.
 ### 6.7 Compliance & reputation
 - **One-click unsubscribe** (RFC 8058 / `List-Unsubscribe`) with HMAC-signed tokens,
   plus a public unsubscribe page.
+- **Mailing address required to send:** a campaign cannot be submitted or scheduled
+  until the account has a company mailing address (it's rendered into every footer
+  for CAN-SPAM); the send gate blocks it with an actionable message otherwise.
 - **Automatic suppression** of bounced/complained/unsubscribed addresses (per-account
   and global scopes).
 - **Bounce/complaint handling** via SES → SNS webhooks updates recipient status and
-  suppresses bad addresses; sustained bad reputation can auto-pause an account.
+  suppresses bad addresses; sustained bad reputation **over a trailing window** can
+  auto-pause an account (and pages on-call via the error sink).
+- **Public Privacy Policy and Terms** pages (`/privacy`, `/terms`), linked from the
+  marketing footer.
 
 ### 6.8 Billing & account settings
 - Billing page: current plan, subscription status, monthly usage, renewal date, and
-  Clerk's pricing table for upgrade/checkout.
+  a plan picker built as a bandwidth slider over a focus carousel. The user slides
+  along the email-volume ladder ("how many emails per month?", free → 100k); the
+  matching tier card snaps into focus in a horizontally scrolling row of all tiers
+  (scaled up, neighbors dimmed), and scrolling the row moves the slider in sync. Only
+  the focused card exposes the billing CTA, which drives Clerk Billing directly —
+  upgrades/switches open Clerk Checkout, "Downgrade to Free" opens Clerk's
+  subscription drawer to cancel (Clerk handles proration).
 - Settings: company mailing address (legally required in email footers) and Clerk's
   organization management (team members, org name, logo).
 
@@ -224,6 +284,38 @@ toggle, and a **double opt-in** toggle.
 - Per-account drill-down: pause/resume sending, usage, bounce/complaint rates, domains, campaigns.
 - **Campaign review queue:** approve & send, or block (with reason) flagged campaigns.
 - Force-verify a domain; suppress addresses globally.
+
+### 6.10 Metrics (deliverability, reputation, engagement)
+A dedicated **Metrics** page (in the main nav) aggregates sending performance across
+all campaigns, with a filter to scope to a single campaign:
+- **KPI tiles:** sent, delivered, opened, clicked, bounced, complained, unsubscribed.
+- **Deliverability:** a sent → delivered → opened → clicked funnel with the delivery rate.
+- **Reputation:** bounce-rate and complaint-rate gauges scaled to the provider's review
+  thresholds (keep bounces under 5%, complaints under 0.1%), with a health status.
+- **Engagement:** open rate, click rate, and unsubscribe rate, measured against delivered mail.
+- **By campaign:** a sortable, searchable breakdown table of per-campaign rates.
+
+**Open tracking:** every sent email carries a per-recipient, HMAC-signed 1×1 tracking
+pixel served from `/api/track/open`. The first load stamps the recipient's `opened_at`
+and records one `open` event; repeat loads are no-ops, so opens are counted once per
+recipient. Privacy proxies (e.g. Apple Mail Privacy Protection) pre-load images, so open
+rates can be overstated — surfaced as a caveat in the UI.
+
+**Click tracking:** content links in the body are rewritten per recipient to redirect
+through `/api/track/click`, which records the click and 302s to the destination. The
+destination URL is HMAC-signed into the token (never read from a query param), so the
+redirect can only ever land on a URL we issued — it cannot be turned into an open
+redirect. Only absolute http(s) links are tracked; the unsubscribe link is never
+rewritten. The first click stamps `clicked_at` (and back-fills `opened_at`, since a click
+proves an open) and records one `click` event; repeat clicks are no-ops. Per-link
+click breakdowns are not surfaced yet (the click event stores the URL for future use).
+
+### 6.11 In-app help
+A **Help** button sits at the bottom of the sidebar on every page. It opens a small
+popover with a single message box; sending relays the message to the support inbox
+(`contact@day3.app`) with the signed-in user set as Reply-To, so the team can reply
+straight back by email. The popover also links the same address directly for users who
+prefer their own mail client. Available on every plan; there is no separate docs site yet.
 
 ---
 

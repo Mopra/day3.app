@@ -4,15 +4,15 @@ import type { Db } from "../db/client";
 import { accountUsers, accounts, type Account } from "../db/schema";
 import { newId, nowIso } from "../lib/ids";
 import {
-  PAID_PLAN_SLUG,
+  FREE_PLAN,
   entitlementsFor,
   isPlanKey,
+  planFromEntitlements,
   planFromSlug,
+  planOverrideFromMetadata,
   type PlanKey,
   type SubscriptionLifecycle,
 } from "./plans";
-
-export { PAID_PLAN_SLUG };
 
 // Local membership roles. Clerk org roles arrive prefixed (e.g. "org:admin");
 // anything that is not an admin is recorded as a plain member.
@@ -119,20 +119,30 @@ export async function syncCurrentOrganization(
   if (!auth.userId) throw new Error("not signed in");
   if (!auth.orgId) throw new Error("no active organization");
 
-  // The session's billing claim only tells us whether the org currently holds an
-  // active paid plan. A past_due / ended subscription is carried by the webhook
-  // (which has the lifecycle); the session claim drops to no-plan, which we treat
-  // as "ended" here. We never downgrade an active row to past_due from the
-  // session — only the webhook moves an account into past_due.
-  const hasPaidPlan = auth.has ? auth.has({ plan: `org:${PAID_PLAN_SLUG}` }) : false;
-  const plan: PlanKey = hasPaidPlan ? "tiny" : "none";
-  const lifecycle: SubscriptionLifecycle = hasPaidPlan ? "active" : "ended";
+  // Fetch the org up front: we need its name (when creating the row) and its
+  // publicMetadata, which may carry a manual tier override for testers.
+  const org = await clerk.organizations.getOrganization({ organizationId: auth.orgId });
+
+  // A tester override in the org's publicMetadata (e.g. { "plan": "25k_plan" })
+  // forces that tier regardless of real billing. Otherwise the session's billing
+  // claim tells us which paid tier (if any) the org holds; with no paid grant the
+  // org sits on the always-active free tier. A past_due subscription is carried by
+  // the webhook (which has the lifecycle); we never downgrade an active row to
+  // past_due from the session — only the webhook does (handled below). The
+  // override, when present, also bypasses the past_due hold so a tester always
+  // lands on the chosen tier.
+  const overridePlan = planOverrideFromMetadata(org.publicMetadata);
+  const plan: PlanKey =
+    overridePlan ?? (auth.has ? planFromEntitlements(auth.has) : FREE_PLAN);
+  const lifecycle: SubscriptionLifecycle = "active";
+  if (overridePlan) {
+    console.info(`[tier-override] org ${auth.orgId} forced to ${overridePlan} via publicMetadata`);
+  }
 
   let account = await getAccountByClerkOrgId(db, auth.orgId);
   const now = nowIso();
 
   if (!account) {
-    const org = await clerk.organizations.getOrganization({ organizationId: auth.orgId });
     const id = newId("acc");
     await db
       .insert(accounts)
@@ -158,10 +168,11 @@ export async function syncCurrentOrganization(
     // deferred to the authoritative subscriptionItem.active webhook, which carries
     // the real lifecycle. We keep the recorded past_due plan/limit so the user
     // still sees the "fix payment" CTA for the plan they owe for.
-    const keepPastDue = account.subscriptionStatus === "past_due";
+    // A tester override forces its tier active, bypassing the past_due hold.
+    const keepPastDue = !overridePlan && account.subscriptionStatus === "past_due";
     const effectivePlan: PlanKey = keepPastDue
-      ? (isPlanKey(account.plan) ? account.plan : "none")
-      : plan;
+      ? (isPlanKey(account.plan) ? account.plan : FREE_PLAN)
+      : plan; // `plan` already prefers the override
     const effectiveLifecycle: SubscriptionLifecycle = keepPastDue ? "past_due" : lifecycle;
     await db
       .update(accounts)
@@ -209,17 +220,21 @@ export async function applySubscriptionEvent(
   const account = await getAccountByClerkOrgId(db, input.clerkOrgId);
   if (!account) return; // Account is created lazily on first dashboard load.
 
-  // An "ended" subscription drops to the no-plan tier (limit 0). active/past_due
-  // keep the plan from the event's slug (falling back to the recorded plan when
-  // the slug is absent on a pastDue/ended payload) so a past_due account still
-  // shows the plan it owes for.
-  const recordedPlan: PlanKey = isPlanKey(account.plan) ? account.plan : "none";
-  const plan: PlanKey =
-    input.lifecycle === "ended"
-      ? "none"
-      : input.planSlug
-        ? planFromSlug(input.planSlug)
-        : recordedPlan;
+  // An "ended" subscription gracefully downgrades to the always-active free tier
+  // (the org keeps all features and a small send allowance instead of being
+  // locked out). active/past_due keep the plan from the event's slug (falling
+  // back to the recorded plan when the slug is absent on a pastDue/ended payload)
+  // so a past_due account still shows the plan it owes for.
+  const ended = input.lifecycle === "ended";
+  const recordedPlan: PlanKey = isPlanKey(account.plan) ? account.plan : FREE_PLAN;
+  const plan: PlanKey = ended
+    ? FREE_PLAN
+    : input.planSlug
+      ? planFromSlug(input.planSlug)
+      : recordedPlan;
+  // Reverting to the free tier means the account is active again (nothing to pay),
+  // not "inactive". Only active/past_due lifecycles pass through unchanged.
+  const lifecycle: SubscriptionLifecycle = ended ? "active" : input.lifecycle;
 
   // This webhook is the primary period source: when Clerk reports a period
   // start later than the one we have, a new billing period has begun, so we zero
@@ -240,7 +255,7 @@ export async function applySubscriptionEvent(
   await db
     .update(accounts)
     .set({
-      ...entitlementFields(account, plan, input.lifecycle),
+      ...entitlementFields(account, plan, lifecycle),
       currentPeriodStart: input.periodStart ?? account.currentPeriodStart,
       currentPeriodEnd: input.periodEnd ?? account.currentPeriodEnd,
       ...(periodAdvanced ? { monthlyEmailSentCount: 0 } : {}),

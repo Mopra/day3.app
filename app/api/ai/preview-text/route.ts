@@ -4,6 +4,7 @@ import { requireAccount } from "@/api/context";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { enforceAiBudget, recordAiUsage } from "@/lib/ai-budget";
 import { aiEnabled, writePreviewText } from "@/services/ai";
+import { AI_UPGRADE_MESSAGE, planHasAI } from "@/services/plans";
 
 const PreviewSchema = z.object({
   subject: z.string().trim().min(1).max(200),
@@ -14,6 +15,7 @@ const PreviewSchema = z.object({
 export const POST = route(async (req) => {
   const { account } = await requireAccount();
   if (!aiEnabled()) throw new HttpError(503, "AI assistance isn't configured.");
+  if (!planHasAI(account.plan)) throw new HttpError(403, AI_UPGRADE_MESSAGE);
   await enforceRateLimit("ai", account.id);
   await enforceAiBudget(account.id);
   const input = await parseJson(req, PreviewSchema);

@@ -1,10 +1,12 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../../db/client";
-import { imports, subscribers } from "../../db/schema";
+import { accounts, imports, subscribers } from "../../db/schema";
 import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
 import { canonicalizeEmail, MAX_IMPORT_ROWS, parseSubscriberCsv } from "../../lib/csv";
+import { maxSubscribersForPlan } from "../../lib/plans-catalog";
 import { getSuppressedEmails } from "../../services/suppression";
+import { countAccountSubscribers } from "../../services/subscriber-limit";
 import type { ObjectStore } from "../../lib/storage";
 
 // Postgres allows up to 65535 bound params per statement; chunk into
@@ -68,7 +70,22 @@ export async function processImport(
 
     // parseSubscriberCsv already canonicalizes r.email; canonicalize here too so
     // the suppression filter never compares a raw against a canonical value.
-    const candidates = parsed.rows.filter((r) => !suppressed.has(canonicalizeEmail(r.email)));
+    let candidates = parsed.rows.filter((r) => !suppressed.has(canonicalizeEmail(r.email)));
+
+    // Free-tier subscriber-cap backstop. The upload route already rejects an
+    // import that wouldn't fit, but subscribers can arrive via public forms
+    // between upload and processing — so cap inserts to the remaining headroom
+    // here too. Paid tiers are unlimited (cap = null). Over-cap rows fall into
+    // skippedRows below (totalRows - imported).
+    const account = await db.query.accounts.findFirst({
+      where: eq(accounts.id, importRow.accountId),
+    });
+    const cap = account ? maxSubscribersForPlan(account.plan) : null;
+    if (cap !== null) {
+      const current = await countAccountSubscribers(db, importRow.accountId);
+      const headroom = Math.max(0, cap - current);
+      if (candidates.length > headroom) candidates = candidates.slice(0, headroom);
+    }
 
     const now = nowIso();
     let imported = 0;

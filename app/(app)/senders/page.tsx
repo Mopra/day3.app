@@ -2,17 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { AtSign, CheckCircle2, Star } from "lucide-react";
+import { AtSign, CheckCircle2, Pencil, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -25,7 +24,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import { OrbitLoader } from "@/components/ui/orbit-loader";
 import {
   Table,
@@ -35,6 +33,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  ListCount,
+  ListEmpty,
+  ListFilter,
+  ListNoResults,
+  ListSearch,
+  ListSkeleton,
+  ListToolbar,
+  SortableHead,
+  useListController,
+} from "@/components/ui/data-list";
 import { useApi } from "@/lib/api";
 import { domainState } from "@/lib/domain";
 import { formatDate } from "@/lib/format";
@@ -45,10 +54,17 @@ function senderVerified(s: Sender): boolean {
   return !!s.adminOverrideVerified || s.verificationStatus === "verified";
 }
 
+const STATUS_OPTIONS = [
+  { value: "all", label: "All senders" },
+  { value: "verified", label: "Verified" },
+  { value: "unverified", label: "Needs setup" },
+];
+
 export default function SendersPage() {
   const api = useApi();
   const [senders, setSenders] = useState<Sender[] | null>(null);
   const [domains, setDomains] = useState<SendingDomain[]>([]);
+  const [status, setStatus] = useState("all");
 
   // Add/edit dialog. `editing` holds the sender being edited (null = add new).
   const [open, setOpen] = useState(false);
@@ -76,6 +92,18 @@ export default function SendersPage() {
   }, []);
 
   useEffect(load, [load]);
+
+  const list = useListController(senders, {
+    searchText: (s) => `${s.fromName} ${s.fromEmail} ${s.domain ?? ""}`,
+    predicate: (s) =>
+      status === "all" || (status === "verified" ? senderVerified(s) : !senderVerified(s)),
+    sortAccessors: {
+      from: (s) => s.fromName,
+      domain: (s) => s.domain,
+      createdAt: (s) => s.createdAt,
+    },
+    initialSort: { key: "createdAt", dir: "desc" },
+  });
 
   function openAdd() {
     setEditing(null);
@@ -185,41 +213,54 @@ export default function SendersPage() {
         .
       </p>
 
+      {senders && senders.length > 0 && (
+        <ListToolbar>
+          <ListSearch value={list.search} onChange={list.setSearch} placeholder="Search senders…" />
+          <ListFilter
+            value={status}
+            onChange={setStatus}
+            options={STATUS_OPTIONS}
+            ariaLabel="Filter by verification"
+          />
+          <ListCount shown={list.shown} total={list.total} noun="sender" className="ml-auto" />
+        </ListToolbar>
+      )}
+
       <Card>
         <CardContent>
-          {senders === null ? (
-            <Skeleton className="h-24 w-full" />
-          ) : senders.length === 0 ? (
-            <div className="flex flex-col items-center py-10 text-center">
-              <div className="flex size-11 items-center justify-center rounded-full bg-muted">
-                <AtSign className="size-5 text-muted-foreground" />
-              </div>
-              <p className="mt-3 font-medium">Add your first sender</p>
-              <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                {noVerifiedDomain
+          {list.view === null ? (
+            <ListSkeleton />
+          ) : list.isEmpty ? (
+            <ListEmpty
+              icon={AtSign}
+              title="Add your first sender"
+              description={
+                noVerifiedDomain
                   ? "First verify a sending domain — then you can add the From identities your campaigns send as."
-                  : "This is the From name and address your campaigns send as. You can keep several per domain."}
-              </p>
-              {noVerifiedDomain ? (
-                <Button className="mt-4" render={<Link href="/domains">Set up a domain</Link>} />
-              ) : (
-                <Button className="mt-4" onClick={openAdd}>
-                  Add sender
-                </Button>
-              )}
-            </div>
+                  : "This is the From name and address your campaigns send as. You can keep several per domain."
+              }
+              action={
+                noVerifiedDomain ? (
+                  <Button render={<Link href="/domains">Set up a domain</Link>} />
+                ) : (
+                  <Button onClick={openAdd}>Add sender</Button>
+                )
+              }
+            />
+          ) : list.isFilteredEmpty ? (
+            <ListNoResults onClear={() => { list.setSearch(""); setStatus("all"); }} />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>From</TableHead>
-                  <TableHead>Domain</TableHead>
-                  <TableHead>Added</TableHead>
+                  <SortableHead label="From" sortKey="from" sort={list.sort} onSort={list.toggleSort} />
+                  <SortableHead label="Domain" sortKey="domain" sort={list.sort} onSort={list.toggleSort} />
+                  <SortableHead label="Added" sortKey="createdAt" sort={list.sort} onSort={list.toggleSort} />
                   <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {senders.map((s) => (
+                {list.view.map((s) => (
                   <TableRow key={s.id}>
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
@@ -253,7 +294,7 @@ export default function SendersPage() {
                         )}
                       </span>
                     </TableCell>
-                    <TableCell>{formatDate(s.createdAt)}</TableCell>
+                    <TableCell className="text-muted-foreground">{formatDate(s.createdAt)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
                         {!s.isDefault && (
@@ -263,19 +304,29 @@ export default function SendersPage() {
                             className="text-muted-foreground"
                             onClick={() => makeDefault(s)}
                           >
+                            <Star className="size-3.5" />
                             Make default
                           </Button>
                         )}
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(s)}>
-                          Edit
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label="Edit sender"
+                          title="Edit"
+                          className="text-muted-foreground"
+                          onClick={() => openEdit(s)}
+                        >
+                          <Pencil className="size-4" />
                         </Button>
                         <Button
                           variant="ghost"
-                          size="sm"
+                          size="icon-sm"
+                          aria-label="Remove sender"
+                          title="Remove"
                           className="text-muted-foreground hover:text-destructive"
                           onClick={() => setConfirmRemove(s)}
                         >
-                          Remove
+                          <Trash2 className="size-4" />
                         </Button>
                       </div>
                     </TableCell>
@@ -364,24 +415,19 @@ export default function SendersPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!confirmRemove} onOpenChange={(o) => !o && setConfirmRemove(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Remove this sender?</DialogTitle>
-            <DialogDescription>
-              {confirmRemove?.fromName} &lt;{confirmRemove?.fromEmail}&gt; will no longer be
-              available to pick in the composer. Campaigns already sent are unaffected.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <DialogClose render={<Button variant="outline">Cancel</Button>} />
-            <Button variant="destructive" onClick={remove} disabled={removing}>
-              {removing && <OrbitLoader size={16} />}
-              Remove sender
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={!!confirmRemove}
+        onOpenChange={(o) => !o && setConfirmRemove(null)}
+        title="Remove this sender?"
+        description={
+          confirmRemove
+            ? `${confirmRemove.fromName} <${confirmRemove.fromEmail}> will no longer be available to pick in the composer. Campaigns already sent are unaffected.`
+            : undefined
+        }
+        confirmLabel="Remove sender"
+        busy={removing}
+        onConfirm={remove}
+      />
     </div>
   );
 }

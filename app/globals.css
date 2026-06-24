@@ -383,7 +383,7 @@
    ProseMirror content to read like the clean, newsletter-safe email subscribers
    receive — only the tags the sanitizer allows are styled here. */
 .d3-prose {
-  padding: 1.25rem 1.5rem;
+  padding: 1.25rem 0;
   min-height: 320px;
   font-size: 0.95rem;
   line-height: 1.65;

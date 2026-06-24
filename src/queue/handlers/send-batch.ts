@@ -14,8 +14,14 @@ import { canonicalizeEmail } from "../../lib/csv";
 import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
 import type { EmailProvider } from "../../email/provider";
-import { renderCampaignEmail } from "../../services/render";
+import { renderCampaignEmail, extractTrackableLinks } from "../../services/render";
 import { signUnsubscribeToken, unsubscribeUrl } from "../../services/unsubscribe";
+import {
+  signOpenToken,
+  openTrackingUrl,
+  signClickToken,
+  clickTrackingUrl,
+} from "../../services/open-tracking";
 import { getSuppressedEmails, addSuppression } from "../../services/suppression";
 import { enforceAccountHealth } from "../../services/health";
 import type { JobQueue } from "../messages";
@@ -98,7 +104,11 @@ export async function sendCampaignBatch(
   const claimCount = Number(await reserveQuota(db, account.id, message.batchSize));
 
   if (claimCount <= 0) {
-    await pauseCampaign(db, campaign.id, "Monthly email limit was reached.");
+    await pauseCampaign(
+      db,
+      campaign.id,
+      "Monthly email limit was reached. Upgrade your plan to send more.",
+    );
     await logJob(db, {
       jobType: "send_campaign_batch",
       entityType: "campaign",
@@ -293,6 +303,10 @@ async function sendToClaimed(
       : [];
   const subscriberById = new Map(subscriberRows.map((s) => [s.id, s]));
 
+  // The campaign body is identical for every recipient, so its trackable links
+  // are extracted once; only the per-recipient signed token differs below.
+  const trackableLinks = deps.appUrl ? extractTrackableLinks(campaign.htmlBody) : [];
+
   // Accumulated in memory and flushed once per exit point (see flushBatchWrites).
   const pendingEvents: (typeof emailEvents.$inferInsert)[] = [];
 
@@ -328,6 +342,44 @@ async function sendToClaimed(
     );
     const unsubUrl = unsubscribeUrl(deps.appUrl, token);
 
+    // Build the per-recipient open-tracking pixel URL. Skip it when no public
+    // app URL is configured (the pixel needs an absolute, reachable href to be
+    // worth anything).
+    let openUrl: string | null = null;
+    if (deps.appUrl) {
+      const openToken = await signOpenToken(
+        {
+          accountId: account.id,
+          campaignId: campaign.id,
+          campaignRecipientId: recipient.id,
+          email: recipient.email,
+        },
+        deps.unsubscribeSecret,
+      );
+      openUrl = openTrackingUrl(deps.appUrl, openToken);
+    }
+
+    // Per-recipient click-tracking redirects: one signed token per distinct
+    // content link, carrying that link's real destination so the redirect is
+    // tamper-proof. Keyed by the exact href in the rendered HTML.
+    let linkTracking: Record<string, string> | null = null;
+    if (deps.appUrl && trackableLinks.length > 0) {
+      linkTracking = {};
+      for (const link of trackableLinks) {
+        const clickToken = await signClickToken(
+          {
+            accountId: account.id,
+            campaignId: campaign.id,
+            campaignRecipientId: recipient.id,
+            email: recipient.email,
+            url: link.url,
+          },
+          deps.unsubscribeSecret,
+        );
+        linkTracking[link.raw] = clickTrackingUrl(deps.appUrl, clickToken);
+      }
+    }
+
     const rendered = renderCampaignEmail({
       campaign,
       subscriber: {
@@ -338,6 +390,8 @@ async function sendToClaimed(
       companyName: account.name,
       companyAddress: account.companyAddress,
       unsubscribeUrl: unsubUrl,
+      openTrackingUrl: openUrl,
+      linkTracking,
     });
 
     const result = await emailProvider.send({

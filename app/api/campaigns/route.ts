@@ -1,7 +1,7 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
-import { CampaignFieldsSchema, validateOwnershipAndSender } from "@/api/campaigns";
+import { CampaignDraftSchema, validateDraftOwnership } from "@/api/campaigns";
 import { campaigns } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -34,8 +34,11 @@ export const GET = route(async () => {
 export const POST = route(async (req) => {
   const { db, account } = await requireAccount();
   await enforceRateLimit("campaign_create", account.id);
-  const data = await parseJson(req, CampaignFieldsSchema);
-  const error = await validateOwnershipAndSender(db, account.id, data);
+  // Drafts are autosaved as the user types, so this accepts partial content and
+  // stores empty strings for anything not filled in yet. Completeness is enforced
+  // at submit/schedule time (campaignContentError).
+  const data = await parseJson(req, CampaignDraftSchema);
+  const error = await validateDraftOwnership(db, account.id, data);
   if (error) throw new HttpError(400, error);
 
   const id = newId("cmp");
@@ -43,17 +46,18 @@ export const POST = route(async (req) => {
   await db.insert(campaigns).values({
     id,
     accountId: account.id,
-    audienceId: data.audienceId,
-    sendingDomainId: data.sendingDomainId,
-    senderId: data.senderId ?? null,
-    name: data.name,
-    subject: data.subject,
+    audienceId: data.audienceId ?? "",
+    sendingDomainId: data.sendingDomainId ?? "",
+    senderId: data.senderId || null,
+    name: data.name ?? "",
+    subject: data.subject ?? "",
     previewText: data.previewText ?? null,
-    fromName: data.fromName,
-    fromEmail: data.fromEmail,
+    fromName: data.fromName ?? "",
+    fromEmail: data.fromEmail ?? "",
     replyTo: data.replyTo || null,
-    htmlBody: data.htmlBody,
+    htmlBody: data.htmlBody ?? "",
     textBody: data.textBody ?? null,
+    footerText: data.footerText || null,
     status: "draft",
     createdAt: now,
     updatedAt: now,

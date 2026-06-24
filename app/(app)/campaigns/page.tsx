@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Mail, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Table,
   TableBody,
@@ -15,15 +17,41 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  ListCount,
+  ListEmpty,
+  ListFilter,
+  ListNoResults,
+  ListSearch,
+  ListSkeleton,
+  ListToolbar,
+  RowOpen,
+  SortableHead,
+  rowLinkProps,
+  useListController,
+} from "@/components/ui/data-list";
 import { useApi } from "@/lib/api";
 import { formatDate, statusLabel, statusVariant } from "@/lib/format";
 import type { CampaignListItem } from "@/lib/types";
 
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+// A campaign mid-send can't be deleted (the worker is reading its rows); pause
+// it first. Everything else — drafts, scheduled, paused, sent, failed — is fair
+// game.
+function canDelete(status: string): boolean {
+  return status !== "sending" && status !== "generating_recipients";
+}
+
 export default function CampaignsPage() {
   const api = useApi();
+  const router = useRouter();
   const [campaigns, setCampaigns] = useState<CampaignListItem[] | null>(null);
+  const [status, setStatus] = useState("all");
+  const [confirm, setConfirm] = useState<CampaignListItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     api
       .get<{ campaigns: CampaignListItem[] }>("/api/campaigns")
       .then((res) => setCampaigns(res.campaigns))
@@ -31,40 +59,110 @@ export default function CampaignsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(load, [load]);
+
+  async function remove() {
+    if (!confirm) return;
+    setDeleting(true);
+    try {
+      await api.del(`/api/campaigns/${confirm.id}`);
+      toast.success("Campaign deleted");
+      setCampaigns((cs) => cs?.filter((c) => c.id !== confirm.id) ?? null);
+      setConfirm(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete campaign");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  // Status options follow whatever's actually in the list, so we never show an
+  // empty bucket.
+  const statusOptions = useMemo(() => {
+    const present = Array.from(new Set((campaigns ?? []).map((c) => c.status)));
+    return [
+      { value: "all", label: "All statuses" },
+      ...present.map((s) => ({ value: s, label: cap(statusLabel(s)) })),
+    ];
+  }, [campaigns]);
+
+  const list = useListController(campaigns, {
+    searchText: (c) => `${c.name} ${c.subject}`,
+    predicate: (c) => status === "all" || c.status === status,
+    sortAccessors: {
+      name: (c) => c.name,
+      status: (c) => c.status,
+      audience: (c) => c.audienceName,
+      sent: (c) => c.sentCount,
+      createdAt: (c) => c.createdAt,
+    },
+    initialSort: { key: "createdAt", dir: "desc" },
+  });
+
+  function clearFilters() {
+    list.setSearch("");
+    setStatus("all");
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold tracking-tight">Campaigns</h1>
-        <Link href="/campaigns/new">
-          <Button>New campaign</Button>
-        </Link>
+        <Button render={<Link href="/campaigns/new">New campaign</Link>} />
       </div>
+
+      {campaigns && campaigns.length > 0 && (
+        <ListToolbar>
+          <ListSearch
+            value={list.search}
+            onChange={list.setSearch}
+            placeholder="Search name or subject…"
+          />
+          <ListFilter
+            value={status}
+            onChange={setStatus}
+            options={statusOptions}
+            ariaLabel="Filter by status"
+          />
+          <ListCount shown={list.shown} total={list.total} noun="campaign" className="ml-auto" />
+        </ListToolbar>
+      )}
 
       <Card>
         <CardContent>
-          {campaigns === null ? (
-            <Skeleton className="h-24 w-full" />
-          ) : campaigns.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              No campaigns yet. Write your first product update.
-            </p>
+          {list.view === null ? (
+            <ListSkeleton />
+          ) : list.isEmpty ? (
+            <ListEmpty
+              icon={Mail}
+              title="No campaigns yet"
+              description="Write your first product update and send it to your audience."
+              action={<Button render={<Link href="/campaigns/new">New campaign</Link>} />}
+            />
+          ) : list.isFilteredEmpty ? (
+            <ListNoResults onClear={clearFilters} />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
+                  <SortableHead label="Name" sortKey="name" sort={list.sort} onSort={list.toggleSort} />
                   <TableHead>Subject</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Audience</TableHead>
-                  <TableHead>Sent</TableHead>
-                  <TableHead>Created</TableHead>
+                  <SortableHead label="Status" sortKey="status" sort={list.sort} onSort={list.toggleSort} />
+                  <SortableHead label="Audience" sortKey="audience" sort={list.sort} onSort={list.toggleSort} />
+                  <SortableHead label="Sent" sortKey="sent" sort={list.sort} onSort={list.toggleSort} align="right" />
+                  <SortableHead label="Created" sortKey="createdAt" sort={list.sort} onSort={list.toggleSort} />
+                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {campaigns.map((c) => (
-                  <TableRow key={c.id}>
+                {list.view.map((c) => (
+                  <TableRow key={c.id} {...rowLinkProps(() => router.push(`/campaigns/${c.id}`))}>
                     <TableCell>
-                      <Link href={`/campaigns/${c.id}`} className="font-medium hover:underline">
+                      <Link
+                        href={`/campaigns/${c.id}`}
+                        className="font-medium hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {c.name}
                       </Link>
                     </TableCell>
@@ -75,8 +173,29 @@ export default function CampaignsPage() {
                       <Badge variant={statusVariant(c.status)}>{statusLabel(c.status)}</Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">{c.audienceName ?? "—"}</TableCell>
-                    <TableCell>{c.sentCount}</TableCell>
-                    <TableCell>{formatDate(c.createdAt)}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {c.sentCount.toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{formatDate(c.createdAt)}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label="Delete campaign"
+                          className="text-muted-foreground hover:text-destructive"
+                          disabled={!canDelete(c.status)}
+                          title={canDelete(c.status) ? "Delete" : "Pause before deleting"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirm(c);
+                          }}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                        <RowOpen href={`/campaigns/${c.id}`} />
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -84,6 +203,16 @@ export default function CampaignsPage() {
           )}
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={!!confirm}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        title={`Delete "${confirm?.name}"?`}
+        description="This permanently removes the campaign and its recipient records. Sent campaigns are removed from your history too. This can't be undone."
+        confirmLabel="Delete campaign"
+        busy={deleting}
+        onConfirm={remove}
+      />
     </div>
   );
 }

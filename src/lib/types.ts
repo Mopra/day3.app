@@ -179,6 +179,7 @@ export type Campaign = {
   replyTo: string | null;
   htmlBody: string;
   textBody: string | null;
+  footerText: string | null;
   status: string;
   riskLevel: string | null;
   riskScore: number | null;
@@ -209,6 +210,49 @@ export type CampaignStats = {
   failed?: number;
   skipped?: number;
   undeliverable?: UndeliverableReason[];
+};
+
+// Raw per-campaign send counts powering the Metrics page. Each field is an
+// independent count (an email can be delivered AND complained), so they don't
+// sum to `recipients`. Rates are derived from these client-side.
+//   recipients  — rows generated for the campaign (the send list)
+//   sent        — handed to the provider (sent_at set; includes later outcomes)
+//   delivered   — confirmed delivered by the provider
+//   opened      — recorded at least one open (pixel load or a click)
+//   clicked     — clicked at least one tracked link
+//   bounced     — hard-bounced
+//   complained  — marked as spam
+//   unsubscribed— unsubscribed via this campaign
+//   failed      — send-time hard failure (bad address / provider error)
+//   skipped     — suppressed before sending
+export type CampaignMetricCounts = {
+  recipients: number;
+  sent: number;
+  delivered: number;
+  opened: number;
+  clicked: number;
+  bounced: number;
+  complained: number;
+  unsubscribed: number;
+  failed: number;
+  skipped: number;
+};
+
+export type CampaignMetricsRow = {
+  campaignId: string;
+  name: string;
+  status: string;
+  sentAt: string | null;
+  counts: CampaignMetricCounts;
+};
+
+// Pre-send warning: recipients in the target audience missing a personalization
+// field the campaign uses. `fallback` is what they'll see instead (null = blank).
+export type PersonalizationGap = {
+  field: "first_name" | "last_name";
+  fallback: string | null;
+  missing: number;
+  total: number;
 };
 
 export type Recipient = {

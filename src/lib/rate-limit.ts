@@ -59,6 +59,9 @@ const DEFAULTS: Record<string, RateLimitRule> = {
   // AI assist (draft/subjects/preview-text/rewrite): each hit is a paid LLM call
   // via OpenRouter. Generous for normal composing, bounded against cost abuse.
   ai: { limit: 20, windowMs: 60_000 },
+  // In-app Help widget → support inbox (real SES send). Bounds accidental
+  // double-submits and abuse; plenty for a genuine help request.
+  support: { limit: 5, windowMs: 60_000 },
 };
 
 function parseRule(name: string): RateLimitRule {

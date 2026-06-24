@@ -15,10 +15,14 @@ function fakeClerk(opts: {
   orgName?: string;
   email: string;
   role: string;
+  publicMetadata?: Record<string, unknown>;
 }): ClerkClient {
   const stub = {
     organizations: {
-      getOrganization: async () => ({ name: opts.orgName ?? "Acme Inc" }),
+      getOrganization: async () => ({
+        name: opts.orgName ?? "Acme Inc",
+        publicMetadata: opts.publicMetadata ?? {},
+      }),
       getOrganizationMembershipList: async () => ({
         data: [{ role: opts.role }],
         totalCount: 1,
@@ -86,7 +90,7 @@ describe("syncCurrentOrganization", () => {
     const db = await testDb();
     const account = await seedAccount(db, {
       clerkOrgId: "org_pastdue",
-      plan: "tiny",
+      plan: "10k_plan",
       subscriptionStatus: "past_due",
       sendingEnabled: false,
     });
@@ -105,6 +109,58 @@ describe("syncCurrentOrganization", () => {
     });
     expect(stored?.subscriptionStatus).toBe("past_due");
     expect(stored?.sendingEnabled).toBe(false);
+  });
+
+  it("forces the tier from a publicMetadata override, enabling sending without a subscription", async () => {
+    const db = await testDb();
+    // No paid entitlement on the session (has() === false), but the org's public
+    // metadata pins it to the 25k tier — the tester override.
+    const clerk = fakeClerk({
+      email: "tester@acme.com",
+      role: "org:admin",
+      publicMetadata: { plan: "25k_plan" },
+    });
+
+    const account = await syncCurrentOrganization(db, clerk, auth("org_override"));
+
+    expect(account.plan).toBe("25k_plan");
+    expect(account.sendingEnabled).toBe(true);
+    expect(account.monthlyEmailLimit).toBe(25_000);
+    expect(account.subscriptionStatus).toBe("active");
+  });
+
+  it("override wins over a stored past_due hold", async () => {
+    const db = await testDb();
+    await seedAccount(db, {
+      clerkOrgId: "org_override_pastdue",
+      plan: "10k_plan",
+      subscriptionStatus: "past_due",
+      sendingEnabled: false,
+    });
+
+    const result = await syncCurrentOrganization(
+      db,
+      fakeClerk({ email: "a@acme.com", role: "org:admin", publicMetadata: { plan: "50k_plan" } }),
+      { userId: "user_1", orgId: "org_override_pastdue", has: () => true },
+    );
+
+    expect(result.plan).toBe("50k_plan");
+    expect(result.subscriptionStatus).toBe("active");
+    expect(result.sendingEnabled).toBe(true);
+  });
+
+  it("ignores an unrecognized override value and falls back to real billing", async () => {
+    const db = await testDb();
+    const clerk = fakeClerk({
+      email: "a@acme.com",
+      role: "org:admin",
+      publicMetadata: { plan: "not_a_real_plan" },
+    });
+
+    const account = await syncCurrentOrganization(db, clerk, auth("org_bad_override"));
+
+    expect(account.plan).toBe("free_org");
+    expect(account.sendingEnabled).toBe(false);
   });
 
   it("reconciles a changed role on a later sync", async () => {

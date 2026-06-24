@@ -7,6 +7,8 @@ import { MAX_IMPORT_ROWS, countCsvDataRows, validateCsvUpload } from "@/lib/csv"
 import { putImportObject } from "@/lib/supabase-storage";
 import { getQueue } from "@/queue/producer";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { subscriberHeadroom, subscriberLimitMessage } from "@/services/subscriber-limit";
+import { maxSubscribersForPlan } from "@/services/plans";
 
 // CSV import: store the file in Supabase Storage, create the import row, enqueue
 // the process_import job (consumed by the VPS worker).
@@ -38,6 +40,18 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
   }
   if (rowCount > MAX_IMPORT_ROWS) {
     throw new HttpError(400, `CSV has ${rowCount} rows; the maximum is ${MAX_IMPORT_ROWS}`);
+  }
+  // Free-tier subscriber cap: reject at the edge if this import couldn't fit
+  // within the remaining headroom, before storing the file or queuing a job.
+  // Paid tiers are unlimited (headroom = Infinity).
+  if (maxSubscribersForPlan(account.plan) !== null) {
+    const headroom = await subscriberHeadroom(db, account.id, account.plan);
+    if (rowCount > headroom) {
+      throw new HttpError(
+        403,
+        `${subscriberLimitMessage(account.plan)} This import has ${rowCount.toLocaleString()} rows but only ${headroom.toLocaleString()} slots remain.`,
+      );
+    }
   }
 
   const importId = newId("imp");

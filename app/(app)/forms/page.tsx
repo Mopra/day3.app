@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronRight, FileInput } from "lucide-react";
+import { FileInput } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +18,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import { OrbitLoader } from "@/components/ui/orbit-loader";
 import {
   Select,
@@ -35,9 +34,28 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  ListCount,
+  ListEmpty,
+  ListFilter,
+  ListNoResults,
+  ListSearch,
+  ListSkeleton,
+  ListToolbar,
+  RowOpen,
+  SortableHead,
+  rowLinkProps,
+  useListController,
+} from "@/components/ui/data-list";
 import { useApi } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { Audience, SignupForm } from "@/lib/types";
+
+const STATUS_OPTIONS = [
+  { value: "all", label: "All statuses" },
+  { value: "active", label: "Active" },
+  { value: "disabled", label: "Off" },
+];
 
 export default function FormsPage() {
   const api = useApi();
@@ -46,6 +64,7 @@ export default function FormsPage() {
   const [audiences, setAudiences] = useState<Audience[]>([]);
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [status, setStatus] = useState("all");
 
   const [name, setName] = useState("");
   const [audienceId, setAudienceId] = useState("");
@@ -65,6 +84,20 @@ export default function FormsPage() {
   }, []);
 
   useEffect(load, [load]);
+
+  const list = useListController(forms, {
+    searchText: (f) => `${f.name} ${f.audienceName ?? ""}`,
+    predicate: (f) => status === "all" || f.status === status,
+    sortAccessors: {
+      name: (f) => f.name,
+      audience: (f) => f.audienceName,
+      status: (f) => f.status,
+      signups: (f) => f.submitCount,
+      confirmed: (f) => f.confirmedCount,
+      createdAt: (f) => f.createdAt,
+    },
+    initialSort: { key: "createdAt", dir: "desc" },
+  });
 
   function openChange(next: boolean) {
     setOpen(next);
@@ -95,6 +128,11 @@ export default function FormsPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  function clearFilters() {
+    list.setSearch("");
+    setStatus("all");
   }
 
   return (
@@ -177,55 +215,62 @@ export default function FormsPage() {
         </Dialog>
       </div>
 
+      {forms && forms.length > 0 && (
+        <ListToolbar>
+          <ListSearch value={list.search} onChange={list.setSearch} placeholder="Search forms…" />
+          <ListFilter
+            value={status}
+            onChange={setStatus}
+            options={STATUS_OPTIONS}
+            ariaLabel="Filter by status"
+          />
+          <ListCount shown={list.shown} total={list.total} noun="form" className="ml-auto" />
+        </ListToolbar>
+      )}
+
       <Card>
         <CardContent>
-          {forms === null ? (
-            <Skeleton className="h-24 w-full" />
-          ) : forms.length === 0 ? (
-            <div className="flex flex-col items-center py-10 text-center">
-              <div className="flex size-11 items-center justify-center rounded-full bg-muted">
-                <FileInput className="size-5 text-muted-foreground" />
-              </div>
-              <p className="mt-3 font-medium">Create your first signup form</p>
-              <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                {audiences.length === 0
+          {list.view === null ? (
+            <ListSkeleton />
+          ) : list.isEmpty ? (
+            <ListEmpty
+              icon={FileInput}
+              title="Create your first signup form"
+              description={
+                audiences.length === 0
                   ? "First create an audience — signups need somewhere to land."
-                  : "Share a link, embed it on your site, or drop in raw HTML. Signups flow straight into your audience."}
-              </p>
-              {audiences.length === 0 ? (
-                <Button className="mt-4" render={<Link href="/audiences" />}>
-                  Create an audience
-                </Button>
-              ) : (
-                <Button className="mt-4" onClick={() => setOpen(true)}>
-                  New form
-                </Button>
-              )}
-            </div>
+                  : "Share a link, embed it on your site, or drop in raw HTML. Signups flow straight into your audience."
+              }
+              action={
+                audiences.length === 0 ? (
+                  <Button render={<Link href="/audiences">Create an audience</Link>} />
+                ) : (
+                  <Button onClick={() => setOpen(true)}>New form</Button>
+                )
+              }
+            />
+          ) : list.isFilteredEmpty ? (
+            <ListNoResults onClear={clearFilters} />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Audience</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Signups</TableHead>
-                  <TableHead className="text-right">Confirmed</TableHead>
-                  <TableHead>Created</TableHead>
+                  <SortableHead label="Name" sortKey="name" sort={list.sort} onSort={list.toggleSort} />
+                  <SortableHead label="Audience" sortKey="audience" sort={list.sort} onSort={list.toggleSort} />
+                  <SortableHead label="Status" sortKey="status" sort={list.sort} onSort={list.toggleSort} />
+                  <SortableHead label="Signups" sortKey="signups" sort={list.sort} onSort={list.toggleSort} align="right" />
+                  <SortableHead label="Confirmed" sortKey="confirmed" sort={list.sort} onSort={list.toggleSort} align="right" />
+                  <SortableHead label="Created" sortKey="createdAt" sort={list.sort} onSort={list.toggleSort} />
                   <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {forms.map((f) => (
-                  <TableRow
-                    key={f.id}
-                    onClick={() => router.push(`/forms/${f.id}`)}
-                    className="cursor-pointer"
-                  >
-                    <TableCell className="font-medium">
+                {list.view.map((f) => (
+                  <TableRow key={f.id} {...rowLinkProps(() => router.push(`/forms/${f.id}`))}>
+                    <TableCell>
                       <Link
                         href={`/forms/${f.id}`}
-                        className="hover:underline"
+                        className="font-medium hover:underline"
                         onClick={(e) => e.stopPropagation()}
                       >
                         {f.name}
@@ -237,11 +282,11 @@ export default function FormsPage() {
                         {f.status === "active" ? "Active" : "Off"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right tabular-nums">{f.submitCount}</TableCell>
-                    <TableCell className="text-right tabular-nums">{f.confirmedCount}</TableCell>
-                    <TableCell>{formatDate(f.createdAt)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{f.submitCount.toLocaleString()}</TableCell>
+                    <TableCell className="text-right tabular-nums">{f.confirmedCount.toLocaleString()}</TableCell>
+                    <TableCell className="text-muted-foreground">{formatDate(f.createdAt)}</TableCell>
                     <TableCell className="text-right">
-                      <ChevronRight className="size-4 text-muted-foreground" />
+                      <RowOpen href={`/forms/${f.id}`} />
                     </TableCell>
                   </TableRow>
                 ))}

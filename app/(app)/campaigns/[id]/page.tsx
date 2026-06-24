@@ -2,20 +2,21 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useUser } from "@clerk/nextjs";
 import { toast } from "sonner";
-import { CalendarClock } from "lucide-react";
+import { CalendarClock, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { OrbitLoaderScreen } from "@/components/ui/orbit-loader";
+import { OrbitLoader, OrbitLoaderScreen } from "@/components/ui/orbit-loader";
 import { LaunchStream, SendDots } from "@/components/ui/send-loader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -26,11 +27,36 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  ListCount,
+  ListFilter,
+  ListNoResults,
+  ListSkeleton,
+  ListToolbar,
+} from "@/components/ui/data-list";
 import { useApi } from "@/lib/api";
 import { formatDateTime, statusLabel, statusVariant } from "@/lib/format";
 import { sanitizeHtml } from "@/services/render";
 import { CampaignComposer, type CampaignFormValues } from "@/components/campaign-composer";
-import type { Campaign, CampaignStats, OnboardingState, Recipient, RiskReview } from "@/lib/types";
+import type {
+  Campaign,
+  CampaignStats,
+  OnboardingState,
+  PersonalizationGap,
+  Recipient,
+  RiskReview,
+} from "@/lib/types";
+
+// Turns a personalization gap into a one-line, sender-facing sentence. With a
+// fallback the slice still reads fine (just generic); without one it renders blank.
+function personalizationMessage(g: PersonalizationGap): string {
+  const label = g.field === "first_name" ? "first name" : "last name";
+  const pct = Math.round((g.missing / g.total) * 100);
+  const who = `${g.missing.toLocaleString()} of ${g.total.toLocaleString()} recipients (${pct}%) have no ${label}`;
+  return g.fallback
+    ? `${who} — they'll see "${g.fallback}" instead.`
+    : `${who} — their ${label} will appear blank. Add a fallback like {{${g.field}|there}} so it reads well.`;
+}
 
 // Maps a send-blocking condition to the page that fixes it, so the user gets a
 // link rather than a dead-end message.
@@ -60,6 +86,8 @@ function toLocalInput(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // Numeric per-status keys only (excludes `total` and the `undeliverable` array).
 const STAT_KEYS = [
@@ -120,6 +148,7 @@ function SendingBanner({
 export default function CampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
   const api = useApi();
+  const router = useRouter();
   const { user } = useUser();
   const searchParams = useSearchParams();
   // Dev-only: force the send banner onto a real campaign page without sending,
@@ -129,35 +158,82 @@ export default function CampaignDetailPage() {
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [stats, setStats] = useState<CampaignStats | null>(null);
   const [riskReview, setRiskReview] = useState<RiskReview | null>(null);
+  const [personalization, setPersonalization] = useState<PersonalizationGap[]>([]);
   const [recipients, setRecipients] = useState<Recipient[] | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [busy, setBusy] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleAt, setScheduleAt] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [submitOpen, setSubmitOpen] = useState(false);
+  // Audience name + subscribed count for the send-confirmation dialog. Fetched
+  // when the dialog opens (recipients aren't generated until after submit, so
+  // we can't use `stats`); null = still loading.
+  const [audienceSummary, setAudienceSummary] = useState<{
+    name: string;
+    subscribed: number;
+  } | null>(null);
+  const [recipientStatus, setRecipientStatus] = useState("all");
+  const [loadingMoreRec, setLoadingMoreRec] = useState(false);
 
   const load = useCallback(() => {
     api
-      .get<{ campaign: Campaign; stats: CampaignStats; riskReview: RiskReview | null }>(
-        `/api/campaigns/${id}`,
-      )
+      .get<{
+        campaign: Campaign;
+        stats: CampaignStats;
+        riskReview: RiskReview | null;
+        personalization: PersonalizationGap[];
+      }>(`/api/campaigns/${id}`)
       .then((res) => {
         setCampaign(res.campaign);
         setStats(res.stats);
         setRiskReview(res.riskReview);
+        setPersonalization(res.personalization ?? []);
       })
       .catch((err) => toast.error(err.message));
     api
       .get<{ onboarding: OnboardingState }>("/api/account/onboarding")
       .then((res) => setOnboarding(res.onboarding))
       .catch(() => {});
-    api
-      .get<{ recipients: Recipient[] }>(`/api/campaigns/${id}/recipients?limit=50`)
-      .then((res) => setRecipients(res.recipients))
-      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   useEffect(load, [load]);
+
+  // Recipients are their own filterable, paginated list. The endpoint caps a
+  // request at 100, so we page in 50s; per-status totals come from `stats`.
+  const REC_PAGE = 50;
+  const recipientsUrl = useCallback(
+    (offset: number) => {
+      const params = new URLSearchParams({ limit: String(REC_PAGE), offset: String(offset) });
+      if (recipientStatus !== "all") params.set("status", recipientStatus);
+      return `/api/campaigns/${id}/recipients?${params}`;
+    },
+    [id, recipientStatus],
+  );
+
+  const loadRecipients = useCallback(() => {
+    api
+      .get<{ recipients: Recipient[] }>(recipientsUrl(0))
+      .then((res) => setRecipients(res.recipients))
+      .catch(() => {});
+  }, [api, recipientsUrl]);
+
+  useEffect(loadRecipients, [loadRecipients]);
+
+  async function loadMoreRecipients() {
+    if (!recipients || loadingMoreRec) return;
+    setLoadingMoreRec(true);
+    try {
+      const res = await api.get<{ recipients: Recipient[] }>(recipientsUrl(recipients.length));
+      setRecipients((cur) => [...(cur ?? []), ...res.recipients]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't load more");
+    } finally {
+      setLoadingMoreRec(false);
+    }
+  }
 
   // Live-update while the pipeline is working.
   const inFlight =
@@ -165,9 +241,12 @@ export default function CampaignDetailPage() {
     ["pending_review", "approved", "generating_recipients", "sending"].includes(campaign.status);
   useEffect(() => {
     if (!inFlight) return;
-    const t = setInterval(load, 2500);
+    const t = setInterval(() => {
+      load();
+      loadRecipients();
+    }, 2500);
     return () => clearInterval(t);
-  }, [inFlight, load]);
+  }, [inFlight, load, loadRecipients]);
 
   async function action(path: string, body?: unknown, success?: string) {
     setBusy(true);
@@ -182,16 +261,35 @@ export default function CampaignDetailPage() {
     }
   }
 
-  async function onSave(values: CampaignFormValues) {
-    await api.patch(`/api/campaigns/${id}`, values);
-    toast.success("Draft saved");
-    load();
-  }
-
-  // Quiet autosave — same PATCH, but no toast or refetch so it doesn't disrupt
-  // the user mid-edit.
+  // Autosave is the only save path — a quiet PATCH with no toast or refetch so it
+  // doesn't disrupt the user mid-edit.
   async function onAutosave(values: CampaignFormValues) {
     await api.patch(`/api/campaigns/${id}`, values);
+  }
+
+  // Open the send-confirmation dialog and fetch the audience name + subscribed
+  // count so the user confirms exactly who they're about to email. Sending is
+  // irreversible, so this gate is deliberate — never fire "submit" from a click.
+  function openSubmit() {
+    setAudienceSummary(null);
+    setSubmitOpen(true);
+    if (!campaign?.audienceId) return;
+    api
+      .get<{ audience: { name: string }; counts: Record<string, number> }>(
+        `/api/audiences/${campaign.audienceId}`,
+      )
+      .then((res) =>
+        setAudienceSummary({
+          name: res.audience.name,
+          subscribed: res.counts.subscribed ?? 0,
+        }),
+      )
+      .catch(() => {});
+  }
+
+  async function confirmSubmit() {
+    setSubmitOpen(false);
+    await action("submit", undefined, "Campaign submitted");
   }
 
   // Open the schedule dialog seeded with the existing time, or a sensible
@@ -224,9 +322,24 @@ export default function CampaignDetailPage() {
     }
   }
 
+  async function remove() {
+    setDeleting(true);
+    try {
+      await api.del(`/api/campaigns/${id}`);
+      toast.success("Campaign deleted");
+      router.push("/campaigns");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete campaign");
+      setDeleting(false);
+    }
+  }
+
   if (!campaign) return <OrbitLoaderScreen />;
 
   const ownEmail = user?.primaryEmailAddress?.emailAddress;
+  // Mid-send campaigns can't be deleted — pause first (mirrors the API guard).
+  const deletable =
+    campaign.status !== "sending" && campaign.status !== "generating_recipients";
   const submittable = campaign.status === "draft" || campaign.status === "approved";
   // Pre-flight: mirror the submit route's send gates so the user sees an
   // actionable message (with a fix link) instead of clicking into a raw error.
@@ -263,7 +376,7 @@ export default function CampaignDetailPage() {
       {submittable && (
         <Button
           disabled={busy || !!sendBlocked}
-          onClick={() => action("submit", undefined, "Campaign submitted")}
+          onClick={openSubmit}
         >
           {busy || previewSend === "submitting" ? (
             <>
@@ -285,6 +398,18 @@ export default function CampaignDetailPage() {
           Resume
         </Button>
       )}
+      {deletable && (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Delete campaign"
+          className="text-muted-foreground hover:text-destructive"
+          disabled={busy}
+          onClick={() => setDeleteOpen(true)}
+        >
+          <Trash2 className="size-4" />
+        </Button>
+      )}
     </>
   );
 
@@ -292,6 +417,22 @@ export default function CampaignDetailPage() {
   // actions move into the composer's title row. Other statuses keep the static
   // page heading.
   const isDraft = campaign.status === "draft";
+
+  // Recipient filter options follow the per-status counts in `stats`, so we only
+  // surface statuses that actually have rows; totals come from the same source.
+  const recipientFilterTotal =
+    recipientStatus === "all"
+      ? stats?.total ?? 0
+      : ((stats?.[recipientStatus as keyof CampaignStats] as number | undefined) ?? 0);
+  const recipientStatusOptions = [
+    { value: "all", label: "All statuses" },
+    ...STAT_KEYS.filter((k) => (stats?.[k] ?? 0) > 0).map((k) => ({
+      value: k,
+      label: cap(statusLabel(k)),
+    })),
+  ];
+  const recShown = recipients?.length ?? 0;
+  const recHasMore = recShown < recipientFilterTotal;
 
   return (
     <div className="space-y-6">
@@ -363,6 +504,19 @@ export default function CampaignDetailPage() {
                 </>
               )}
             </p>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {submittable && personalization.length > 0 && (
+        <Alert>
+          <AlertTitle>Some recipients are missing personalization</AlertTitle>
+          <AlertDescription>
+            <ul className="list-disc space-y-1 pl-4">
+              {personalization.map((g) => (
+                <li key={g.field}>{personalizationMessage(g)}</li>
+              ))}
+            </ul>
           </AlertDescription>
         </Alert>
       )}
@@ -453,9 +607,7 @@ export default function CampaignDetailPage() {
       {isDraft ? (
         <CampaignComposer
           initial={campaign}
-          onSave={onSave}
           onAutosave={onAutosave}
-          submitLabel="Save draft"
           titleBadge={statusBadge}
           titleActions={actionButtons}
         />
@@ -495,39 +647,138 @@ export default function CampaignDetailPage() {
         </Card>
       )}
 
-      {recipients && recipients.length > 0 && (
+      {stats && stats.total > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Recipients</CardTitle>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Error</TableHead>
-                  <TableHead>Updated</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {recipients.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell className="font-medium">{r.email}</TableCell>
-                    <TableCell>
-                      <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
-                    </TableCell>
-                    <TableCell className="max-w-56 truncate text-muted-foreground">
-                      {r.error ?? "—"}
-                    </TableCell>
-                    <TableCell>{formatDateTime(r.updatedAt)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <ListToolbar className="mb-4">
+              <ListFilter
+                value={recipientStatus}
+                onChange={setRecipientStatus}
+                options={recipientStatusOptions}
+                ariaLabel="Filter recipients by status"
+              />
+              <ListCount
+                shown={recShown}
+                total={recipientFilterTotal}
+                noun="recipient"
+                className="ml-auto"
+              />
+            </ListToolbar>
+            {recipients === null ? (
+              <ListSkeleton />
+            ) : recipients.length === 0 ? (
+              <ListNoResults
+                onClear={() => setRecipientStatus("all")}
+                message="No recipients match this status."
+              />
+            ) : (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Error</TableHead>
+                      <TableHead>Updated</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {recipients.map((r) => (
+                      <TableRow key={r.id}>
+                        <TableCell className="font-medium">{r.email}</TableCell>
+                        <TableCell>
+                          <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
+                        </TableCell>
+                        <TableCell className="max-w-56 truncate text-muted-foreground">
+                          {r.error ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {formatDateTime(r.updatedAt)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {recHasMore && (
+                  <div className="flex justify-center pt-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={loadMoreRecipients}
+                      disabled={loadingMoreRec}
+                    >
+                      {loadingMoreRec && <OrbitLoader size={16} />}
+                      Load more
+                      <span className="text-muted-foreground tabular-nums">
+                        ({(recipientFilterTotal - recShown).toLocaleString()} more)
+                      </span>
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={submitOpen} onOpenChange={setSubmitOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send this campaign?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              You&apos;re about to email{" "}
+              <strong className="text-foreground">
+                {audienceSummary
+                  ? `${audienceSummary.subscribed.toLocaleString()} ${
+                      audienceSummary.subscribed === 1 ? "subscriber" : "subscribers"
+                    }`
+                  : "your audience"}
+              </strong>
+              {audienceSummary ? (
+                <>
+                  {" "}
+                  in <strong className="text-foreground">{audienceSummary.name}</strong>
+                </>
+              ) : null}
+              . After a quick safety review it sends right away — this can&apos;t be undone.
+            </p>
+            <dl className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+              <div className="flex gap-2">
+                <dt className="w-16 shrink-0 text-muted-foreground">From</dt>
+                <dd className="min-w-0 break-words font-medium">
+                  {campaign.fromName} &lt;{campaign.fromEmail}&gt;
+                </dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-16 shrink-0 text-muted-foreground">Subject</dt>
+                <dd className="min-w-0 break-words font-medium">{campaign.subject}</dd>
+              </div>
+            </dl>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="ghost" disabled={busy} onClick={() => setSubmitOpen(false)}>
+                Cancel
+              </Button>
+              <Button disabled={busy} onClick={confirmSubmit}>
+                {busy ? (
+                  <>
+                    <SendDots />
+                    Sending…
+                  </>
+                ) : audienceSummary ? (
+                  `Send to ${audienceSummary.subscribed.toLocaleString()}`
+                ) : (
+                  "Send now"
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
         <DialogContent className="sm:max-w-md">
@@ -549,7 +800,7 @@ export default function CampaignDetailPage() {
                 value={scheduleAt}
                 min={toLocalInput(new Date())}
                 onChange={(e) => setScheduleAt(e.target.value)}
-                className="h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                className="h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none [color-scheme:light] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30 dark:[color-scheme:dark]"
               />
               <p className="text-xs text-muted-foreground">
                 Uses your computer&apos;s timezone.
@@ -566,6 +817,16 @@ export default function CampaignDetailPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete "${campaign.name}"?`}
+        description="This permanently removes the campaign and its recipient records. If it's already been sent, it's removed from your history too. This can't be undone."
+        confirmLabel="Delete campaign"
+        busy={deleting}
+        onConfirm={remove}
+      />
     </div>
   );
 }

@@ -23,9 +23,15 @@ export function createDb(connectionString: string | undefined = process.env.DATA
     throw new Error("DATABASE_URL is not set");
   }
   const txPooler = isTransactionPooler(connectionString);
+  // Serverless (tx pooler) keeps a tiny per-instance pool; the long-lived worker
+  // needs enough connections to cover its concurrent jobs (WORKER_CONCURRENCY
+  // send lanes, each issuing its own claims/updates) plus headroom for cron and
+  // the heartbeat — size DB_POOL_MAX at/above WORKER_CONCURRENCY. (Stays well
+  // under Postgres' default 100-connection cap even with a few worker replicas.)
+  const workerPoolMax = Math.max(1, Number(process.env.DB_POOL_MAX ?? "20"));
   const client = postgres(connectionString, {
     prepare: txPooler ? false : undefined,
-    max: txPooler ? 1 : 10,
+    max: txPooler ? 1 : workerPoolMax,
   });
   return drizzle(client, { schema });
 }

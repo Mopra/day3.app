@@ -17,7 +17,7 @@ import { logger } from "../src/lib/logger";
 import { getDb } from "../src/db/client";
 import { emailProviderFromEnv } from "../src/email/factory";
 import { createSupabaseObjectStore } from "../src/lib/supabase-storage";
-import { requireUnsubscribeSecret, validateEnv } from "../src/lib/env";
+import { requireAppUrl, requireUnsubscribeSecret, validateEnv } from "../src/lib/env";
 import { writeHeartbeat, HEARTBEAT_INTERVAL_MS } from "../src/lib/heartbeat";
 
 // Fail fast before the worker begins consuming: a missing/weak secret here would
@@ -26,7 +26,11 @@ validateEnv("worker");
 
 const SWEEP_JOB = "scheduled_sweep";
 const SWEEP_SCHEDULER = "cron-15min";
-const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? "5");
+// Concurrent jobs this worker processes. For a single campaign, effective send
+// parallelism is min(SEND_LANES, WORKER_CONCURRENCY × replicas), so keep this at
+// or above SEND_LANES (default 8) to saturate the lanes. Size DB_POOL_MAX to
+// match (see src/db/client.ts).
+const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? "8");
 
 function makeConnection(): IORedis {
   const url = process.env.REDIS_URL;
@@ -57,7 +61,7 @@ const deps: QueueDeps = {
   queue: jobQueue,
   emailProvider: emailProviderFromEnv(),
   store: createSupabaseObjectStore(),
-  appUrl: process.env.APP_URL ?? "",
+  appUrl: requireAppUrl(),
   unsubscribeSecret: requireUnsubscribeSecret(),
   aiReviewMode: process.env.AI_REVIEW_MODE,
 };

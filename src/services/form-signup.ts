@@ -1,10 +1,12 @@
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { forms, subscribers, type Form } from "../db/schema";
+import { accounts, forms, subscribers, type Form } from "../db/schema";
 import { canonicalizeEmail } from "../lib/csv";
 import { newId, nowIso } from "../lib/ids";
+import { maxSubscribersForPlan } from "../lib/plans-catalog";
 import type { JobQueue } from "../queue/messages";
 import { isEmailSuppressed } from "./suppression";
+import { countAccountSubscribers } from "./subscriber-limit";
 
 // Every public signup surface (hosted page, iframe, raw HTML form, future API)
 // funnels through submitFormSignup. It is the single place a public signup is
@@ -55,6 +57,21 @@ export async function submitFormSignup(
   // address must never be re-added or re-mailed, even via a fresh form.
   if (await isEmailSuppressed(db, form.accountId, email)) {
     return { outcome: "opted_out" };
+  }
+
+  // Free-tier subscriber cap (spam/abuse protection). When at the cap, never grow
+  // the list from a public form: a brand-new address is silently dropped (the
+  // visitor still sees the same success message), while an address already in the
+  // audience falls through to normal handling below (which adds no new row).
+  const account = await db.query.accounts.findFirst({
+    where: eq(accounts.id, form.accountId),
+  });
+  const cap = account ? maxSubscribersForPlan(account.plan) : null;
+  if (cap !== null && (await countAccountSubscribers(db, form.accountId)) >= cap) {
+    const existing = await db.query.subscribers.findFirst({
+      where: and(eq(subscribers.audienceId, form.audienceId), eq(subscribers.email, email)),
+    });
+    if (!existing) return { outcome: "opted_out" };
   }
 
   const wantsConfirmation = form.doubleOptIn;

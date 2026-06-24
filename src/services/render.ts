@@ -3,6 +3,9 @@ export type RenderInput = {
     subject: string;
     htmlBody: string;
     textBody?: string | null;
+    // Editable footer wording. Null/empty → DEFAULT_FOOTER_TEXT. The address and
+    // unsubscribe link are always appended canonically regardless of this value.
+    footerText?: string | null;
   };
   subscriber: {
     email: string;
@@ -12,6 +15,16 @@ export type RenderInput = {
   companyName: string;
   companyAddress?: string | null;
   unsubscribeUrl: string;
+  // Absolute URL of the per-recipient open-tracking pixel. When set, a hidden
+  // 1×1 image is appended to the HTML body so a load records an open. Omitted
+  // (null/undefined) — e.g. when no public app URL is configured — sends no
+  // pixel and the HTML is unchanged.
+  openTrackingUrl?: string | null;
+  // Map of original (sanitized) href → click-tracking redirect URL. When set,
+  // matching content links in the body are rewritten to redirect through the
+  // tracker. Built per recipient (each token is recipient-specific). The footer
+  // unsubscribe link is appended afterwards and is never tracked.
+  linkTracking?: Record<string, string> | null;
 };
 
 export type RenderedEmail = {
@@ -20,18 +33,20 @@ export type RenderedEmail = {
   text: string;
 };
 
-const FOOTER_HTML = `
-<hr>
-<p>You are receiving this email because you subscribed to updates from {{company_name}}.</p>
+// The default footer wording, used when a campaign hasn't customised it. Editable
+// by the user (see campaigns.footerText); {{company_name}} is substituted at send.
+export const DEFAULT_FOOTER_TEXT =
+  "You are receiving this email because you subscribed to updates from {{company_name}}.";
+
+// The locked, canonical tail appended after the (editable) footer wording. These
+// two lines — the physical mailing address and the single working unsubscribe
+// link — are required for compliance and are never user-editable.
+const FOOTER_LOCKED_HTML = `
 <p>{{company_address}}</p>
 <p><a href="{{unsubscribe_url}}">Unsubscribe</a></p>
 `;
 
-const FOOTER_TEXT = `
-
---
-You are receiving this email because you subscribed to updates from {{company_name}}.
-{{company_address}}
+const FOOTER_LOCKED_TEXT = `{{company_address}}
 Unsubscribe: {{unsubscribe_url}}
 `;
 
@@ -50,20 +65,67 @@ function escapeHtml(value: string): string {
 // markup/handlers into the already-sanitized output. The only exception is the
 // trusted, server-generated unsubscribe_url, which we control and which must
 // remain usable as a real href.
+// Tokens may carry a fallback used when the field is empty: {{first_name|there}}
+// renders "there" for subscribers with no first name, so personalized copy never
+// degrades to "Hi ," or a blank gap. The fallback text is itself escaped/treated
+// as plain text — it is author-supplied, never the (untrusted) merge value.
+const TOKEN_RE = /\{\{\s*([a-z_]+)\s*(?:\|\s*([^}]*))?\}\}/gi;
+
+// Subscriber fields that may be blank and so produce an empty (awkward) merge.
+// `email` is always present; company_*/unsubscribe_url are not subscriber data.
+// Used by the pre-send personalization check to warn about recipients missing a
+// field the campaign actually references.
+export const PERSONALIZABLE_FIELDS = ["first_name", "last_name"] as const;
+export type PersonalizableField = (typeof PERSONALIZABLE_FIELDS)[number];
+
+export type PersonalizationUsage = {
+  field: PersonalizableField;
+  // The fallback the campaign supplies for this field (the first one seen), or
+  // null if at least one usage has no fallback — i.e. an empty field renders blank.
+  fallback: string | null;
+};
+
+// Which personalizable fields a campaign references, with the fallback that will
+// show when the field is empty. A field with any bare ({{first_name}}) usage is
+// reported with fallback null, since that usage degrades to blank.
+export function personalizationFieldsUsed(
+  ...texts: (string | null | undefined)[]
+): PersonalizationUsage[] {
+  const seen = new Map<PersonalizableField, string | null>();
+  for (const text of texts) {
+    if (!text) continue;
+    for (const m of text.matchAll(TOKEN_RE)) {
+      const key = m[1].toLowerCase();
+      if (!(PERSONALIZABLE_FIELDS as readonly string[]).includes(key)) continue;
+      const field = key as PersonalizableField;
+      const fallback = (m[2] ?? "").trim() || null;
+      // A bare usage (no fallback) wins — it's the one that renders blank, so the
+      // warning should reflect the worst case.
+      if (!seen.has(field)) seen.set(field, fallback);
+      else if (seen.get(field) != null && fallback == null) seen.set(field, null);
+    }
+  }
+  return PERSONALIZABLE_FIELDS.filter((f) => seen.has(f)).map((f) => ({
+    field: f,
+    fallback: seen.get(f) ?? null,
+  }));
+}
+
 function substitute(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_, name: string) => {
+  return template.replace(TOKEN_RE, (_, name: string, fallback?: string) => {
     const key = name.toLowerCase();
     if (!(key in vars)) return "";
-    const value = vars[key];
+    const value = vars[key] !== "" ? vars[key] : (fallback ?? "").trim();
     return key === "unsubscribe_url" ? value : escapeHtml(value);
   });
 }
 
 // Like substitute() but for the plain-text body, where HTML escaping is wrong.
 function substituteText(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_, name: string) => {
+  return template.replace(TOKEN_RE, (_, name: string, fallback?: string) => {
     const key = name.toLowerCase();
-    return key in vars ? vars[key] : "";
+    if (!(key in vars)) return "";
+    return vars[key] !== "" ? vars[key] : (fallback ?? "").trim();
   });
 }
 
@@ -256,6 +318,39 @@ function stripUserUnsubscribeText(text: string): string {
   return text.replace(/\{\{\s*unsubscribe_url\s*\}\}/gi, "");
 }
 
+// The distinct content links in a campaign body that click-tracking should
+// rewrite. Runs the same sanitize + unsubscribe-strip the body itself goes
+// through, so each returned `raw` href is byte-identical to what appears in the
+// rendered HTML and can be used as a replacement key; `url` is its decoded, real
+// destination (what the redirect lands on). Only absolute http(s) links are
+// returned — relative/anchor/mailto/tel links are left untracked, and the
+// footer's unsubscribe link is appended later so it never appears here.
+export function extractTrackableLinks(htmlBody: string): { raw: string; url: string }[] {
+  const html = stripUserUnsubscribe(sanitizeHtml(htmlBody));
+  const re = /<a\b[^>]*?\shref="([^"]*)"/gi;
+  const seen = new Map<string, string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const raw = m[1];
+    const url = decodeHtmlEntities(raw).trim();
+    if (!/^https?:\/\//i.test(url)) continue;
+    if (!seen.has(raw)) seen.set(raw, url);
+  }
+  return [...seen].map(([raw, url]) => ({ raw, url }));
+}
+
+// Replaces each <a href="X"> whose X is a key in `map` with the mapped tracking
+// URL. The tracking URLs are server-built (no quotes/brackets, single query
+// param) so they drop into the double-quoted attribute as-is. Hrefs not in the
+// map (relative links, the not-yet-appended unsubscribe link) are untouched.
+function applyLinkTracking(html: string, map: Record<string, string>): string {
+  return html.replace(
+    /(<a\b[^>]*?\shref=")([^"]*)(")/gi,
+    (full, pre: string, href: string, post: string) =>
+      map[href] ? `${pre}${map[href]}${post}` : full,
+  );
+}
+
 // Strips tags well enough for a fallback text body. Not a full HTML parser —
 // campaign HTML here is simple newsletter markup.
 function htmlToText(html: string): string {
@@ -286,15 +381,38 @@ export function renderCampaignEmail(input: RenderInput): RenderedEmail {
   // the canonical footer below is the only unsubscribe link in the output. This
   // guarantees exactly one functioning unsubscribe link and protects the shared
   // sender reputation from forged/duplicate links and unsafe markup.
+  // The editable footer wording. Strip any unsubscribe placeholder a user may
+  // have typed so the canonical locked link below stays the only one. For HTML it
+  // is escaped (it's plain wording, not markup); {{company_name}} braces survive
+  // escaping and are substituted below.
+  const footerIntro = stripUserUnsubscribeText(
+    input.campaign.footerText?.trim() || DEFAULT_FOOTER_TEXT,
+  );
+
   const safeHtml = sanitizeHtml(input.campaign.htmlBody);
   let html = stripUserUnsubscribe(safeHtml);
-  html += FOOTER_HTML;
+
+  // Rewrite content links to redirect through the click tracker BEFORE the
+  // footer is appended, so the canonical unsubscribe link is never tracked.
+  if (input.linkTracking) {
+    html = applyLinkTracking(html, input.linkTracking);
+  }
+
+  html += `\n<hr>\n<p>${escapeHtml(footerIntro)}</p>${FOOTER_LOCKED_HTML}`;
+
+  // Append the open-tracking pixel last, after the (trusted, server-built)
+  // footer. The URL is generated by us — like unsubscribe_url — so it is not run
+  // through the merge-value escaping, and it carries no {{tokens}} for substitute
+  // to touch. Text bodies get no pixel (no images to load).
+  if (input.openTrackingUrl) {
+    html += `\n<img src="${input.openTrackingUrl}" width="1" height="1" alt="" style="display:none" />`;
+  }
 
   const baseText = input.campaign.textBody?.trim()
     ? input.campaign.textBody
     : htmlToText(safeHtml);
   let text = stripUserUnsubscribeText(baseText);
-  text += FOOTER_TEXT;
+  text += `\n\n--\n${footerIntro}\n${FOOTER_LOCKED_TEXT}`;
 
   return {
     // subject is plain text in the email header, not HTML — do not escape.

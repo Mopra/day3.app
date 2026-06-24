@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { PricingTable } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -11,45 +10,34 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useApi } from "@/lib/api";
 import { formatDate, statusLabel, statusVariant } from "@/lib/format";
+import { planLabel } from "@/lib/plans-catalog";
+import { UpgradeNudge, UsageSummary } from "@/components/plan-usage";
+import { PlanSlider } from "@/components/plan-slider";
 import type { Account } from "@/lib/types";
 
-// Surfaces a clear, actionable banner for the two states that block sending and
-// need the user to act: a past-due payment and an ended subscription.
-//
-// The CTA points at where the user can actually resolve each state. A past-due
-// card is fixed in the organization billing settings (Clerk's
-// <OrganizationProfile>), not the plan picker on this page, so it links to
-// Settings. An ended subscription is reactivated by picking a plan from the
-// <PricingTable> rendered below, so its CTA scrolls there.
-type BillingNotice = {
-  title: string;
-  body: string;
-  cta: { label: string } & ({ href: string } | { scrollTo: string });
-};
-
-function billingNotice(status: string): BillingNotice | null {
-  if (status === "past_due") {
-    return {
-      title: "Payment past due",
-      body: "Your last payment failed, so sending is paused. Update your payment method to resume.",
-      cta: { label: "Update payment method", href: "/settings" },
-    };
-  }
-  if (status !== "active") {
-    return {
-      title: "No active subscription",
-      body: "Choose a plan to activate your account and start sending.",
-      cta: { label: "Choose a plan", scrollTo: "plans" },
-    };
-  }
-  return null;
+// A past-due payment is the one billing state that needs the user to act outside
+// the plan picker — it's fixed in the organization billing settings (Clerk's
+// <OrganizationProfile>), so its CTA points at Settings. Everything else in the
+// bandwidth model is a self-serve plan change handled by the grid, which drives
+// Clerk Billing's checkout/subscription drawers directly.
+function pastDueNotice(status: string) {
+  if (status !== "past_due") return null;
+  return {
+    title: "Payment past due",
+    body: "Your last payment failed, so sending is paused. Update your payment method to resume — your plan and audience are untouched.",
+  };
 }
 
 export default function BillingPage() {
   const api = useApi();
   const [account, setAccount] = useState<Account | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  // Latest account, read by the reconcile baseline from a callback (not render).
+  const accountRef = useRef<Account | null>(null);
+  useEffect(() => {
+    accountRef.current = account;
+  }, [account]);
 
+  // On load, sync the session's billing claims into the local row and show it.
   const sync = useCallback(() => {
     api
       .post<{ account: Account }>("/api/account/sync")
@@ -60,100 +48,122 @@ export default function BillingPage() {
 
   useEffect(sync, [sync]);
 
-  const notice = account ? billingNotice(account.subscriptionStatus) : null;
+  // After a plan change, Clerk settles asynchronously: the `subscriptionItem.active`
+  // webhook writes the new plan/status to our row, and the session token's plan
+  // claim refreshes on its own cycle. A single read can still show the old plan, so
+  // we poll the read-only account until the plan/status actually changes (or we give
+  // up), and the page reflects reality without a manual refresh. We read GET
+  // /api/account (the stored row the webhook updates), not the sync endpoint — the
+  // latter would re-derive the plan from the session claim, which may still be stale.
+  const reconcileTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconcileRun = useRef(0);
+  const reconcile = useCallback(() => {
+    const runId = ++reconcileRun.current; // supersede any in-flight reconcile
+    if (reconcileTimer.current) clearTimeout(reconcileTimer.current);
+    const before = accountRef.current;
+    const beforeKey = before ? `${before.plan}:${before.subscriptionStatus}` : "";
+    const MAX_ATTEMPTS = 8; // ~12s of polling
+    const INTERVAL_MS = 1500;
+    let attempt = 0;
+
+    const tick = async () => {
+      if (runId !== reconcileRun.current) return; // a newer change took over
+      attempt += 1;
+      try {
+        const { account: fresh } = await api.get<{ account: Account }>("/api/account");
+        if (runId !== reconcileRun.current) return;
+        setAccount(fresh);
+        if (`${fresh.plan}:${fresh.subscriptionStatus}` !== beforeKey) return; // settled
+      } catch {
+        // Transient error — keep polling; the next attempt may succeed.
+      }
+      if (attempt < MAX_ATTEMPTS) {
+        reconcileTimer.current = setTimeout(tick, INTERVAL_MS);
+      }
+    };
+    void tick();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (reconcileTimer.current) clearTimeout(reconcileTimer.current);
+    },
+    [],
+  );
+
+  const notice = account ? pastDueNotice(account.subscriptionStatus) : null;
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Billing</h1>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Billing</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Every feature is included on every plan. You only pick how many emails you
+          send each month — upgrade or downgrade anytime.
+        </p>
+      </div>
 
       {notice && (
-        <Alert variant={account?.subscriptionStatus === "past_due" ? "destructive" : "default"}>
+        <Alert variant="destructive">
           <AlertTitle>{notice.title}</AlertTitle>
           <AlertDescription className="flex flex-col items-start gap-3">
             <span>{notice.body}</span>
-            {(() => {
-              const { cta } = notice;
-              return "href" in cta ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  render={<Link href={cta.href}>{cta.label}</Link>}
-                />
-              ) : (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    document
-                      .getElementById(cta.scrollTo)
-                      ?.scrollIntoView({ behavior: "smooth" })
-                  }
-                >
-                  {cta.label}
-                </Button>
-              );
-            })()}
+            <Button
+              variant="outline"
+              size="sm"
+              render={<Link href="/settings">Update payment method</Link>}
+            />
           </AlertDescription>
         </Alert>
       )}
 
-      <Card>
+      <Card className="ring-0">
         <CardHeader>
           <CardTitle className="text-base">Current plan</CardTitle>
         </CardHeader>
         <CardContent>
           {account ? (
-            <div className="flex flex-wrap items-center gap-6 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-xl font-semibold capitalize">{account.plan}</span>
-                <Badge variant={statusVariant(account.subscriptionStatus)}>
-                  {statusLabel(account.subscriptionStatus)}
-                </Badge>
-              </div>
-              <div className="text-muted-foreground">
-                {account.monthlyEmailSentCount.toLocaleString()} /{" "}
-                {account.monthlyEmailLimit.toLocaleString()} emails this period
-              </div>
-              {account.subscriptionStatus === "active" &&
-                account.currentPeriodEnd && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl font-semibold">{planLabel(account.plan)}</span>
+                  <Badge variant={statusVariant(account.subscriptionStatus)}>
+                    {statusLabel(account.subscriptionStatus)}
+                  </Badge>
+                </div>
+                {account.subscriptionStatus === "active" && account.currentPeriodEnd && (
                   <div className="text-muted-foreground">
                     Renews {formatDate(account.currentPeriodEnd)}
                   </div>
                 )}
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={refreshing}
-                onClick={async () => {
-                  setRefreshing(true);
-                  try {
-                    // The fresh session token carries current billing claims;
-                    // sync mirrors them into the local account.
-                    await api.post("/api/account/sync");
-                    sync();
-                    toast.success("Billing state refreshed");
-                  } finally {
-                    setRefreshing(false);
-                  }
-                }}
-              >
-                Refresh billing state
-              </Button>
+              </div>
+
+              <div className="max-w-md">
+                <UsageSummary account={account} />
+              </div>
+
+              <UpgradeNudge account={account} />
             </div>
           ) : (
-            <Skeleton className="h-8 w-64" />
+            <Skeleton className="h-20 w-full max-w-md" />
           )}
         </CardContent>
       </Card>
 
-      <Card id="plans">
+      <Card className="ring-0">
         <CardHeader>
-          <CardTitle className="text-base">Plans</CardTitle>
+          <CardTitle className="text-base">Pick your plan</CardTitle>
         </CardHeader>
         <CardContent>
-          {/* Clerk Billing handles checkout; the subscription belongs to the
-              active organization. */}
-          <PricingTable for="organization" newSubscriptionRedirectUrl="/billing" />
+          {account ? (
+            // Slide along the bandwidth ladder to find the tier that covers your
+            // volume; Clerk Billing handles checkout and proration behind the CTA,
+            // and reconcile polls until the new plan settles into the account.
+            <PlanSlider account={account} onChanged={reconcile} />
+          ) : (
+            <Skeleton className="h-48 w-full" />
+          )}
         </CardContent>
       </Card>
     </div>

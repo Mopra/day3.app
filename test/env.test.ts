@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  requireAppUrl,
   requireOAuthStateSecret,
   requireUnsubscribeSecret,
   resetEnvCache,
@@ -9,11 +10,26 @@ import {
 // A complete, valid set of required vars. Tests mutate copies of this.
 const VALID = {
   DATABASE_URL: "postgres://user:pass@localhost:5432/db",
+  APP_URL: "https://day3.app",
+  REDIS_URL: "rediss://default:pass@localhost:6379",
+  SUPABASE_URL: "https://ref.supabase.co",
+  SUPABASE_SERVICE_ROLE_KEY: "s".repeat(40),
   UNSUBSCRIBE_SECRET: "x".repeat(32),
   OAUTH_STATE_SECRET: "y".repeat(32),
   DNS_TOKEN_ENC_KEY: Buffer.alloc(32, 7).toString("base64"),
   CLERK_WEBHOOK_SIGNING_SECRET: "whsec_".padEnd(32, "z"),
 };
+
+// The minimal valid set the worker profile needs (DB + app/queue/storage deps +
+// the shared unsubscribe secret). Reused by the worker-profile cases below.
+const WORKER_VALID = {
+  DATABASE_URL: VALID.DATABASE_URL,
+  APP_URL: VALID.APP_URL,
+  REDIS_URL: VALID.REDIS_URL,
+  SUPABASE_URL: VALID.SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY: VALID.SUPABASE_SERVICE_ROLE_KEY,
+  UNSUBSCRIBE_SECRET: VALID.UNSUBSCRIBE_SECRET,
+} as const;
 
 const SECRET_KEYS = [
   "UNSUBSCRIBE_SECRET",
@@ -114,8 +130,7 @@ describe("validateEnv", () => {
 
     // The worker tier doesn't serve the webhook, so it must not require the ARN.
     applyEnv({
-      DATABASE_URL: VALID.DATABASE_URL,
-      UNSUBSCRIBE_SECRET: VALID.UNSUBSCRIBE_SECRET,
+      ...WORKER_VALID,
       EMAIL_PROVIDER: "ses",
       AWS_REGION: SES_OK.AWS_REGION,
     });
@@ -153,27 +168,28 @@ describe("validateEnv", () => {
     expect(message).toMatch(/OAUTH_STATE_SECRET/);
   });
 
-  it("worker profile needs only DATABASE_URL + UNSUBSCRIBE_SECRET", () => {
+  it("worker profile needs DB + app/queue/storage deps + UNSUBSCRIBE_SECRET, but not OAuth/Clerk/DNS secrets", () => {
     // The worker does no OAuth / Clerk webhooks / DNS-token decryption, so it
-    // must not require those secrets.
-    applyEnv({
-      DATABASE_URL: VALID.DATABASE_URL,
-      UNSUBSCRIBE_SECRET: VALID.UNSUBSCRIBE_SECRET,
-    });
+    // must not require those secrets — but it does send email and run imports,
+    // so APP_URL, REDIS_URL, and the Supabase storage creds are required.
+    applyEnv({ ...WORKER_VALID });
     expect(() => validateEnv("worker")).not.toThrow();
   });
 
+  it("worker profile fails fast on a missing APP_URL (broken unsubscribe links)", () => {
+    const env = { ...WORKER_VALID } as Record<string, string | undefined>;
+    delete env.APP_URL;
+    applyEnv(env);
+    expect(() => validateEnv("worker")).toThrow(/APP_URL/);
+  });
+
   it("worker profile still fails on a missing/weak UNSUBSCRIBE_SECRET", () => {
-    applyEnv({ DATABASE_URL: VALID.DATABASE_URL, UNSUBSCRIBE_SECRET: "tiny" });
+    applyEnv({ ...WORKER_VALID, UNSUBSCRIBE_SECRET: "tiny" });
     expect(() => validateEnv("worker")).toThrow(/UNSUBSCRIBE_SECRET/);
   });
 
   it("worker profile requires AWS_REGION when EMAIL_PROVIDER=ses", () => {
-    applyEnv({
-      DATABASE_URL: VALID.DATABASE_URL,
-      UNSUBSCRIBE_SECRET: VALID.UNSUBSCRIBE_SECRET,
-      EMAIL_PROVIDER: "ses",
-    });
+    applyEnv({ ...WORKER_VALID, EMAIL_PROVIDER: "ses" });
     expect(() => validateEnv("worker")).toThrow(/AWS_REGION/);
   });
 });
@@ -212,5 +228,18 @@ describe("secret accessors fail fast (no empty-key signer)", () => {
     applyEnv({ ...VALID });
     expect(requireUnsubscribeSecret()).toBe(VALID.UNSUBSCRIBE_SECRET);
     expect(requireOAuthStateSecret()).toBe(VALID.OAUTH_STATE_SECRET);
+  });
+
+  it("requireAppUrl throws on an unset/empty APP_URL rather than emailing relative links", () => {
+    const env = { ...VALID } as Record<string, string | undefined>;
+    delete env.APP_URL;
+    applyEnv(env);
+    expect(() => requireAppUrl()).toThrow(/APP_URL/);
+
+    applyEnv({ ...VALID, APP_URL: "   " });
+    expect(() => requireAppUrl()).toThrow(/APP_URL/);
+
+    applyEnv({ ...VALID });
+    expect(requireAppUrl()).toBe(VALID.APP_URL);
   });
 });

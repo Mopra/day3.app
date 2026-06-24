@@ -4,9 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
+import { Pencil, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -16,7 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
+import { OrbitLoader } from "@/components/ui/orbit-loader";
 import {
   Table,
   TableBody,
@@ -25,6 +27,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  ListCount,
+  ListEmpty,
+  ListNoResults,
+  ListSearch,
+  ListSkeleton,
+  ListToolbar,
+  RowOpen,
+  SortableHead,
+  rowLinkProps,
+  useListController,
+} from "@/components/ui/data-list";
 import { useApi } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { Audience } from "@/lib/types";
@@ -36,6 +50,13 @@ export default function AudiencesPage() {
   const [open, setOpen] = useState(false);
   const { register, handleSubmit, reset, formState } = useForm<{ name: string }>();
 
+  // Rename + delete state, each keyed by the audience the action targets.
+  const [renaming, setRenaming] = useState<Audience | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [savingRename, setSavingRename] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<Audience | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   const load = useCallback(() => {
     api
       .get<{ audiences: Audience[] }>("/api/audiences")
@@ -45,6 +66,16 @@ export default function AudiencesPage() {
   }, []);
 
   useEffect(load, [load]);
+
+  const list = useListController(audiences, {
+    searchText: (a) => a.name,
+    sortAccessors: {
+      name: (a) => a.name,
+      subscribers: (a) => a.subscriberCount ?? 0,
+      createdAt: (a) => a.createdAt,
+    },
+    initialSort: { key: "createdAt", dir: "desc" },
+  });
 
   const onSubmit = handleSubmit(async (values) => {
     try {
@@ -57,6 +88,43 @@ export default function AudiencesPage() {
       toast.error(err instanceof Error ? err.message : "Failed");
     }
   });
+
+  function openRename(a: Audience) {
+    setRenaming(a);
+    setRenameValue(a.name);
+  }
+
+  async function saveRename() {
+    if (!renaming) return;
+    const name = renameValue.trim();
+    if (!name) return toast.error("Give the audience a name");
+    setSavingRename(true);
+    try {
+      await api.patch(`/api/audiences/${renaming.id}`, { name });
+      toast.success("Audience renamed");
+      setAudiences((l) => l?.map((a) => (a.id === renaming.id ? { ...a, name } : a)) ?? null);
+      setRenaming(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't rename audience");
+    } finally {
+      setSavingRename(false);
+    }
+  }
+
+  async function remove() {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    try {
+      await api.del(`/api/audiences/${confirmDelete.id}`);
+      toast.success("Audience deleted");
+      setAudiences((l) => l?.filter((a) => a.id !== confirmDelete.id) ?? null);
+      setConfirmDelete(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete audience");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -81,30 +149,39 @@ export default function AudiencesPage() {
         </Dialog>
       </div>
 
+      {audiences && audiences.length > 0 && (
+        <ListToolbar>
+          <ListSearch value={list.search} onChange={list.setSearch} placeholder="Search audiences…" />
+          <ListCount shown={list.shown} total={list.total} noun="audience" className="ml-auto" />
+        </ListToolbar>
+      )}
+
       <Card>
         <CardContent>
-          {audiences === null ? (
-            <Skeleton className="h-24 w-full" />
-          ) : audiences.length === 0 ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              Create an audience, then import the users you want to keep updated.
-            </p>
+          {list.view === null ? (
+            <ListSkeleton />
+          ) : list.isEmpty ? (
+            <ListEmpty
+              icon={Users}
+              title="Create your first audience"
+              description="An audience is a list of people. Create one, then import the users you want to keep updated."
+              action={<Button onClick={() => setOpen(true)}>New audience</Button>}
+            />
+          ) : list.isFilteredEmpty ? (
+            <ListNoResults onClear={() => list.setSearch("")} />
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Subscribed</TableHead>
-                  <TableHead>Created</TableHead>
+                  <SortableHead label="Name" sortKey="name" sort={list.sort} onSort={list.toggleSort} />
+                  <SortableHead label="Subscribed" sortKey="subscribers" sort={list.sort} onSort={list.toggleSort} align="right" />
+                  <SortableHead label="Created" sortKey="createdAt" sort={list.sort} onSort={list.toggleSort} />
+                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {audiences.map((a) => (
-                  <TableRow
-                    key={a.id}
-                    onClick={() => router.push(`/audiences/${a.id}`)}
-                    className="cursor-pointer"
-                  >
+                {list.view.map((a) => (
+                  <TableRow key={a.id} {...rowLinkProps(() => router.push(`/audiences/${a.id}`))}>
                     <TableCell>
                       <Link
                         href={`/audiences/${a.id}`}
@@ -114,8 +191,39 @@ export default function AudiencesPage() {
                         {a.name}
                       </Link>
                     </TableCell>
-                    <TableCell>{a.subscriberCount ?? 0}</TableCell>
-                    <TableCell>{formatDate(a.createdAt)}</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {(a.subscriberCount ?? 0).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{formatDate(a.createdAt)}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label="Rename audience"
+                          className="text-muted-foreground"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openRename(a);
+                          }}
+                        >
+                          <Pencil className="size-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label="Delete audience"
+                          className="text-muted-foreground hover:text-destructive"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDelete(a);
+                          }}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                        <RowOpen href={`/audiences/${a.id}`} />
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -123,6 +231,45 @@ export default function AudiencesPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!renaming} onOpenChange={(o) => !o && setRenaming(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename audience</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="renameAudience">Name</Label>
+              <Input
+                id="renameAudience"
+                value={renameValue}
+                autoFocus
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && saveRename()}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setRenaming(null)}>
+                Cancel
+              </Button>
+              <Button onClick={saveRename} disabled={savingRename}>
+                {savingRename && <OrbitLoader size={16} />}
+                Save
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onOpenChange={(o) => !o && setConfirmDelete(null)}
+        title={`Delete "${confirmDelete?.name}"?`}
+        description="This permanently deletes the audience and every subscriber in it. Campaigns already sent to it are unaffected. This can't be undone."
+        confirmLabel="Delete audience"
+        busy={deleting}
+        onConfirm={remove}
+      />
     </div>
   );
 }

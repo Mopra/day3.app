@@ -33,7 +33,21 @@ export type QueueMessage =
       accountId: string;
     };
 
-export const SEND_BATCH_SIZE = 25;
+// How many recipients one `send_campaign_batch` job claims and sends (serially,
+// in-process) before handing off. Larger batches amortize the per-batch DB
+// round-trips (claim + reconcile) over more emails. Env-tunable.
+export const SEND_BATCH_SIZE = Math.max(1, Number(process.env.SEND_BATCH_SIZE ?? "100"));
+
+// How many independent `send_campaign_batch` jobs (\"lanes\") are fanned out for a
+// single campaign. Each lane is a self-chaining batch that claims a *disjoint*
+// slice of pending recipients via `FOR UPDATE SKIP LOCKED`, so N lanes drain a
+// campaign ~N× faster than the old single self-chaining batch. Effective
+// parallelism is min(SEND_LANES, WORKER_CONCURRENCY × worker replicas), so set
+// WORKER_CONCURRENCY to at least SEND_LANES to saturate it. Tune both to roughly
+// your approved SES max send rate (a serial lane sustains ~1 send / network RTT;
+// e.g. 8 lanes ≈ 50/s). Lane count is conserved — each batch enqueues at most one
+// follow-up — so this never grows unbounded. The cap below is a safety ceiling.
+export const SEND_LANES = Math.min(64, Math.max(1, Number(process.env.SEND_LANES ?? "8")));
 
 // The single BullMQ queue both tiers share: the web tier (producer) adds jobs,
 // the VPS worker (consumer) processes them. Kept here (no bullmq import) so both

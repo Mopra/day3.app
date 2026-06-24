@@ -17,7 +17,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { OrbitLoader } from "@/components/ui/orbit-loader";
-import { CopyButton, copyText } from "@/components/copy-button";
+import { copyText } from "@/components/copy-button";
 import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
@@ -79,11 +79,11 @@ export function DomainSetupGuide({
   const [checking, setChecking] = useState(false);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [dns, setDns] = useState<DnsStatus>({ records: [], requiredResolved: false });
-  // Default to the relative ("subdomain only") form: it's what the hosted DNS
+  // Always show the relative ("subdomain only") form: it's what the hosted DNS
   // dashboards the vast majority of users have (Cloudflare, GoDaddy, Namecheap,
-  // Route 53, Google) expect — they append the zone themselves. The subtle toggle
-  // in the records header covers raw zone-file hosts that want the full name.
-  const [hostFormat, setHostFormat] = useState<"full" | "relative">("relative");
+  // Route 53, Google) expect — they append the zone themselves. Pasting the full
+  // name into those would double the zone and silently fail to verify, so we
+  // don't offer it as a choice; raw zone-file hosts can append the zone manually.
   const [selectedStep, setSelectedStep] = useState<1 | 2 | 3>(1);
   const prevState = useRef(state);
 
@@ -198,8 +198,7 @@ export function DomainSetupGuide({
   // still DNS to add, so keep the one-click helper around (it writes every record
   // including the Return-Path), even for an otherwise-verified domain.
   const fullyConfigured = verified && domain.mailFromStatus === "success";
-  const displayName = (name: string) =>
-    hostFormat === "relative" ? relativeHost(name, root) : name;
+  const displayName = (name: string) => relativeHost(name, root);
 
   const hasDeliverability = deliverabilityRecords.length > 0;
   const totalSteps = hasDeliverability ? 3 : 2;
@@ -260,19 +259,18 @@ export function DomainSetupGuide({
     <div className="grid gap-8 pt-4 sm:pt-6 lg:grid-cols-[220px_minmax(0,1fr)]">
       <StepRail steps={steps} selected={selectedStep} onSelect={setSelectedStep} />
 
-      <div className="min-w-0 space-y-6">
+      <div className="min-w-0 space-y-8">
         {selectedStep === 1 && (
-          <div className="space-y-5">
+          <div className="space-y-8">
             <StepHeader
               n={1}
               total={totalSteps}
               title="Add your DNS records"
               description={
                 <>
-                  Sign in to wherever you manage{" "}
-                  <span className="font-medium text-foreground">{root}</span> and open its DNS
-                  settings. Add each record below — copy the Name and Value across, and leave TTL at
-                  its default. We detect them automatically; there&apos;s nothing to submit here.
+                  Add the records below wherever you manage{" "}
+                  <span className="font-medium text-foreground">{root}</span>&apos;s DNS. We detect
+                  them automatically — there&apos;s nothing to submit here.
                 </>
               }
             />
@@ -292,22 +290,16 @@ export function DomainSetupGuide({
                 title="Records to add"
                 subtitle={
                   <>
-                    Each card below is one record. In your DNS settings, choose{" "}
-                    <span className="font-medium text-foreground">Add record</span>, then copy our{" "}
+                    Each card is one record. Copy its{" "}
                     <span className="font-medium text-foreground">Type</span>,{" "}
                     <span className="font-medium text-foreground">Name</span>, and{" "}
                     <span className="font-medium text-foreground">Value</span> into the matching
-                    boxes. Some hosts call the Name “Host”, and the Value “Target”, “Points to”, or
-                    “Content”.
+                    fields at your host.
                   </>
                 }
                 records={verifyRecords}
                 resolvedByKey={resolvedByKey}
                 displayName={displayName}
-                showCopyAll
-                hostFormat={hostFormat}
-                onHostFormatChange={setHostFormat}
-                root={root}
               />
             )}
           </div>
@@ -331,7 +323,7 @@ export function DomainSetupGuide({
         )}
 
         {selectedStep === 3 && hasDeliverability && (
-          <div className="space-y-5">
+          <div className="space-y-8">
             <StepHeader
               n={3}
               total={totalSteps}
@@ -698,30 +690,16 @@ function StatusHero({
   // re-check bumps updatedAt back inside the window).
   if (stale) {
     return (
-      <div className="flex flex-col gap-4 rounded-xl border border-amber-500/40 bg-amber-500/5 p-5 sm:flex-row sm:items-start">
-        <AlertCircle className="size-8 shrink-0 text-amber-500" />
-        <div className="flex-1 space-y-1">
-          <h2 className="font-medium">This domain needs your attention</h2>
-          <p className="text-sm text-muted-foreground">
-            It&apos;s been pending for more than two weeks, so we&apos;ve paused the automatic
-            checks. If you&apos;ve since added the DNS records below, run a re-check now and
-            we&apos;ll pick verification back up. Otherwise, add the records and re-check.
-          </p>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
-            {checking ? (
-              <span className="flex items-center gap-1.5">
-                <OrbitLoader size={14} /> Checking now…
-              </span>
-            ) : lastChecked ? (
-              <span>Last checked {ago(lastChecked)}</span>
-            ) : null}
-          </div>
-        </div>
-        <Button onClick={onCheck} disabled={checking} className="shrink-0">
-          {checking ? <OrbitLoader size={16} /> : <RefreshCw />}
-          Re-check now
-        </Button>
-      </div>
+      <StatusCard
+        tone="border-amber-500/40 bg-amber-500/5"
+        indicator={<AlertCircle className="size-5 shrink-0 text-amber-500" />}
+        title="This domain needs your attention"
+        body="It's been pending for more than two weeks, so we've paused the automatic checks. If you've since added the DNS records below, run a re-check now and we'll pick verification back up. Otherwise, add the records and re-check."
+        meta={lastChecked ? `Last checked ${ago(lastChecked)}` : null}
+        action={
+          <CheckButton checking={checking} onCheck={onCheck} label="Re-check now" variant="default" />
+        }
+      />
     );
   }
 
@@ -729,56 +707,120 @@ function StatusHero({
   // DKIM records are live in public DNS but SES hasn't flipped to verified yet —
   // the part we control is done, so say so instead of a generic "waiting".
   const confirmed = !failed && dnsResolved;
+
+  const tone = failed
+    ? "border-destructive/30 bg-destructive/5"
+    : confirmed
+      ? "border-primary/20 bg-primary/5"
+      : "bg-muted/40";
+
+  const indicator = failed ? (
+    <AlertCircle className="size-5 shrink-0 text-destructive" />
+  ) : confirmed ? (
+    <CheckCircle2 className="size-5 shrink-0 text-primary" />
+  ) : (
+    <LiveDot />
+  );
+
+  const meta = failed
+    ? lastChecked
+      ? `Last checked ${ago(lastChecked)}`
+      : null
+    : `Checking automatically${lastChecked ? ` · last checked ${ago(lastChecked)}` : "…"}`;
+
   return (
-    <div
-      className={cn(
-        "flex flex-col gap-4 rounded-xl border p-5 sm:flex-row sm:items-start",
+    <StatusCard
+      tone={tone}
+      indicator={indicator}
+      title={
         failed
-          ? "border-destructive/30 bg-destructive/5"
+          ? "We couldn't verify this domain yet"
           : confirmed
-            ? "border-primary/20 bg-primary/5"
-            : "bg-muted/40",
-      )}
-    >
-      {failed ? (
-        <AlertCircle className="size-8 shrink-0 text-destructive" />
-      ) : confirmed ? (
-        <CheckCircle2 className="size-8 shrink-0 text-primary" />
-      ) : (
-        <OrbitLoader size={32} className="shrink-0" />
-      )}
-      <div className="flex-1 space-y-1">
-        <h2 className="font-medium">
-          {failed
-            ? "We couldn't verify this domain yet"
-            : confirmed
-              ? "DNS records confirmed — finalizing"
-              : "Waiting for your DNS records"}
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          {failed
-            ? "The records below may be missing or mistyped. Fix them at your DNS host and we'll keep checking automatically."
-            : confirmed
-              ? "Your DKIM records are live. We're finalizing verification with your email provider — this usually takes a few minutes, and we're checking continuously."
-              : "Add the DNS records below at your domain host. We check automatically every few minutes — most domains verify within an hour, though DNS can take up to 48 hours."}
-        </p>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-xs text-muted-foreground">
-          {checking ? (
-            <span className="flex items-center gap-1.5">
-              <OrbitLoader size={14} /> Checking now…
-            </span>
-          ) : lastChecked ? (
-            <span>Last checked {ago(lastChecked)}</span>
-          ) : (
-            <span>Checking automatically…</span>
-          )}
+            ? "DNS records confirmed — finalizing"
+            : "Waiting for your DNS records"
+      }
+      body={
+        failed
+          ? "The records below may be missing or mistyped. Fix them at your DNS host and we'll keep checking automatically."
+          : confirmed
+            ? "Your DKIM records are live. We're finalizing verification with your email provider — this usually takes a few minutes, and we're checking continuously."
+            : "Add the DNS records below at your domain host. We check automatically every few minutes — most domains verify within an hour, though DNS can take up to 48 hours."
+      }
+      meta={meta}
+      action={<CheckButton checking={checking} onCheck={onCheck} label="Check now" variant="outline" />}
+    />
+  );
+}
+
+/**
+ * Status banner for a domain's verification state. Title sits on one baseline
+ * with a small status indicator and the manual-check action; the explanation
+ * and a single subtle meta line follow below. Keeping the indicator small and
+ * inline (rather than a tall icon column) is what makes the row read as aligned.
+ */
+function StatusCard({
+  tone,
+  indicator,
+  title,
+  body,
+  meta,
+  action,
+}: {
+  tone: string;
+  indicator: React.ReactNode;
+  title: string;
+  body: string;
+  meta: string | null;
+  action: React.ReactNode;
+}) {
+  return (
+    <div className={cn("rounded-xl border p-5", tone)}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 items-center gap-2.5">
+          {indicator}
+          <h2 className="font-medium">{title}</h2>
         </div>
+        {action}
       </div>
-      <Button variant="outline" onClick={onCheck} disabled={checking} className="shrink-0">
-        {checking ? <OrbitLoader size={16} /> : <RefreshCw />}
-        Check now
-      </Button>
+      <p className="mt-3 text-sm text-muted-foreground">{body}</p>
+      {meta ? <p className="mt-3 text-xs text-muted-foreground">{meta}</p> : null}
     </div>
+  );
+}
+
+/** Calm "we're actively watching" pulse — replaces the noisier bouncing mark. */
+function LiveDot() {
+  return (
+    <span className="relative flex size-2.5 shrink-0" aria-hidden>
+      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
+      <span className="relative inline-flex size-2.5 rounded-full bg-primary" />
+    </span>
+  );
+}
+
+/** The single manual re-check control. Its spinner is the only check feedback. */
+function CheckButton({
+  checking,
+  onCheck,
+  label,
+  variant,
+}: {
+  checking: boolean;
+  onCheck: () => void;
+  label: string;
+  variant: "default" | "outline";
+}) {
+  return (
+    <Button
+      variant={variant}
+      size="sm"
+      onClick={onCheck}
+      disabled={checking}
+      className="shrink-0"
+    >
+      {checking ? <OrbitLoader size={16} /> : <RefreshCw />}
+      {checking ? "Checking…" : label}
+    </Button>
   );
 }
 
@@ -811,42 +853,26 @@ function ChecklistSection({
   records,
   resolvedByKey,
   displayName,
-  showCopyAll,
-  hostFormat,
-  onHostFormatChange,
-  root,
 }: {
   title: string;
   subtitle?: ReactNode;
   records: DnsRecord[];
   resolvedByKey: Map<string, boolean>;
   displayName: (name: string) => string;
-  showCopyAll?: boolean;
-  hostFormat?: "full" | "relative";
-  onHostFormatChange?: (f: "full" | "relative") => void;
-  root?: string;
 }) {
   const found = records.filter((r) => resolvedByKey.get(recordKey(r))).length;
   return (
-    <section className="space-y-3">
+    <section className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <h3 className="font-medium">{title}</h3>
           {subtitle && <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="text-xs text-muted-foreground">
-            {found} of {records.length} found
-          </span>
-          {showCopyAll && (
-            <CopyButton value={copyAllText(records, displayName)} label="Copy all" variant="outline" />
-          )}
-        </div>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {found} of {records.length} found
+        </span>
       </div>
-      {hostFormat && onHostFormatChange && root && (
-        <HostFormatToggle root={root} value={hostFormat} onChange={onHostFormatChange} />
-      )}
-      <div className="space-y-3">
+      <div className="space-y-4">
         {records.map((r) => (
           <RecordRow
             key={recordKey(r)}
@@ -1003,61 +1029,7 @@ function StatusPill({ resolved }: { resolved: boolean }) {
   );
 }
 
-// Tab-separated dump of every record for the "Copy all" button. Includes MX
-// priority so DNS hosts that ask for it as a separate field get the value.
-function copyAllText(records: DnsRecord[], displayName: (name: string) => string): string {
-  return records
-    .map((r) => {
-      const parts = [r.type, displayName(r.name), r.value];
-      if (r.type === "MX" && r.priority != null) parts.push(String(r.priority));
-      return parts.join("\t");
-    })
-    .join("\n");
-}
-
 /* ----------------------------------------------------------------------------- */
-
-// Deliberately understated: most users never touch this. We default to the
-// "subdomain only" form that hosted DNS dashboards expect, and only those on a
-// raw zone-file host need the full name. The hint explains the choice on hover
-// so it doesn't add to the visual load.
-function HostFormatToggle({
-  root,
-  value,
-  onChange,
-}: {
-  root: string;
-  value: "full" | "relative";
-  onChange: (f: "full" | "relative") => void;
-}) {
-  return (
-    <div className="flex items-center justify-end gap-1.5">
-      <span
-        className="text-xs text-muted-foreground"
-        title={`Most DNS hosts append ${root} for you, so paste only the part before it. Pick "Full name" if your host wants the complete record name.`}
-      >
-        Name format
-      </span>
-      <div className="inline-flex shrink-0 rounded-md border bg-background p-0.5 text-xs">
-        {(["relative", "full"] as const).map((opt) => (
-          <button
-            key={opt}
-            type="button"
-            onClick={() => onChange(opt)}
-            className={cn(
-              "rounded px-2 py-0.5 font-medium transition-colors",
-              value === opt
-                ? "bg-primary text-primary-foreground"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {opt === "full" ? "Full name" : "Subdomain only"}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // A whole-field click-to-copy control. The long DNS value is truncated (no
 // scrollbars to fight) and the entire box is the copy target, with clear
@@ -1140,11 +1112,11 @@ function HelpSection({ root }: { root: string }) {
           <ul className="mt-1 list-disc space-y-1 pl-5">
             <li>DNS changes can take up to 48 hours to spread across the internet.</li>
             <li>
-              We show the <span className="font-medium text-foreground">Subdomain only</span> name
-              by default, which most hosts expect. If your host saves the name exactly as typed
-              (so the record ends up missing <span className="font-medium text-foreground">{root}</span>),
-              switch the Name format to <span className="font-medium text-foreground">Full name</span>{" "}
-              by the records above.
+              We show the name without{" "}
+              <span className="font-medium text-foreground">{root}</span>, which nearly every host
+              appends for you. If your host saves the name exactly as typed (a raw zone-file host),
+              add <span className="font-medium text-foreground">.{root}</span> to the end of each
+              Name yourself.
             </li>
             <li>Make sure the record Type matches (CNAME, TXT, or MX) and there are no extra spaces.</li>
             <li>

@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { OrganizationProfile } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useApi } from "@/lib/api";
@@ -28,54 +27,46 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Sender identity</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">
-            Shown in the footer of every email ({"{{company_address}}"}). A physical mailing
-            address is required by anti-spam laws.
-          </p>
-          <div className="max-w-lg space-y-2">
-            <Label htmlFor="address">Company / mailing address</Label>
-            <Input
-              id="address"
-              placeholder="Acme Inc, 123 Main St, Copenhagen, DK"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-            />
-          </div>
-          <Button
-            disabled={saving || !account}
-            onClick={async () => {
-              setSaving(true);
-              try {
-                await api.patch("/api/account", { companyAddress: address });
-                toast.success("Saved");
-              } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Failed");
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            Save
-          </Button>
-        </CardContent>
-      </Card>
+      <section className="space-y-4">
+        <h2 className="text-base font-medium">Sender identity</h2>
+        <p className="text-sm text-muted-foreground">
+          Shown in the footer of every email ({"{{company_address}}"}). A physical mailing
+          address is required by anti-spam laws.
+        </p>
+        <div className="max-w-lg space-y-2">
+          <Label htmlFor="address">Company / mailing address</Label>
+          <Input
+            id="address"
+            placeholder="Acme Inc, 123 Main St, Copenhagen, DK"
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+          />
+        </div>
+        <Button
+          disabled={saving || !account}
+          onClick={async () => {
+            setSaving(true);
+            try {
+              await api.patch("/api/account", { companyAddress: address });
+              toast.success("Saved");
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "Failed");
+            } finally {
+              setSaving(false);
+            }
+          }}
+        >
+          Save
+        </Button>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Organization</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <OrganizationProfile routing="hash" />
-        </CardContent>
-      </Card>
+      <section className="space-y-4">
+        <h2 className="text-base font-medium">Organization</h2>
+        <OrganizationProfile routing="hash" />
+      </section>
     </div>
   );
 }

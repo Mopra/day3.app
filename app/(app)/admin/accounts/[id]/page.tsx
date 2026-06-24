@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { Globe, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,9 +17,23 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  ListCount,
+  ListEmpty,
+  ListFilter,
+  ListNoResults,
+  ListSearch,
+  ListSkeleton,
+  ListToolbar,
+  SortableHead,
+  useListController,
+} from "@/components/ui/data-list";
 import { useApi } from "@/lib/api";
 import { formatDate, statusLabel, statusVariant } from "@/lib/format";
+import { planLabel } from "@/lib/plans-catalog";
 import type { Account, AccountHealth, Campaign, SendingDomain } from "@/lib/types";
+
+const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 type Detail = {
   account: Account;
@@ -31,8 +46,9 @@ export default function AdminAccountPage() {
   const { id } = useParams<{ id: string }>();
   const api = useApi();
   const [detail, setDetail] = useState<Detail | null>(null);
-  const [domains, setDomains] = useState<SendingDomain[]>([]);
+  const [domains, setDomains] = useState<SendingDomain[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [campaignStatus, setCampaignStatus] = useState("all");
 
   const load = useCallback(() => {
     api
@@ -42,14 +58,33 @@ export default function AdminAccountPage() {
     api
       .get<{ domains: SendingDomain[] }>(`/api/admin/accounts/${id}/domains`)
       .then((res) => setDomains(res.domains))
-      .catch(() => {});
+      .catch(() => setDomains([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   useEffect(load, [load]);
 
-  if (!detail) return <OrbitLoaderScreen />;
-  const { account, health, campaigns, subscriberCount } = detail;
+  // Hooks must run before the loading early-return, so the controller takes the
+  // campaigns once `detail` resolves.
+  const campaignStatusOptions = useMemo(() => {
+    const present = Array.from(new Set((detail?.campaigns ?? []).map((c) => c.status)));
+    return [
+      { value: "all", label: "All statuses" },
+      ...present.map((s) => ({ value: s, label: cap(statusLabel(s)) })),
+    ];
+  }, [detail]);
+
+  const campaignList = useListController(detail?.campaigns ?? null, {
+    searchText: (c) => `${c.name} ${c.subject}`,
+    predicate: (c) => campaignStatus === "all" || c.status === campaignStatus,
+    sortAccessors: {
+      name: (c) => c.name,
+      status: (c) => c.status,
+      risk: (c) => c.riskLevel,
+      createdAt: (c) => c.createdAt,
+    },
+    initialSort: { key: "createdAt", dir: "desc" },
+  });
 
   async function act(path: string, body?: unknown) {
     setBusy(true);
@@ -63,6 +98,9 @@ export default function AdminAccountPage() {
       setBusy(false);
     }
   }
+
+  if (!detail) return <OrbitLoaderScreen />;
+  const { account, health, subscriberCount } = detail;
 
   return (
     <div className="space-y-6">
@@ -102,7 +140,7 @@ export default function AdminAccountPage() {
             <CardTitle className="text-sm text-muted-foreground">Plan</CardTitle>
           </CardHeader>
           <CardContent>
-            <span className="text-xl font-semibold capitalize">{account.plan}</span>{" "}
+            <span className="text-xl font-semibold">{planLabel(account.plan)}</span>{" "}
             <Badge variant={account.subscriptionStatus === "active" ? "default" : "outline"}>
               {account.subscriptionStatus}
             </Badge>
@@ -113,8 +151,9 @@ export default function AdminAccountPage() {
             <CardTitle className="text-sm text-muted-foreground">Usage</CardTitle>
           </CardHeader>
           <CardContent>
-            <span className="text-xl font-semibold">
-              {account.monthlyEmailSentCount}/{account.monthlyEmailLimit}
+            <span className="text-xl font-semibold tabular-nums">
+              {account.monthlyEmailSentCount.toLocaleString()}/
+              {account.monthlyEmailLimit.toLocaleString()}
             </span>
           </CardContent>
         </Card>
@@ -148,8 +187,10 @@ export default function AdminAccountPage() {
           <CardTitle className="text-base">Sending domains</CardTitle>
         </CardHeader>
         <CardContent>
-          {domains.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No domains.</p>
+          {domains === null ? (
+            <ListSkeleton rows={2} />
+          ) : domains.length === 0 ? (
+            <ListEmpty icon={Globe} title="No domains" description="This account hasn't added a sending domain yet." />
           ) : (
             <Table>
               <TableHeader>
@@ -197,35 +238,68 @@ export default function AdminAccountPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">
-            Campaigns <span className="text-muted-foreground">({subscriberCount} subscribers)</span>
+            Campaigns{" "}
+            <span className="text-muted-foreground">
+              ({subscriberCount.toLocaleString()} subscribers)
+            </span>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {campaigns.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No campaigns.</p>
+          {detail.campaigns.length === 0 ? (
+            <ListEmpty icon={Mail} title="No campaigns" description="This account hasn't created a campaign yet." />
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Risk</TableHead>
-                  <TableHead>Created</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {campaigns.map((cmp) => (
-                  <TableRow key={cmp.id}>
-                    <TableCell className="font-medium">{cmp.name}</TableCell>
-                    <TableCell>
-                      <Badge variant={statusVariant(cmp.status)}>{statusLabel(cmp.status)}</Badge>
-                    </TableCell>
-                    <TableCell>{cmp.riskLevel ?? "—"}</TableCell>
-                    <TableCell>{formatDate(cmp.createdAt)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <>
+              <ListToolbar className="mb-4">
+                <ListSearch
+                  value={campaignList.search}
+                  onChange={campaignList.setSearch}
+                  placeholder="Search campaigns…"
+                />
+                <ListFilter
+                  value={campaignStatus}
+                  onChange={setCampaignStatus}
+                  options={campaignStatusOptions}
+                  ariaLabel="Filter by status"
+                />
+                <ListCount
+                  shown={campaignList.shown}
+                  total={campaignList.total}
+                  noun="campaign"
+                  className="ml-auto"
+                />
+              </ListToolbar>
+              {campaignList.isFilteredEmpty ? (
+                <ListNoResults
+                  onClear={() => {
+                    campaignList.setSearch("");
+                    setCampaignStatus("all");
+                  }}
+                />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <SortableHead label="Name" sortKey="name" sort={campaignList.sort} onSort={campaignList.toggleSort} />
+                      <SortableHead label="Status" sortKey="status" sort={campaignList.sort} onSort={campaignList.toggleSort} />
+                      <SortableHead label="Risk" sortKey="risk" sort={campaignList.sort} onSort={campaignList.toggleSort} />
+                      <SortableHead label="Created" sortKey="createdAt" sort={campaignList.sort} onSort={campaignList.toggleSort} />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {campaignList.view!.map((cmp) => (
+                      <TableRow key={cmp.id}>
+                        <TableCell className="font-medium">{cmp.name}</TableCell>
+                        <TableCell>
+                          <Badge variant={statusVariant(cmp.status)}>{statusLabel(cmp.status)}</Badge>
+                        </TableCell>
+                        <TableCell>{cmp.riskLevel ?? "—"}</TableCell>
+                        <TableCell className="text-muted-foreground">{formatDate(cmp.createdAt)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

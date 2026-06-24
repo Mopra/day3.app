@@ -20,7 +20,8 @@ serves the UI and the API routes; a separate long-running Node worker
 - AWS SES (`@aws-sdk/client-sesv2`) for email delivery and identity/domain setup
 - Supabase Storage for uploaded assets
 - React 19: Tailwind 4, shadcn/ui (Base UI), react-hook-form
-- Clerk: auth, Organizations (tenant boundary), Billing (org plan "tiny")
+- Clerk: auth, Organizations (tenant boundary), Billing (bandwidth plans:
+  `free_org` → `100k_plan`; the plan key is the Clerk slug — see `src/lib/plans-catalog.ts`)
 - Vitest with pglite (Postgres-in-WASM) — a fresh in-memory database per test,
   migrations applied from `migrations/`
 
@@ -35,7 +36,12 @@ serves the UI and the API routes; a separate long-running Node worker
    only exception.
 4. **Email goes through the `EmailProvider` interface** (`src/email/`).
    `EMAIL_PROVIDER=mock` logs instead of sending; `ses` uses AWS SES (sesv2).
-5. **No features outside the MVP scope.** No free tier.
+5. **No features outside the MVP scope.** Pricing is bandwidth-based. The free
+   tier (`free_org`) is set-up-only: it can configure everything and draft, but
+   **cannot send** and is capped at 500 subscribers. Paid tiers (`1k_plan` →
+   `100k_plan`) unlock sending; the **AI assistant is gated to 10k+**. Gating lives
+   in `src/lib/plans-catalog.ts` (`planCanSend` / `planHasAI` / `maxSubscribersForPlan`)
+   and `src/services/subscriber-limit.ts`. See `PRODUCT.md §4`.
 
 ## Gotchas
 

@@ -168,30 +168,19 @@ ${input.html}`,
   return { previewText: object.previewText.trim(), usage };
 }
 
-const REWRITE_INSTRUCTIONS: Record<string, string> = {
-  improve: "Improve the writing: clearer, tighter, more engaging, while keeping the meaning and roughly the same length.",
-  shorten: "Make it noticeably shorter and punchier while keeping the key point.",
-  friendly: "Make the tone warmer and friendlier, conversational but still professional.",
-  professional: "Make the tone more polished and professional, without being stiff.",
-  grammar: "Fix only spelling, grammar, and punctuation. Do not change the wording, tone, or meaning otherwise.",
-};
-
-export type RewriteAction = keyof typeof REWRITE_INSTRUCTIONS;
-export const REWRITE_ACTIONS = Object.keys(REWRITE_INSTRUCTIONS) as RewriteAction[];
-
-/** Rewrite a selected snippet of plain text per the chosen action. */
+/** Rewrite a selected snippet of plain text per the user's free-form instruction. */
 export async function rewriteText(
-  input: { text: string; action: string },
+  input: { text: string; instruction: string },
 ): Promise<{ text: string; usage: Usage }> {
-  const instruction = REWRITE_INSTRUCTIONS[input.action] ?? REWRITE_INSTRUCTIONS.improve;
   const { text, usage } = await generateText({
     model: model(),
-    temperature: input.action === "grammar" ? 0.2 : 0.5,
+    temperature: 0.5,
     system: `${SYSTEM}
 
-You are editing a fragment of an email. ${instruction}
-Preserve any merge tags such as {{first_name}} exactly. Return ONLY the rewritten text with no quotes, no preamble, no explanation, and no markdown.`,
-    prompt: input.text,
+You are editing a fragment of an email. Apply the user's instruction to the selected text.
+Stay faithful to the user's intent; if the instruction is unclear, make a sensible improvement rather than guessing wildly.
+Preserve any merge tags such as {{first_name}} exactly. Return ONLY the edited text with no quotes, no preamble, no explanation, and no markdown.`,
+    prompt: `Instruction: ${input.instruction}\n\nText to edit:\n${input.text}`,
   });
   return { text: text.trim(), usage };
 }

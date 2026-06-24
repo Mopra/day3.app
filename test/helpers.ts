@@ -77,7 +77,11 @@ export async function seedAccount(db: Db, overrides: Partial<Account> = {}): Pro
     id,
     clerkOrgId: `org_${id}`,
     name: "Test Co",
-    plan: "tiny",
+    // A fully set-up, sendable account has a mailing address (the send gate now
+    // requires it for CAN-SPAM compliance). Tests for the missing-address gate
+    // override this with null explicitly.
+    companyAddress: "123 Test St, Test City, 0000",
+    plan: "10k_plan",
     subscriptionStatus: "active",
     monthlyEmailLimit: 10_000,
     monthlyEmailSentCount: 0,

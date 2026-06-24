@@ -8,7 +8,7 @@ INSERT INTO accounts (
   monthly_email_limit, monthly_email_sent_count,
   sending_enabled, risk_status, company_address, created_at, updated_at
 ) VALUES (
-  'acc_seed000000000000000000', 'org_seed_replace_me', 'Seed Co', 'tiny', 'active',
+  'acc_seed000000000000000000', 'org_seed_replace_me', 'Seed Co', '10k_plan', 'active',
   10000, 0,
   true, 'normal', 'Seed Co, 1 Example Street, Copenhagen, DK',
   '2026-06-13T00:00:00.000Z', '2026-06-13T00:00:00.000Z'

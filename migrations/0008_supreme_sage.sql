@@ -1,0 +1,1 @@
+ALTER TABLE "campaigns" ADD COLUMN "footer_text" text;

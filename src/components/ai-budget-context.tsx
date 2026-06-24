@@ -17,11 +17,20 @@ export type AiBudget = {
   reason: "window" | "month" | null;
   resetsInSeconds: number;
 };
-type AiStatusResponse = { enabled: boolean; budget: AiBudget | null };
+type AiStatusResponse = {
+  enabled: boolean;
+  configured: boolean;
+  planAi: boolean;
+  budget: AiBudget | null;
+};
 
 type AiBudgetContextValue = {
-  /** True when OpenRouter is configured (AI affordances are available at all). */
+  /** True when AI is configured AND included on the account's plan. */
   enabled: boolean;
+  /** True when OpenRouter is configured at all (independent of plan). */
+  configured: boolean;
+  /** True when the account's plan tier includes the AI assistant. */
+  planAi: boolean;
   /** Null until the first fetch resolves, or when AI is disabled. */
   budget: AiBudget | null;
   /** Re-read the snapshot — call after any action that spends budget. */
@@ -33,12 +42,16 @@ const AiBudgetContext = createContext<AiBudgetContextValue | null>(null);
 export function AiBudgetProvider({ children }: { children: ReactNode }) {
   const api = useApi();
   const [enabled, setEnabled] = useState(false);
+  const [configured, setConfigured] = useState(false);
+  const [planAi, setPlanAi] = useState(false);
   const [budget, setBudget] = useState<AiBudget | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const res = await api.get<AiStatusResponse>("/api/ai/status");
       setEnabled(res.enabled);
+      setConfigured(res.configured);
+      setPlanAi(res.planAi);
       setBudget(res.budget);
     } catch {
       // Non-fatal: keep the last known value (meter just doesn't update).
@@ -50,7 +63,7 @@ export function AiBudgetProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   return (
-    <AiBudgetContext.Provider value={{ enabled, budget, refresh }}>
+    <AiBudgetContext.Provider value={{ enabled, configured, planAi, budget, refresh }}>
       {children}
     </AiBudgetContext.Provider>
   );

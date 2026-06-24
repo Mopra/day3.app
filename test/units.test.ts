@@ -7,12 +7,20 @@ import {
   MAX_IMPORT_BYTES,
 } from "../src/lib/csv";
 import { runDeterministicRiskChecks } from "../src/services/risk";
-import { renderCampaignEmail } from "../src/services/render";
+import { renderCampaignEmail, personalizationFieldsUsed } from "../src/services/render";
 import {
   checkSendEligibility,
   entitlementsFor,
+  firstAiPlan,
+  firstSendingPlan,
+  maxSubscribersForPlan,
   monthlyEmailLimitForPlan,
+  nextPlanUp,
+  planCanSend,
+  planFromEntitlements,
   planFromSlug,
+  planHasAI,
+  recommendedPlanFor,
   subscriptionStatusForLifecycle,
 } from "../src/services/plans";
 import type { Account } from "../src/db/schema";
@@ -134,6 +142,34 @@ describe("risk checks", () => {
   });
 });
 
+describe("personalizationFieldsUsed", () => {
+  it("reports each personalizable field used, with its fallback", () => {
+    const used = personalizationFieldsUsed(
+      "Hi {{first_name|there}}",
+      "<p>Welcome {{last_name|aboard}} ({{email}})</p>",
+    );
+    expect(used).toEqual([
+      { field: "first_name", fallback: "there" },
+      { field: "last_name", fallback: "aboard" },
+    ]);
+  });
+
+  it("reports a bare tag with no fallback (renders blank)", () => {
+    expect(personalizationFieldsUsed("Hi {{first_name}}")).toEqual([
+      { field: "first_name", fallback: null },
+    ]);
+  });
+
+  it("prefers the worst case: a bare usage wins over a fallback usage", () => {
+    const used = personalizationFieldsUsed("Hi {{first_name|there}}", "Bye {{first_name}}");
+    expect(used).toEqual([{ field: "first_name", fallback: null }]);
+  });
+
+  it("ignores email and unknown tags (only blankable subscriber fields count)", () => {
+    expect(personalizationFieldsUsed("{{email}} {{company_name}} plain text")).toEqual([]);
+  });
+});
+
 describe("email rendering", () => {
   const input = {
     campaign: {
@@ -153,12 +189,94 @@ describe("email rendering", () => {
     expect(out.html).toContain("Hello Alice  (alice@x.co)");
   });
 
+  it("uses a token fallback when the field is empty, so copy never breaks", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        subject: "Hi {{first_name|there}}",
+        htmlBody: "<p>Hi {{first_name|there}}, welcome {{last_name|aboard}}</p>",
+        textBody: null,
+      },
+      subscriber: { email: "noname@x.co", firstName: null, lastName: null },
+    });
+    expect(out.subject).toBe("Hi there");
+    expect(out.html).toContain("Hi there, welcome aboard");
+    expect(out.text).toContain("Hi there, welcome aboard");
+  });
+
+  it("prefers the real value over the fallback when the field is present", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        subject: "Hi {{first_name|there}}",
+        htmlBody: "<p>Hi {{first_name|there}}</p>",
+        textBody: null,
+      },
+      subscriber: { email: "alice@x.co", firstName: "Alice", lastName: null },
+    });
+    expect(out.subject).toBe("Hi Alice");
+    expect(out.html).toContain("Hi Alice");
+  });
+
+  it("escapes a fallback so it cannot inject markup", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: {
+        ...input.campaign,
+        htmlBody: "<p>Hi {{first_name|<b>hi</b>}}</p>",
+        textBody: null,
+      },
+      subscriber: { email: "noname@x.co", firstName: null, lastName: null },
+    });
+    expect(out.html).not.toContain("<b>hi</b>");
+    expect(out.html).toContain("&lt;b&gt;hi&lt;/b&gt;");
+  });
+
   it("always appends the footer with unsubscribe link and address", () => {
     const out = renderCampaignEmail(input);
     expect(out.html).toContain("https://app.test/unsubscribe?token=abc");
     expect(out.html).toContain("Test Co");
     expect(out.html).toContain("1 Main St");
     expect(out.text).toContain("https://app.test/unsubscribe?token=abc");
+  });
+
+  it("uses the campaign's editable footer wording when provided", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: { ...input.campaign, footerText: "Thanks for reading, {{first_name}}!" },
+    });
+    expect(out.html).toContain("Thanks for reading, Alice!");
+    expect(out.text).toContain("Thanks for reading, Alice!");
+    // It replaces the default wording entirely.
+    expect(out.html).not.toContain("you subscribed to updates");
+  });
+
+  it("keeps the locked address + unsubscribe link even with custom/empty footer wording", () => {
+    // Editable wording must never strip the legally-required address and link.
+    const blank = renderCampaignEmail({
+      ...input,
+      campaign: { ...input.campaign, footerText: "   " },
+    });
+    expect(blank.html).toContain("1 Main St");
+    expect(blank.html).toContain('href="https://app.test/unsubscribe?token=abc"');
+
+    // A user who tries to smuggle their own unsubscribe placeholder into the
+    // wording can't add a second link — it's stripped, leaving exactly one.
+    const sneaky = renderCampaignEmail({
+      ...input,
+      campaign: { ...input.campaign, footerText: "Bye — {{unsubscribe_url}}" },
+    });
+    const links = sneaky.html.match(/https:\/\/app\.test\/unsubscribe\?token=abc/g) ?? [];
+    expect(links.length).toBe(1);
+  });
+
+  it("escapes HTML in the editable footer wording (no markup injection)", () => {
+    const out = renderCampaignEmail({
+      ...input,
+      campaign: { ...input.campaign, footerText: "<script>alert(1)</script>" },
+    });
+    expect(out.html).not.toMatch(/<script/i);
+    expect(out.html).toContain("&lt;script&gt;");
   });
 
   it("generates a text body from HTML when none is provided", () => {
@@ -356,17 +474,71 @@ describe("email rendering", () => {
 });
 
 describe("plan slug -> entitlement mapping", () => {
-  it("maps the paid slug to the tiny plan and everything else to none", () => {
-    expect(planFromSlug("tiny")).toBe("tiny");
-    expect(planFromSlug("unknown")).toBe("none");
-    expect(planFromSlug(undefined)).toBe("none");
-    expect(planFromSlug(null)).toBe("none");
-    expect(planFromSlug("")).toBe("none");
+  it("maps a known plan slug to its key and everything else to the free tier", () => {
+    expect(planFromSlug("5k_plan")).toBe("5k_plan");
+    expect(planFromSlug("10k_plan")).toBe("10k_plan");
+    expect(planFromSlug("100k_plan")).toBe("100k_plan");
+    expect(planFromSlug("free_org")).toBe("free_org");
+    expect(planFromSlug("unknown")).toBe("free_org");
+    expect(planFromSlug(undefined)).toBe("free_org");
+    expect(planFromSlug(null)).toBe("free_org");
+    expect(planFromSlug("")).toBe("free_org");
   });
 
-  it("centralizes the per-plan monthly email limit", () => {
-    expect(monthlyEmailLimitForPlan("tiny")).toBe(10_000);
-    expect(monthlyEmailLimitForPlan("none")).toBe(0);
+  it("resolves the held plan from session billing claims, highest tier first", () => {
+    const held = (slugs: string[]) => (p: { plan: string }) => slugs.includes(p.plan);
+    expect(planFromEntitlements(held([]))).toBe("free_org");
+    expect(planFromEntitlements(held(["org:5k_plan"]))).toBe("5k_plan");
+    // Overlapping grants resolve to the most generous tier.
+    expect(planFromEntitlements(held(["org:5k_plan", "org:50k_plan"]))).toBe("50k_plan");
+  });
+
+  it("centralizes the per-plan monthly email limit (free cannot send)", () => {
+    expect(monthlyEmailLimitForPlan("free_org")).toBe(0);
+    expect(monthlyEmailLimitForPlan("1k_plan")).toBe(1_000);
+    expect(monthlyEmailLimitForPlan("5k_plan")).toBe(5_000);
+    expect(monthlyEmailLimitForPlan("10k_plan")).toBe(10_000);
+    expect(monthlyEmailLimitForPlan("100k_plan")).toBe(100_000);
+  });
+
+  it("gates sending: only paid tiers can send", () => {
+    expect(planCanSend("free_org")).toBe(false);
+    expect(planCanSend("1k_plan")).toBe(true);
+    expect(planCanSend("100k_plan")).toBe(true);
+    expect(planCanSend("bogus")).toBe(false);
+    expect(firstSendingPlan()).toBe("1k_plan");
+  });
+
+  it("gates AI: only 10k and up include the assistant", () => {
+    expect(planHasAI("free_org")).toBe(false);
+    expect(planHasAI("1k_plan")).toBe(false);
+    expect(planHasAI("5k_plan")).toBe(false);
+    expect(planHasAI("10k_plan")).toBe(true);
+    expect(planHasAI("100k_plan")).toBe(true);
+    expect(firstAiPlan()).toBe("10k_plan");
+  });
+
+  it("caps free-tier subscribers, paid tiers are unlimited", () => {
+    expect(maxSubscribersForPlan("free_org")).toBe(500);
+    expect(maxSubscribersForPlan("1k_plan")).toBeNull();
+    expect(maxSubscribersForPlan("100k_plan")).toBeNull();
+    // An unknown/legacy plan falls back to the free cap (can't hoard).
+    expect(maxSubscribersForPlan("bogus")).toBe(500);
+  });
+
+  it("suggests the next tier up for upgrade CTAs", () => {
+    expect(nextPlanUp("free_org")).toBe("1k_plan");
+    expect(nextPlanUp("1k_plan")).toBe("5k_plan");
+    expect(nextPlanUp("25k_plan")).toBe("50k_plan");
+    expect(nextPlanUp("100k_plan")).toBeNull();
+  });
+
+  it("recommends the smallest plan that covers an expected volume", () => {
+    expect(recommendedPlanFor(0)).toBe("free_org");
+    expect(recommendedPlanFor(1)).toBe("1k_plan");
+    expect(recommendedPlanFor(1_001)).toBe("5k_plan");
+    expect(recommendedPlanFor(12_000)).toBe("25k_plan");
+    expect(recommendedPlanFor(10_000_000)).toBe("100k_plan");
   });
 
   it("maps each lifecycle to a deterministic subscription status", () => {
@@ -376,34 +548,34 @@ describe("plan slug -> entitlement mapping", () => {
   });
 
   it("active enables sending on a paid plan with the plan's limit", () => {
-    expect(entitlementsFor("tiny", "active")).toEqual({
-      plan: "tiny",
+    expect(entitlementsFor("10k_plan", "active")).toEqual({
+      plan: "10k_plan",
       subscriptionStatus: "active",
       monthlyEmailLimit: 10_000,
       sendingEnabled: true,
     });
   });
 
+  it("the free tier is active but cannot send (set-up only)", () => {
+    expect(entitlementsFor("free_org", "active")).toEqual({
+      plan: "free_org",
+      subscriptionStatus: "active",
+      monthlyEmailLimit: 0,
+      sendingEnabled: false,
+    });
+  });
+
   it("past_due keeps the plan visible but blocks sending", () => {
-    expect(entitlementsFor("tiny", "past_due")).toEqual({
-      plan: "tiny",
+    expect(entitlementsFor("10k_plan", "past_due")).toEqual({
+      plan: "10k_plan",
       subscriptionStatus: "past_due",
       monthlyEmailLimit: 10_000,
       sendingEnabled: false,
     });
   });
 
-  it("ended revokes the plan and blocks sending", () => {
-    expect(entitlementsFor("none", "ended")).toEqual({
-      plan: "none",
-      subscriptionStatus: "inactive",
-      monthlyEmailLimit: 0,
-      sendingEnabled: false,
-    });
-  });
-
   it("never re-enables sending on a risk-paused account, even when active", () => {
-    expect(entitlementsFor("tiny", "active", { riskPaused: true }).sendingEnabled).toBe(false);
+    expect(entitlementsFor("10k_plan", "active", { riskPaused: true }).sendingEnabled).toBe(false);
   });
 });
 
@@ -443,5 +615,33 @@ describe("send eligibility", () => {
     expect(
       checkSendEligibility({ ...account, monthlyEmailSentCount: 100 } as Account).allowed,
     ).toBe(false);
+  });
+
+  it("tells a free-tier account to upgrade (vs a risk pause)", () => {
+    const free = checkSendEligibility({
+      ...account,
+      plan: "free_org",
+      sendingEnabled: false,
+      riskStatus: "normal",
+      monthlyEmailLimit: 0,
+    } as Account);
+    expect(free.allowed).toBe(false);
+    if (!free.allowed) expect(free.reason).toMatch(/free plan/i);
+
+    const paused = checkSendEligibility({
+      ...account,
+      plan: "10k_plan",
+      sendingEnabled: false,
+      riskStatus: "paused",
+      pausedReason: "High bounce rate",
+    } as Account);
+    expect(paused.allowed).toBe(false);
+    if (!paused.allowed) expect(paused.reason).toMatch(/paused/i);
+  });
+
+  it("over-limit reason points at upgrading", () => {
+    const result = checkSendEligibility({ ...account, monthlyEmailSentCount: 100 } as Account);
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) expect(result.reason).toMatch(/upgrade/i);
   });
 });
