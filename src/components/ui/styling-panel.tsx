@@ -113,10 +113,9 @@ export function StylingPanel({
   );
 }
 
-// The styling panel as a floating drawer appended to the right edge of the composer
-// content (not the screen). The host element must be `position: relative`; this fills
-// its height (`inset-y-0 right-0`) and stays vertically centered in view via a sticky
-// inner wrapper. A slim vertical grip is the handle: tap to toggle, or drag it left to
+// The styling panel as a floating drawer fixed to the right edge of the screen and
+// vertically centered in the viewport, so it stays put as the composer scrolls.
+// A slim vertical grip is the handle: tap to toggle, or drag it left to
 // open / right to collapse. The panel expands *inward* over the content — its width
 // animates from 0 to its full size — so it never pushes past the content's right edge
 // into a horizontal scrollbar.
@@ -156,12 +155,11 @@ export function FloatingStylingPanel({
   };
 
   return (
-    // Full-height layer pinned to the content's right edge; lets clicks through except
-    // on the handle/panel themselves. The negative right offset cancels the content
-    // card's horizontal padding (app-shell <main> uses px-8) so the drawer sits flush
-    // against the card's inner edge rather than inset by the padding.
-    <div className="pointer-events-none absolute inset-y-0 -right-8 z-40">
-      <div className="pointer-events-auto sticky top-1/2 flex -translate-y-1/2 items-stretch justify-end">
+    // Fixed to the viewport and vertically centered on screen, pinned to the right
+    // edge; lets clicks through except on the handle/panel themselves. Staying fixed
+    // means the panel keeps its centered position as the composer scrolls.
+    <div className="pointer-events-none fixed top-1/2 right-0 z-40 -translate-y-1/2">
+      <div className="pointer-events-auto flex items-stretch justify-end">
         {/* Grip — the draggable handle on the panel's inner side. When collapsed it's
             the only thing showing, a small tab flush to the content edge. */}
         <button
