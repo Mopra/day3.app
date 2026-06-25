@@ -33,7 +33,9 @@ import {
   ListNoResults,
   ListSkeleton,
   ListToolbar,
+  RowActions,
 } from "@/components/ui/data-list";
+import { MenuItem } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
 import { formatDateTime, statusLabel, statusVariant } from "@/lib/format";
 import { sanitizeHtml } from "@/services/render";
@@ -399,16 +401,16 @@ export default function CampaignDetailPage() {
         </Button>
       )}
       {deletable && (
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Delete campaign"
-          className="text-muted-foreground hover:text-destructive"
-          disabled={busy}
-          onClick={() => setDeleteOpen(true)}
-        >
-          <Trash2 className="size-4" />
-        </Button>
+        <RowActions>
+          <MenuItem
+            variant="destructive"
+            disabled={busy}
+            onClick={() => setDeleteOpen(true)}
+          >
+            <Trash2 />
+            Delete
+          </MenuItem>
+        </RowActions>
       )}
     </>
   );

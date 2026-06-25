@@ -1,5 +1,11 @@
 // Shapes returned by the API (subset the UI needs). Q3: the integer 0/1 flags
 // are now native booleans (sendingEnabled, adminOverrideVerified).
+import type { CampaignSection } from "./sections";
+import type { CampaignThemeInput } from "./theme";
+import type { FormField } from "./form-fields";
+
+export type { CampaignSection };
+export type { FormField };
 
 export type Account = {
   id: string;
@@ -107,6 +113,9 @@ export type Subscriber = {
   email: string;
   firstName: string | null;
   lastName: string | null;
+  // Custom field values keyed by FormField.key (phone, company, …). Null/absent
+  // when the subscriber carries no custom attributes.
+  attributes: Record<string, string> | null;
   status: string;
   source: string | null;
   createdAt: string;
@@ -120,6 +129,8 @@ export type SignupForm = {
   status: "active" | "disabled";
   doubleOptIn: boolean;
   collectName: boolean;
+  // Ordered custom fields collected in addition to email. See lib/form-fields.ts.
+  fields: FormField[];
   headline: string | null;
   description: string | null;
   buttonLabel: string;
@@ -178,6 +189,14 @@ export type Campaign = {
   fromEmail: string;
   replyTo: string | null;
   htmlBody: string;
+  // The section builder's structured body (see lib/sections.ts), parsed from the
+  // stored JSON by GET /api/campaigns/[id]. Null = legacy/AI-only draft with no
+  // sections; the composer then wraps htmlBody as a single section.
+  sections: CampaignSection[] | null;
+  // The campaign's global theme (see lib/theme.ts), parsed from the stored JSON by
+  // GET /api/campaigns/[id]. Null = no saved theme; the composer/render fall back to
+  // DEFAULT_THEME.
+  theme: CampaignThemeInput | null;
   textBody: string | null;
   footerText: string | null;
   status: string;

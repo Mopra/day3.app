@@ -62,6 +62,13 @@ serves the UI and the API routes; a separate long-running Node worker
   ID-only so the worker re-reads content from Postgres.
 - `drizzle.config.ts` points `migrate`/`push`/`studio` at `DATABASE_URL` — use the
   Supabase direct/session connection (port 5432) when running migrations.
+- **After a schema change, `npm run db:generate` only WRITES the migration file — it
+  does not touch any database.** You must also run `npm run db:migrate` to apply it to
+  the real (Supabase) DB the dev server/web tier use. Tests pass without this because
+  pglite applies `migrations/` automatically into its in-memory DB, so a forgotten
+  `db:migrate` shows up only at runtime: Drizzle selects every schema column, so a
+  column that exists in `schema.ts` but not in the live DB makes every query on that
+  table 500. If you add a column, generate + migrate in the same change.
 - Liveness: `GET /api/health` (200 healthy / 503 if DB down) reports DB, cron-sweep
   freshness, and the worker's Redis heartbeat (`day3:worker:heartbeat`, written every
   30s by `worker/index.ts`). Wire monitors/supervisor per `docs/health-monitoring.md`.

@@ -2,11 +2,13 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import type { FormField } from "../lib/form-fields";
 
 // IDs are app-generated prefixed strings (acc_, aud_, sub_, cmp_, ...) — see
 // lib/ids.ts. Timestamps are native `timestamptz` columns; Drizzle surfaces them
@@ -199,6 +201,11 @@ export const subscribers = pgTable(
     email: text("email").notNull(),
     firstName: text("first_name"),
     lastName: text("last_name"),
+    // Custom field values keyed by FormField.key (everything beyond email/first/
+    // last name). A free-form {key: value} bag so a subscriber can carry whatever
+    // a signup form or CSV import collected (phone, company, …); these keys are
+    // usable as {{merge_tags}} in campaigns. Null when nothing custom was captured.
+    attributes: jsonb("attributes").$type<Record<string, string>>(),
     status: text("status").$type<SubscriberStatus>().notNull().default("subscribed"),
     source: text("source"),
     // The signup form that captured this subscriber (null for import/manual adds).
@@ -257,6 +264,11 @@ export const forms = pgTable(
     // the hosted thank-you/check-inbox screen.
     redirectUrl: text("redirect_url"),
     collectName: boolean("collect_name").notNull().default(false),
+    // Ordered custom fields collected in addition to email. See lib/form-fields.ts.
+    // `collectName` is retained for backward compatibility and kept in sync (true
+    // iff `fields` contains a first_name field), but `fields` is the source of
+    // truth for what the form renders.
+    fields: jsonb("fields").$type<FormField[]>().notNull().default([]),
     accentColor: text("accent_color"),
 
     // Denormalized counters for the dashboard (best-effort, incremented inline).
@@ -331,6 +343,20 @@ export const campaigns = pgTable(
 
     htmlBody: text("html_body").notNull(),
     textBody: text("text_body"),
+
+    // The section builder's structured edit-time model (JSON array of sections, see
+    // lib/sections.ts), stored as text like riskCategoriesJson. htmlBody above stays
+    // the canonical, send-authoritative body and is *derived* from this server-side
+    // (so the two can never drift). Null = a legacy/AI-only draft with no sections;
+    // the composer wraps htmlBody as a single section when opening it.
+    sectionsJson: text("sections_json"),
+
+    // The campaign's global theme — the email-wide styling set from the composer's
+    // styling panel (page/content background, text/heading/link colors, border, and
+    // corner roundness), stored as JSON (see lib/theme.ts). Unlike htmlBody this is
+    // structured, validated data applied at *render time* in a server-built document
+    // wrapper, not baked into the body. Null falls back to DEFAULT_THEME.
+    themeJson: text("theme_json"),
 
     // Editable footer wording (the "you're receiving this because…" line). The
     // physical address + the per-recipient unsubscribe link are appended

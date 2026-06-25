@@ -39,6 +39,8 @@ export type FormSignupInput = {
   email: string;
   firstName?: string | null;
   lastName?: string | null;
+  // Custom field values keyed by FormField.key (everything beyond email/name).
+  attributes?: Record<string, string> | null;
   consentIp?: string | null;
 };
 
@@ -86,6 +88,7 @@ export async function submitFormSignup(
       email,
       firstName: input.firstName ?? null,
       lastName: input.lastName ?? null,
+      attributes: input.attributes ?? null,
       status: newStatus,
       source: "form",
       formId: form.id,

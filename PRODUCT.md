@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-06-24**.
+> Last verified against the codebase: **2026-06-25**.
 
 ---
 
@@ -143,12 +143,68 @@ Key pricing facts:
   first keystroke, so nothing is ever lost; everything a send needs is enforced at
   submit/schedule time instead. A brand-new draft is created on the first autosave and
   the URL switches to the campaign in place.
-- **Rich-text WYSIWYG editor** (TipTap) constrained to an email-safe HTML allowlist —
-  what you see is exactly what recipients get. Formatting floats in on selection and a
-  "+" insert menu appears on empty lines (no fixed toolbar). Insert options: headings,
-  lists, and quotes.
-- **Merge tags:** `{{first_name}}`, `{{last_name}}`, `{{email}}`. Tags can carry a
-  **fallback** for when the field is empty (`{{first_name|there}}` → "there"), so
+- **Section & column layout builder:** the body is a stack of **sections** that can be
+  **added, removed, and drag-reordered**. Text, image, and button sections lay out as
+  **1, 2, or 3 equal-width columns**, so you can mix a full-width intro with a two- or
+  three-up row below it. Changing a section's column count never loses work (shrinking
+  folds the extra columns into the last one). Sections serialize to email-safe layout
+  tables, so multi-column layouts render in the inbox while staying within the allowlist.
+  **Multi-column layouts are responsive:** on phones (and any client narrower than the
+  ~600px body) two- and three-up columns, button rows, and side-by-side cards **collapse
+  to a single stacked column**, with column images filling the new width — so the email
+  reads cleanly on mobile without a separate layout. Desktop clients keep the side-by-side
+  layout. A **brand-new campaign opens on a starter layout** (a text block plus a ready-made
+  call-to-action button) rather than a blank canvas.
+- **Section types** — chosen per section from a type menu, switchable at any time
+  without losing work:
+  - **Text** — rich content per column (see the WYSIWYG editor below), with a
+    **left / center / right alignment** for the section's prose.
+  - **Image** — one uploaded image per column that fills the column, with **alt text**,
+    an optional **click-through link**, and a **drag-to-set height** (the image covers
+    the box and is cropped to it for delivery so it isn't stretched). Uploads are
+    PNG/JPEG/GIF/WebP up to 5 MB to managed public storage; on upload, oversized
+    images are automatically downscaled (longest edge ≤ 1600px) and re-encoded
+    (photos to JPEG, transparent images stay PNG) so the delivered email stays light
+    for deliverability and load time.
+  - **Button** — one call-to-action button per column (a "button row" for 2/3 columns),
+    each with a label (edited directly on the button), link, **fill color** (from a
+    palette), light/dark label color, row alignment, and a **width** choice
+    (fit-to-label or full-width bar). Renders as a filled, bulletproof table button;
+    an unfinished button (no link) never ships.
+  - **Image + text (card)** — one image paired with rich text, laid out **image-left /
+    image-right / image-on-top**.
+  - **Quote / callout** — rich text in a **shaded, accent-bordered box** (background
+    tint from a palette) with an optional attribution line.
+  - **Divider** — a horizontal **rule**, or a blank **spacer** whose height you drag.
+  - **Social links** — a centered (or left/right) row of links to the org's social
+    profiles, with an optional lead-in ("Follow us:"). Rendered as text links.
+  - **Per-section background** — any section can be given a **background color** (from a
+    palette, or "no fill") that bleeds to the **full width** of the email, with the
+    section's content padded inside the band; distinct from a quote's inset callout tint.
+  - Buttons, callouts, and section backgrounds use a tightly-validated, **color-only**
+    extension of the sanitizer allowlist (`bgcolor` on cells + `<font color>` for label
+    text); no inline CSS, classes, or URLs can pass through, so the shared-reputation
+    guarantees hold.
+  - All section types are available on **every plan** — like all drafting, only
+    *sending* is gated.
+- **Global styling panel:** a dockable panel beside the message lets you style the
+  whole email at once — **page background**, **content/section background**, **body,
+  heading, and link colors**, a **border** (color + width), **image roundness**, and
+  **section roundness**. The editing canvas re-themes live as you tune it (true
+  WYSIWYG) and the inbox preview is byte-faithful to what ships. The theme is stored
+  as structured, validated data (plain colors only; bounded sizes) and applied at
+  **send time** in an email-safe document wrapper — it never touches the body
+  allowlist, so the shared-reputation guarantees and "what you build is what ships"
+  invariant both hold. A new campaign starts from a clean default look; **Reset**
+  returns to it.
+- **Rich-text WYSIWYG editor** (TipTap) — each text column is the same editor, constrained
+  to an email-safe HTML allowlist, so what you see is exactly what recipients get.
+  Formatting floats in on selection and a "+" insert menu appears on empty lines (no
+  fixed toolbar). Insert options: headings, lists, and quotes.
+- **Merge tags:** `{{first_name}}`, `{{last_name}}`, `{{email}}`, plus **any custom
+  field** the audience collects (`{{company}}`, `{{phone}}`, …) — the insert menu lists
+  the audience's own fields alongside the built-ins. Tags can carry a **fallback** for
+  when the field is empty (`{{first_name|there}}` → "there", `{{plan|free}}`), so
   personalized copy never degrades to "Hi ,". Inserting "First name" from the toolbar
   drops in a fallback automatically.
 - **Pre-send personalization check:** before sending, the campaign page warns when
@@ -168,9 +224,13 @@ Key pricing facts:
   (verified domain, non-empty audience) has lapsed by release time, it returns to `draft`
   with a reason instead of sending.
 - **Pause / resume** an in-flight send.
-- **Delete a campaign** from the list or its detail page — removes the campaign and its
-  recipient records (sent campaigns included). Blocked only while a send is actively
-  in flight (`generating_recipients` / `sending`); pause it first.
+- **Duplicate a campaign** from the list's row actions menu — copies the content and
+  settings (subject, body, audience, sender, from/reply-to, footer) into a fresh `draft`
+  with a "Copy of …" name and a clean slate (no recipients, no risk review, never sent).
+  Any campaign can be duplicated; the common case is re-running a campaign that sent well.
+- **Delete a campaign** from the list's row actions menu or its detail page — removes the
+  campaign and its recipient records (sent campaigns included). Blocked only while a send
+  is actively in flight (`generating_recipients` / `sending`); pause it first.
 - **Live delivery stats:** total recipients, sent, delivered, bounced, complained,
   unsubscribed, failed, skipped — plus a recipient-level table and an undeliverable list.
   (Account-wide and per-campaign rates, including opens, live on the Metrics page — §6.10.)
@@ -182,7 +242,11 @@ hidden and the app works normally. Powered by **OpenRouter**, defaulting to
 **Claude Sonnet 4.6** (`anthropic/claude-sonnet-4.6`, configurable).
 
 - **Draft a full campaign** from a short brief → generates subject, preview text,
-  and body.
+  and a complete **multi-section body** assembled from the builder's blocks — a
+  heading, intro, dividers, the occasional callout/quote, a feature row of columns,
+  and a single clear call-to-action button — not one flat text block. It drops
+  straight into the section builder, ready to reorder, edit, or extend. (Image,
+  card, and social blocks still need assets you add, so the draft leaves those to you.)
 - **Subject line ideas** — generates 5 alternatives.
 - **Preview text** — auto-writes an inbox preview from the subject + body.
 - **Edit with AI** — highlight text in the editor and describe the change you want in
@@ -208,10 +272,18 @@ themselves, and manual writing continues unaffected.
 ### 6.3 Audiences & subscribers
 - Create, **rename**, and **delete** named audiences. Deleting an audience removes it and
   all its subscribers (sent campaigns are unaffected).
-- **CSV import** (email, first_name, last_name; up to ~5,000 rows per file) with
-  dedup, suppression filtering, progress tracking, and re-upload/retry for failed imports.
-- **Add subscribers manually**; **edit** a subscriber's email and name, or **delete** one
-  outright (distinct from unsubscribe, which keeps the record but stops mailing).
+- **CSV import** (email, first_name, last_name, **plus any extra columns**, which become
+  custom fields keyed by a slug of the header; up to ~5,000 rows per file) with dedup,
+  suppression filtering, progress tracking, and re-upload/retry for failed imports.
+  Column order is flexible and headers are alias-matched — only an `email` column is
+  required — and a downloadable sample template shows the expected shape.
+- **CSV export** of an audience's subscribers (all statuses) in the same column shape the
+  importer reads, so an export can be edited and re-imported cleanly.
+- **Custom fields:** beyond email/first/last name, a subscriber can carry any number of
+  custom attributes (phone, company, …) collected by signup forms or CSV import. They
+  show as columns in the subscriber list and are usable as `{{merge_tags}}` in campaigns.
+- **Add subscribers manually**; **edit** a subscriber's email, name, and custom fields, or
+  **delete** one outright (distinct from unsubscribe, which keeps the record but stops mailing).
 - Search and filter subscribers by status; unsubscribe individuals.
 - Subscriber-status breakdown per audience.
 
@@ -227,8 +299,13 @@ One form primitive, multiple install surfaces, all hosted on **`go.day3.app`**:
 - **Raw HTML** — a plain `<form>` that POSTs directly to Day3 (no JavaScript).
 
 Form configuration: headline, description, button label, accent color, success
-message, optional post-signup redirect, optional first-name collection, active/off
-toggle, and a **double opt-in** toggle.
+message, optional post-signup redirect, active/off toggle, and a **double opt-in**
+toggle. **Fields** are fully customizable — email is always collected, and you can add
+any number of extra fields (first/last name, phone, company, anything) with a label,
+type, and required flag; each becomes a personalization tag (e.g. `{{phone}}`) usable
+in campaigns. A **live preview** updates as you edit, and the
+form **autosaves** (no Save button): edits persist a beat (~1s) after each change, with
+the same "Saving… / Saved" indicator as the campaign composer.
 
 - **Double opt-in is ON by default** for deliverability. A pending signup is **never
   emailed a campaign** until it confirms via a signed confirmation link (token valid
@@ -313,7 +390,7 @@ click breakdowns are not surfaced yet (the click event stores the URL for future
 ### 6.11 In-app help
 A **Help** button sits at the bottom of the sidebar on every page. It opens a small
 popover with a single message box; sending relays the message to the support inbox
-(`contact@day3.app`) with the signed-in user set as Reply-To, so the team can reply
+(`connect@day3.app`) with the signed-in user set as Reply-To, so the team can reply
 straight back by email. The popover also links the same address directly for users who
 prefer their own mail client. Available on every plan; there is no separate docs site yet.
 

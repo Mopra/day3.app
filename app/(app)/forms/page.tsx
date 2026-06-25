@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FileInput } from "lucide-react";
+import { FileInput, Power, PowerOff, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -42,11 +43,13 @@ import {
   ListSearch,
   ListSkeleton,
   ListToolbar,
+  RowActions,
   RowOpen,
   SortableHead,
   rowLinkProps,
   useListController,
 } from "@/components/ui/data-list";
+import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { Audience, SignupForm } from "@/lib/types";
@@ -65,6 +68,8 @@ export default function FormsPage() {
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState("all");
+  const [confirmDelete, setConfirmDelete] = useState<SignupForm | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [name, setName] = useState("");
   const [audienceId, setAudienceId] = useState("");
@@ -127,6 +132,32 @@ export default function FormsPage() {
       toast.error(err instanceof Error ? err.message : "Failed to create form");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function toggleStatus(f: SignupForm) {
+    const next = f.status === "active" ? "disabled" : "active";
+    try {
+      await api.patch(`/api/forms/${f.id}`, { status: next });
+      toast.success(next === "active" ? "Form turned on" : "Form turned off");
+      setForms((l) => l?.map((x) => (x.id === f.id ? { ...x, status: next } : x)) ?? null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't update form");
+    }
+  }
+
+  async function remove() {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    try {
+      await api.del(`/api/forms/${confirmDelete.id}`);
+      toast.success("Form deleted");
+      setForms((l) => l?.filter((f) => f.id !== confirmDelete.id) ?? null);
+      setConfirmDelete(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete form");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -286,7 +317,20 @@ export default function FormsPage() {
                     <TableCell className="text-right tabular-nums">{f.confirmedCount.toLocaleString()}</TableCell>
                     <TableCell className="text-muted-foreground">{formatDate(f.createdAt)}</TableCell>
                     <TableCell className="text-right">
-                      <RowOpen href={`/forms/${f.id}`} />
+                      <div className="flex items-center justify-end gap-1">
+                        <RowOpen href={`/forms/${f.id}`} />
+                        <RowActions>
+                          <MenuItem onClick={() => toggleStatus(f)}>
+                            {f.status === "active" ? <PowerOff /> : <Power />}
+                            {f.status === "active" ? "Turn off" : "Turn on"}
+                          </MenuItem>
+                          <MenuSeparator />
+                          <MenuItem variant="destructive" onClick={() => setConfirmDelete(f)}>
+                            <Trash2 />
+                            Delete
+                          </MenuItem>
+                        </RowActions>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -295,6 +339,16 @@ export default function FormsPage() {
           )}
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onOpenChange={(o) => !o && setConfirmDelete(null)}
+        title={`Delete "${confirmDelete?.name}"?`}
+        description="This permanently deletes the form and its hosted page and embed. Subscribers already collected stay in their audience. This can't be undone."
+        confirmLabel="Delete form"
+        busy={deleting}
+        onConfirm={remove}
+      />
     </div>
   );
 }

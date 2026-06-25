@@ -7,6 +7,16 @@ import { forms, sendingDomains } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 import { ensureAccountSlug, uniqueFormSlug } from "@/lib/slug";
 import { buildFormInstall } from "@/services/form-install";
+import { FORM_FIELD_TYPES, normalizeFields } from "@/lib/form-fields";
+
+// Custom field definitions sent by the editor. Lightly validated here, then run
+// through normalizeFields (dedupe keys, drop reserved/malformed) before storing.
+export const FormFieldSchema = z.object({
+  key: z.string().trim().min(1).max(40),
+  label: z.string().trim().min(1).max(60),
+  type: z.enum(FORM_FIELD_TYPES),
+  required: z.boolean(),
+});
 
 async function accountHasVerifiedDomain(
   db: Awaited<ReturnType<typeof requireAccount>>["db"],
@@ -34,7 +44,7 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
   const install = buildFormInstall(form, accountSlug);
   const hasVerifiedDomain = await accountHasVerifiedDomain(db, account.id);
 
-  return json({ form, install, hasVerifiedDomain });
+  return json({ form, install, hasVerifiedDomain, companyName: account.name ?? "this sender" });
 });
 
 const UpdateFormSchema = z.object({
@@ -44,6 +54,7 @@ const UpdateFormSchema = z.object({
   status: z.enum(["active", "disabled"]).optional(),
   doubleOptIn: z.boolean().optional(),
   collectName: z.boolean().optional(),
+  fields: z.array(FormFieldSchema).optional(),
   headline: z.string().trim().max(140).optional().or(z.literal("")),
   description: z.string().trim().max(500).optional().or(z.literal("")),
   buttonLabel: z.string().trim().min(1).max(40).optional(),
@@ -77,7 +88,14 @@ export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { pa
   if (input.name !== undefined) set.name = input.name;
   if (input.status !== undefined) set.status = input.status;
   if (input.doubleOptIn !== undefined) set.doubleOptIn = input.doubleOptIn;
-  if (input.collectName !== undefined) set.collectName = input.collectName;
+  if (input.fields !== undefined) {
+    const fields = normalizeFields(input.fields);
+    set.fields = fields;
+    // Keep the legacy collectName flag in sync with the canonical field list.
+    set.collectName = fields.some((f) => f.key === "first_name");
+  } else if (input.collectName !== undefined) {
+    set.collectName = input.collectName;
+  }
   if (input.headline !== undefined) set.headline = input.headline || null;
   if (input.description !== undefined) set.description = input.description || null;
   if (input.buttonLabel !== undefined) set.buttonLabel = input.buttonLabel;

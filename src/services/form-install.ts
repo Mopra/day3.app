@@ -31,19 +31,20 @@ export function buildFormInstall(form: Form, accountSlug: string | null): FormIn
 
   // A native HTML form. Cross-origin POST (no CORS preflight), works with JS
   // disabled; on submit the browser is redirected to the hosted result page.
-  const htmlSnippet = `<form action="${submitUrl}" method="post">
+  const customFieldsHtml = (form.fields ?? [])
+    .map(
+      (f) => `
+  <label>
+    ${escapeText(f.label)}
+    <input type="${htmlInputType(f.type)}" name="${escapeAttr(f.key)}"${f.required ? " required" : ""} />
+  </label>`,
+    )
+    .join("");
+  const htmlSnippet = `<form action="${submitUrl}" method="post">${customFieldsHtml}
   <label>
     Email
     <input type="email" name="email" placeholder="you@example.com" required />
-  </label>${
-    form.collectName
-      ? `
-  <label>
-    First name
-    <input type="text" name="firstName" />
-  </label>`
-      : ""
-  }
+  </label>
   <!-- anti-spam honeypot: keep this hidden -->
   <input type="text" name="_hp" tabindex="-1" autocomplete="off" style="position:absolute;left:-9999px" aria-hidden="true" />
   <button type="submit">${escapeText(form.buttonLabel)}</button>
@@ -71,4 +72,8 @@ function escapeAttr(value: string): string {
 
 function escapeText(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function htmlInputType(type: string): string {
+  return ["email", "tel", "url", "number"].includes(type) ? type : "text";
 }

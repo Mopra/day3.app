@@ -21,7 +21,7 @@ function escapeHtml(value: string): string {
 // Where the in-app Help widget delivers messages. Sender defaults to the same
 // address (the day3.app domain must be a verified SES identity); Reply-To is set
 // to the requesting user so the team can reply straight back.
-const SUPPORT_TO = process.env.SUPPORT_EMAIL ?? "contact@day3.app";
+const SUPPORT_TO = process.env.SUPPORT_EMAIL ?? "connect@day3.app";
 const SUPPORT_FROM = process.env.SUPPORT_FROM_EMAIL ?? SUPPORT_TO;
 
 // In-app "Help" widget: relays a short message to the support inbox, with the

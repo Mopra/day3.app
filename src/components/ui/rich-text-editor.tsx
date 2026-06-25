@@ -12,7 +12,7 @@
 //   - Land on an empty line → a floating "+" insert menu appears (headings,
 //     lists, quote, image, divider, and personalization merge tags). This is how
 //     you add new blocks, the way people now expect from Notion/Linear/etc.
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useId, useState } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import { BubbleMenu, FloatingMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
@@ -51,16 +51,68 @@ import {
 // (after `|`) so an empty field never renders as "Hi ," — first name falls back
 // to a friendly greeting word; last name drops cleanly to nothing. Email is
 // always present, so it needs no fallback.
-const MERGE_TAGS: { label: string; insert: string }[] = [
+export type MergeTag = { label: string; insert: string };
+
+const MERGE_TAGS: MergeTag[] = [
   { label: "First name", insert: "{{first_name|there}}" },
   { label: "Last name", insert: "{{last_name}}" },
   { label: "Email", insert: "{{email}}" },
 ];
 
+// The personalization tags offered by the insert menu. Defaults to the built-in
+// set; a campaign can extend it with the audience's custom fields via
+// <MergeTagsProvider> so {{custom_field}} tags are one click away.
+const MergeTagsContext = createContext<MergeTag[]>(MERGE_TAGS);
+
+export function MergeTagsProvider({
+  extra,
+  children,
+}: {
+  extra: MergeTag[];
+  children: React.ReactNode;
+}) {
+  // De-dupe by insert token so a custom field that happens to match a built-in
+  // (e.g. first_name) doesn't show twice.
+  const seen = new Set(MERGE_TAGS.map((t) => t.insert));
+  const tags = [...MERGE_TAGS];
+  for (const t of extra) {
+    if (!seen.has(t.insert)) {
+      seen.add(t.insert);
+      tags.push(t);
+    }
+  }
+  return <MergeTagsContext.Provider value={tags}>{children}</MergeTagsContext.Provider>;
+}
+
 // Shared look for both floating surfaces: a frosted, elevated pill that reads as
 // "floating above" the canvas rather than docked chrome.
 const floatingBarClass =
   "z-50 flex items-center gap-1 rounded-xl border border-border bg-background p-1.5 shadow-lg";
+
+// Cross-editor focus coordination. When several RichTextEditors live side by side
+// (every section column is its own editor), only the one the user is actually in
+// should show a floating bar. Each editor reports its focus to a shared store; the
+// menus are *rendered* only for the active editor, so the others' bars are removed
+// from the DOM the instant focus moves — Tiptap's own shouldShow only re-runs on
+// the editor's own transactions, so per-editor gating alone can leave a stale bar.
+type EditorFocusContextValue = {
+  activeId: string | null;
+  setActive: (id: string) => void;
+};
+
+const EditorFocusContext = createContext<EditorFocusContextValue | null>(null);
+
+// Wrap a group of RichTextEditors to enforce "only one floating bar at a time".
+// Without this provider a lone editor still works — it just treats itself as always
+// active (the single-editor case needs no coordination).
+export function RichTextEditorGroup({ children }: { children: React.ReactNode }) {
+  const [activeId, setActiveId] = useState<string | null>(null);
+  return (
+    <EditorFocusContext.Provider value={{ activeId, setActive: setActiveId }}>
+      {children}
+    </EditorFocusContext.Provider>
+  );
+}
 
 export type RichTextEditorProps = {
   value: string;
@@ -68,6 +120,9 @@ export type RichTextEditorProps = {
   placeholder?: string;
   /** When provided, a select-to-rewrite bubble menu is shown. Returns new text. */
   onRewrite?: (text: string, action: string) => Promise<string>;
+  /** Horizontal alignment of the prose (mirrors the section's cell `align` at send).
+   *  Applied on the wrapper so text-align cascades into the .d3-prose content. */
+  align?: "left" | "center" | "right";
   className?: string;
 };
 
@@ -179,8 +234,16 @@ export function RichTextEditor({
   onChange,
   placeholder,
   onRewrite,
+  align,
   className,
 }: RichTextEditorProps) {
+  const focusGroup = useContext(EditorFocusContext);
+  const mergeTags = useContext(MergeTagsContext);
+  const editorId = useId();
+  // No provider → a lone editor → always active. With a provider, this editor is
+  // active only while it (last) held focus, so its floating bars render alone.
+  const isActive = !focusGroup || focusGroup.activeId === editorId;
+
   const [rewriting, setRewriting] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
   // AI rewrite-by-prompt: the user selects text, opens this, and describes the
@@ -202,6 +265,10 @@ export function RichTextEditor({
         strike: false,
         code: false,
         codeBlock: false,
+        // Off because it force-appends an empty paragraph after any non-paragraph
+        // block (e.g. a heading) and re-adds it the instant you delete it — so
+        // turning text into a title left an undeletable blank line below it.
+        trailingNode: false,
         link: {
           openOnClick: false,
           autolink: true,
@@ -236,6 +303,16 @@ export function RichTextEditor({
       editor.commands.setContent(incoming, { emitUpdate: false });
     }
   }, [value, editor]);
+
+  // Claim "active editor" on focus so any other editor's floating bar unmounts.
+  useEffect(() => {
+    if (!editor || !focusGroup) return;
+    const claim = () => focusGroup.setActive(editorId);
+    editor.on("focus", claim);
+    return () => {
+      editor.off("focus", claim);
+    };
+  }, [editor, focusGroup, editorId]);
 
   // Snapshot the current selection and open the "edit with AI" prompt.
   function openAiRewrite() {
@@ -287,16 +364,33 @@ export function RichTextEditor({
   }
 
   const linkActive = editor.isActive("link");
+  const alignClass =
+    align === "center" ? "text-center" : align === "right" ? "text-right" : undefined;
 
   return (
     <TooltipProvider delay={300}>
-      <div className={cn("overflow-hidden rounded-xl border border-border bg-card", className)}>
+      <div
+        className={cn(
+          "overflow-hidden rounded-xl border border-border bg-card",
+          alignClass,
+          className,
+        )}
+      >
+        {/* Render the floating bars only for the active editor, so two columns can
+            never show a bar at once. */}
+        {isActive && (
+          <>
         {/* Floating selection bar — appears whenever text is selected. Holds inline
             formatting, block "turn into" actions, links, and AI rewrite. Appended
             to <body> so the editor's overflow-hidden wrapper never clips it. */}
         <BubbleMenu
           editor={editor}
-          shouldShow={({ editor: e }) => !e.state.selection.empty}
+          // Gate on focus, not just a non-empty selection. Each section column is
+          // its own editor, and ProseMirror keeps its selection after blur — so
+          // without the focus check, clicking from one column into another would
+          // leave the first column's bar still showing alongside the second's. Only
+          // one editor can hold DOM focus, so requiring focus keeps a single bar.
+          shouldShow={({ editor: e }) => e.isFocused && !e.state.selection.empty}
           appendTo={() => document.body}
           options={{ strategy: "fixed", placement: "top", offset: 8 }}
           className={floatingBarClass}
@@ -421,7 +515,7 @@ export function RichTextEditor({
           </ToolbarButton>
           <Divider />
           <span className="pl-1 text-sm font-medium text-muted-foreground">Personalize</span>
-          {MERGE_TAGS.map((t) => (
+          {mergeTags.map((t) => (
             <Button
               key={t.label}
               type="button"
@@ -435,6 +529,8 @@ export function RichTextEditor({
             </Button>
           ))}
         </FloatingMenu>
+          </>
+        )}
 
         <EditorContent editor={editor} />
       </div>

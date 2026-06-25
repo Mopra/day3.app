@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
-import { Pencil, Trash2, Users } from "lucide-react";
+import { Pencil, Plus, Trash2, UserMinus, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,8 +37,11 @@ import {
   ListSearch,
   ListSkeleton,
   ListToolbar,
+  RowActions,
 } from "@/components/ui/data-list";
+import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
+import { SUBSCRIBER_CSV_TEMPLATE } from "@/lib/csv";
 import { formatDateTime, statusVariant } from "@/lib/format";
 import type { Audience, ImportRow, Subscriber } from "@/lib/types";
 
@@ -58,6 +61,77 @@ const PAGE = 50;
 type AddForm = { email: string; firstName?: string; lastName?: string };
 
 type EditForm = { email: string; firstName?: string; lastName?: string };
+
+// Custom attributes are edited as an ordered list of key/value pairs, then folded
+// back into a {key: value} map for the API.
+type Pair = { key: string; value: string };
+
+function pairsFromAttrs(a: Record<string, string> | null | undefined): Pair[] {
+  return a ? Object.entries(a).map(([key, value]) => ({ key, value })) : [];
+}
+
+function attrsFromPairs(pairs: Pair[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const { key, value } of pairs) {
+    const k = key.trim();
+    if (k && value.trim()) out[k] = value.trim();
+  }
+  return out;
+}
+
+// Turn a merge-tag key into a readable column header: "phone_number" → "Phone number".
+function humanizeKey(key: string): string {
+  const s = key.replace(/_/g, " ").trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Reusable key/value editor for a subscriber's custom fields, used in both the
+// add and edit dialogs.
+function AttributeRows({ pairs, onChange }: { pairs: Pair[]; onChange: (p: Pair[]) => void }) {
+  return (
+    <div className="space-y-2">
+      <Label>Custom fields</Label>
+      {pairs.map((p, i) => (
+        <div key={i} className="flex gap-2">
+          <Input
+            placeholder="field (e.g. phone)"
+            value={p.key}
+            onChange={(e) =>
+              onChange(pairs.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)))
+            }
+            className="w-1/3"
+          />
+          <Input
+            placeholder="value"
+            value={p.value}
+            onChange={(e) =>
+              onChange(pairs.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))
+            }
+            className="flex-1"
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground hover:text-destructive"
+            onClick={() => onChange(pairs.filter((_, j) => j !== i))}
+            aria-label="Remove field"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </div>
+      ))}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => onChange([...pairs, { key: "", value: "" }])}
+      >
+        <Plus className="size-3.5" /> Add field
+      </Button>
+    </div>
+  );
+}
 
 export default function AudienceDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -88,6 +162,9 @@ export default function AudienceDetailPage() {
   const [confirmSub, setConfirmSub] = useState<Subscriber | null>(null);
   const [deletingSub, setDeletingSub] = useState(false);
   const editForm = useForm<EditForm>();
+  // Custom field key/value pairs for the edit + add dialogs.
+  const [editAttrs, setEditAttrs] = useState<Pair[]>([]);
+  const [addAttrs, setAddAttrs] = useState<Pair[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   // Holds the import id awaiting a re-uploaded CSV when the user clicks "Retry"
   // on a failed import; the same hidden picker is reused for the corrected file.
@@ -176,10 +253,14 @@ export default function AudienceDetailPage() {
 
   const onAdd = handleSubmit(async (values) => {
     try {
-      await api.post(`/api/audiences/${id}/subscribers`, values);
+      await api.post(`/api/audiences/${id}/subscribers`, {
+        ...values,
+        attributes: attrsFromPairs(addAttrs),
+      });
       toast.success("Subscriber added");
       setAddOpen(false);
       reset();
+      setAddAttrs([]);
       loadSubscribers();
       loadAudience();
     } catch (err) {
@@ -197,6 +278,19 @@ export default function AudienceDetailPage() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Upload failed");
     }
+  }
+
+  // Hand the user a correctly-shaped sample CSV so they can see the expected
+  // columns (email required; first_name/last_name optional; extra columns become
+  // custom {{merge_tag}} attributes).
+  function downloadTemplate() {
+    const blob = new Blob([SUBSCRIBER_CSV_TEMPLATE], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "subscribers-template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   // Re-upload a corrected CSV for a previously failed import. Re-running the same
@@ -248,12 +342,16 @@ export default function AudienceDetailPage() {
       firstName: s.firstName ?? "",
       lastName: s.lastName ?? "",
     });
+    setEditAttrs(pairsFromAttrs(s.attributes));
   }
 
   const onEditSub = editForm.handleSubmit(async (values) => {
     if (!editSub) return;
     try {
-      await api.patch(`/api/subscribers/${editSub.id}`, values);
+      await api.patch(`/api/subscribers/${editSub.id}`, {
+        ...values,
+        attributes: attrsFromPairs(editAttrs),
+      });
       toast.success("Subscriber updated");
       setEditSub(null);
       loadSubscribers();
@@ -267,12 +365,12 @@ export default function AudienceDetailPage() {
     setDeletingSub(true);
     try {
       await api.del(`/api/subscribers/${confirmSub.id}`);
-      toast.success("Subscriber removed");
+      toast.success("Subscriber deleted");
       setConfirmSub(null);
       loadSubscribers();
       loadAudience();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't remove subscriber");
+      toast.error(err instanceof Error ? err.message : "Couldn't delete subscriber");
     } finally {
       setDeletingSub(false);
     }
@@ -281,6 +379,20 @@ export default function AudienceDetailPage() {
   const filtersActive = !!search || status !== "all";
   const shown = subscribers?.length ?? 0;
   const hasMore = shown < total;
+  // Whether the audience has anyone to export (any status). `counts` is the
+  // per-status breakdown from the audience endpoint.
+  const hasSubscribers = Object.values(counts).some((n) => n > 0);
+
+  // Custom-field columns: the union of attribute keys across the loaded rows,
+  // capped so the table stays readable. Every value is still editable in the
+  // per-row edit dialog, so nothing is hidden — this is just the at-a-glance view.
+  const attrColumns = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of subscribers ?? []) {
+      for (const k of Object.keys(s.attributes ?? {})) set.add(k);
+    }
+    return [...set].slice(0, 4);
+  }, [subscribers]);
 
   return (
     <div className="space-y-6">
@@ -289,77 +401,89 @@ export default function AudienceDetailPage() {
           <div className="flex items-center gap-1.5">
             <h1 className="text-2xl font-semibold tracking-tight">{audience?.name ?? "…"}</h1>
             {audience && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Rename audience"
-                  className="text-muted-foreground"
+              <RowActions label="Audience actions">
+                <MenuItem
                   onClick={() => {
                     setRenameValue(audience.name);
                     setRenameOpen(true);
                   }}
                 >
-                  <Pencil className="size-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Delete audience"
-                  className="text-muted-foreground hover:text-destructive"
-                  onClick={() => setDeleteAudienceOpen(true)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </>
+                  <Pencil />
+                  Rename
+                </MenuItem>
+                <MenuSeparator />
+                <MenuItem variant="destructive" onClick={() => setDeleteAudienceOpen(true)}>
+                  <Trash2 />
+                  Delete
+                </MenuItem>
+              </RowActions>
             )}
           </div>
           <p className="text-sm text-muted-foreground tabular-nums">
             {(counts.subscribed ?? 0).toLocaleString()} subscribed
           </p>
         </div>
-        <div className="flex gap-2">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,text/csv"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) onUpload(file);
-              e.target.value = "";
-            }}
-          />
-          <Button variant="outline" onClick={() => fileRef.current?.click()}>
-            Import CSV
-          </Button>
-          <Dialog open={addOpen} onOpenChange={setAddOpen}>
-            <DialogTrigger render={<Button>Add subscriber</Button>} />
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add subscriber</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={onAdd} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input id="email" type="email" {...register("email", { required: true })} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col items-end gap-1.5">
+          <div className="flex gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) onUpload(file);
+                e.target.value = "";
+              }}
+            />
+            {hasSubscribers && (
+              <Button
+                variant="outline"
+                render={<a href={`/api/audiences/${id}/subscribers/export`} download />}
+              >
+                Export CSV
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => fileRef.current?.click()}>
+              Import CSV
+            </Button>
+            <Dialog open={addOpen} onOpenChange={setAddOpen}>
+              <DialogTrigger render={<Button>Add subscriber</Button>} />
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Add subscriber</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={onAdd} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="firstName">First name</Label>
-                    <Input id="firstName" {...register("firstName")} />
+                    <Label htmlFor="email">Email</Label>
+                    <Input id="email" type="email" {...register("email", { required: true })} />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="lastName">Last name</Label>
-                    <Input id="lastName" {...register("lastName")} />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="firstName">First name</Label>
+                      <Input id="firstName" {...register("firstName")} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="lastName">Last name</Label>
+                      <Input id="lastName" {...register("lastName")} />
+                    </div>
                   </div>
-                </div>
-                <Button type="submit" disabled={formState.isSubmitting} className="w-full">
-                  Add
-                </Button>
-              </form>
-            </DialogContent>
-          </Dialog>
+                  <AttributeRows pairs={addAttrs} onChange={setAddAttrs} />
+                  <Button type="submit" disabled={formState.isSubmitting} className="w-full">
+                    Add
+                  </Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
+          <button
+            type="button"
+            onClick={downloadTemplate}
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            CSV needs an <code className="font-mono">email</code> column —{" "}
+            <span className="underline underline-offset-2">download a template</span>
+          </button>
         </div>
       </div>
 
@@ -457,8 +581,8 @@ export default function AudienceDetailPage() {
                 description={
                   <>
                     Import a CSV with an <code>email</code> column (optional{" "}
-                    <code>first_name</code>, <code>last_name</code>) — up to 5,000 rows — or add
-                    someone by hand.
+                    <code>first_name</code>, <code>last_name</code>, and any extra columns become
+                    custom fields) — up to 5,000 rows — or add someone by hand.
                   </>
                 }
                 action={
@@ -475,6 +599,9 @@ export default function AudienceDetailPage() {
                   <TableRow>
                     <TableHead>Email</TableHead>
                     <TableHead>Name</TableHead>
+                    {attrColumns.map((k) => (
+                      <TableHead key={k}>{humanizeKey(k)}</TableHead>
+                    ))}
                     <TableHead>Status</TableHead>
                     <TableHead>Added</TableHead>
                     <TableHead />
@@ -487,6 +614,11 @@ export default function AudienceDetailPage() {
                       <TableCell className="text-muted-foreground">
                         {[s.firstName, s.lastName].filter(Boolean).join(" ") || "—"}
                       </TableCell>
+                      {attrColumns.map((k) => (
+                        <TableCell key={k} className="text-muted-foreground">
+                          {s.attributes?.[k] || "—"}
+                        </TableCell>
+                      ))}
                       <TableCell>
                         <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
                       </TableCell>
@@ -495,43 +627,33 @@ export default function AudienceDetailPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
-                          {s.status === "subscribed" && (
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              onClick={async () => {
-                                try {
-                                  await api.post(`/api/subscribers/${s.id}/unsubscribe`);
-                                  loadSubscribers();
-                                  loadAudience();
-                                } catch (err) {
-                                  toast.error(err instanceof Error ? err.message : "Failed");
-                                }
-                              }}
-                            >
-                              Unsubscribe
-                            </Button>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label="Edit subscriber"
-                            title="Edit"
-                            className="text-muted-foreground"
-                            onClick={() => openEditSub(s)}
-                          >
-                            <Pencil className="size-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label="Delete subscriber"
-                            title="Remove"
-                            className="text-muted-foreground hover:text-destructive"
-                            onClick={() => setConfirmSub(s)}
-                          >
-                            <Trash2 className="size-4" />
-                          </Button>
+                          <RowActions label="Subscriber actions">
+                            <MenuItem onClick={() => openEditSub(s)}>
+                              <Pencil />
+                              Edit
+                            </MenuItem>
+                            {s.status === "subscribed" && (
+                              <MenuItem
+                                onClick={async () => {
+                                  try {
+                                    await api.post(`/api/subscribers/${s.id}/unsubscribe`);
+                                    loadSubscribers();
+                                    loadAudience();
+                                  } catch (err) {
+                                    toast.error(err instanceof Error ? err.message : "Failed");
+                                  }
+                                }}
+                              >
+                                <UserMinus />
+                                Unsubscribe
+                              </MenuItem>
+                            )}
+                            <MenuSeparator />
+                            <MenuItem variant="destructive" onClick={() => setConfirmSub(s)}>
+                              <Trash2 />
+                              Delete
+                            </MenuItem>
+                          </RowActions>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -609,6 +731,7 @@ export default function AudienceDetailPage() {
                 <Input id="editLastName" {...editForm.register("lastName")} />
               </div>
             </div>
+            <AttributeRows pairs={editAttrs} onChange={setEditAttrs} />
             <div className="flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setEditSub(null)}>
                 Cancel
@@ -635,14 +758,14 @@ export default function AudienceDetailPage() {
       <ConfirmDialog
         open={!!confirmSub}
         onOpenChange={(o) => !o && setConfirmSub(null)}
-        title="Remove this subscriber?"
+        title="Delete this subscriber?"
         description={
           <>
-            {confirmSub?.email} will be permanently removed from this audience. To stop
+            {confirmSub?.email} will be permanently deleted from this audience. To stop
             mailing them without deleting, use Unsubscribe instead.
           </>
         }
-        confirmLabel="Remove subscriber"
+        confirmLabel="Delete subscriber"
         busy={deletingSub}
         onConfirm={removeSub}
       />

@@ -11,7 +11,7 @@
 //     of saved senders (the account's default / sole sender auto-selects) instead
 //     of free-text — so most fields fill themselves. The campaign name is an
 //     editable title at the top; if left blank it falls back to the subject on save.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -25,6 +25,7 @@ import {
   CloudOff,
   Lock,
   AlertTriangle,
+  Palette,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OrbitLoader } from "@/components/ui/orbit-loader";
@@ -46,11 +47,25 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { RichTextEditor } from "@/components/ui/rich-text-editor";
+import { SectionEditor } from "@/components/ui/section-editor";
+import { FloatingStylingPanel } from "@/components/ui/styling-panel";
+import { MergeTagsProvider, type MergeTag } from "@/components/ui/rich-text-editor";
 import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { domainState } from "@/lib/domain";
-import { sanitizeHtml, DEFAULT_FOOTER_TEXT } from "@/services/render";
+import { sanitizeHtml, wrapEmailDocument, DEFAULT_FOOTER_TEXT } from "@/services/render";
+import {
+  DEFAULT_THEME,
+  resolveTheme,
+  themeCanvasVars,
+  type CampaignTheme,
+} from "@/lib/theme";
+import {
+  htmlBodyToSections,
+  serializeSections,
+  starterSections,
+  type CampaignSection,
+} from "@/lib/sections";
 import { useAiBudget } from "@/components/ai-budget-context";
 import type { Account, Audience, Campaign, Sender, SendingDomain } from "@/lib/types";
 
@@ -73,11 +88,21 @@ function escapeForPreview(s: string): string {
 // `(?:\|[^}]*)?` swallows a fallback (e.g. {{first_name|there}}) so the preview
 // shows the "field is filled" case.
 function fillMergeTags(s: string, company: string): string {
-  return s
-    .replace(/\{\{\s*first_name\s*(?:\|[^}]*)?\}\}/gi, () => "Alex")
-    .replace(/\{\{\s*last_name\s*(?:\|[^}]*)?\}\}/gi, () => "Rivera")
-    .replace(/\{\{\s*email\s*(?:\|[^}]*)?\}\}/gi, () => "alex@example.com")
-    .replace(/\{\{\s*company_name\s*(?:\|[^}]*)?\}\}/gi, () => company);
+  return (
+    s
+      .replace(/\{\{\s*first_name\s*(?:\|[^}]*)?\}\}/gi, () => "Alex")
+      .replace(/\{\{\s*last_name\s*(?:\|[^}]*)?\}\}/gi, () => "Rivera")
+      .replace(/\{\{\s*email\s*(?:\|[^}]*)?\}\}/gi, () => "alex@example.com")
+      .replace(/\{\{\s*company_name\s*(?:\|[^}]*)?\}\}/gi, () => company)
+      // Any remaining custom field tag → its fallback, or a humanized sample of
+      // the key, so the preview never shows a raw {{phone_number}} token.
+      .replace(/\{\{\s*([a-z][a-z0-9_]*)\s*(?:\|([^}]*))?\}\}/gi, (_m, key: string, fb?: string) => {
+        const fallback = (fb ?? "").trim();
+        if (fallback) return fallback;
+        const words = key.replace(/_/g, " ").trim();
+        return words.charAt(0).toUpperCase() + words.slice(1);
+      })
+  );
 }
 
 // Flattens sanitized body HTML to a one-line plain-text snippet — used as the
@@ -108,14 +133,17 @@ function avatarColor(seed: string): string {
 }
 
 // Builds an honest "as delivered" preview: the body sanitized exactly as on send,
-// with sample merge values filled in, the editable footer wording, and the real
-// company name + mailing address (the per-recipient unsubscribe link is appended
-// at send). Falls back to bracketed hints when the address isn't set yet.
+// with sample merge values filled in, the editable footer wording, the real company
+// name + mailing address (the per-recipient unsubscribe link is appended at send),
+// and the campaign's global theme — all run through the SAME wrapEmailDocument the
+// send pipeline uses, so the preview is byte-faithful to what ships. Falls back to
+// bracketed hints when the address isn't set yet.
 function buildPreviewDoc(
   html: string,
   footerText: string,
   companyName: string,
   companyAddress: string,
+  theme: CampaignTheme,
 ): string {
   const company = companyName.trim() || "Your Company";
   const body = fillMergeTags(sanitizeHtml(html), company);
@@ -123,7 +151,17 @@ function buildPreviewDoc(
   const addr = companyAddress.trim()
     ? escapeForPreview(companyAddress)
     : "[Add your business address]";
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a;line-height:1.6;margin:0;padding:24px}img{max-width:100%;height:auto}a{color:#2563eb}hr{border:none;border-top:1px solid #e5e5e5;margin:24px 0}blockquote{border-left:3px solid #e5e5e5;margin:0 0 0 0;padding-left:16px;color:#666}h1,h2,h3{line-height:1.25}</style></head><body>${body}<hr><p style="color:#8a8a8a;font-size:12px;line-height:1.5">${footer}<br>${addr}<br><a href="#">Unsubscribe</a></p></body></html>`;
+  // Inset the footer with 40px spacer columns exactly as the send pipeline does
+  // (see services/render.ts) — wrapEmailDocument applies only vertical padding, so
+  // without these gutters the footer would touch the card edges, unlike the body.
+  const inner =
+    `${body}\n<table role="presentation" width="100%"><tbody><tr>` +
+    `<td width="40"></td>` +
+    `<td><hr>\n<div class="d3-footer"><p>${footer}</p><p>${addr}</p>` +
+    `<p><a href="#">Unsubscribe</a></p></div></td>` +
+    `<td width="40"></td>` +
+    `</tr></tbody></table>`;
+  return wrapEmailDocument(inner, theme);
 }
 
 // Borderless input styling for the email-style header rows — the field reads as
@@ -206,9 +244,17 @@ export type CampaignFormValues = {
   fromName: string;
   fromEmail: string;
   replyTo?: string;
+  // The section builder's structured body. htmlBody is kept in sync (serialized from
+  // these) so the preview, autosave "worth saving" check, and submit gates all keep
+  // reading htmlBody. The server re-derives htmlBody from `sections` on save.
+  sections: CampaignSection[];
   htmlBody: string;
   textBody?: string;
   footerText?: string;
+  // The campaign's global theme (page/content background, text/heading/link colors,
+  // border, corner roundness). Always a fully-resolved theme in the form; the server
+  // stores it as JSON and applies it at render time.
+  theme: CampaignTheme;
 };
 
 export function CampaignComposer({
@@ -280,6 +326,10 @@ export function CampaignComposer({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
+  // The right-side floating styling panel. Open by default so the controls are
+  // discoverable; toggled by its own draggable grip or the "Style" toolbar button.
+  const [stylesOpen, setStylesOpen] = useState(true);
+
   // Autosave bookkeeping. The callback is held in a ref so the debounce
   // subscription can stay mounted once without re-subscribing on every render.
   const [autosaveStatus, setAutosaveStatus] = useState<AutosaveStatus>("idle");
@@ -288,6 +338,23 @@ export function CampaignComposer({
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // True when there are edits not yet persisted — gates the flush-on-unmount.
   const autosaveDirty = useRef(false);
+
+  // Seed the section builder from the draft: its saved sections if present, else a
+  // single section wrapping the legacy/AI flat htmlBody (so old drafts open in the
+  // builder without a migration). A brand-new campaign (no draft at all) opens on the
+  // starter layout — structure to start from rather than a blank canvas. htmlBody is
+  // derived from these so every htmlBody-based check stays consistent from the first
+  // render. Computed once (it seeds RHF's defaultValues, read only on mount) —
+  // memoized so we don't mint new section ids on every render.
+  const initialSections = useMemo(
+    () =>
+      !initial
+        ? starterSections()
+        : initial.sections && initial.sections.length > 0
+          ? initial.sections
+          : htmlBodyToSections(initial.htmlBody),
+    [initial],
+  );
 
   const { register, setValue, watch, getValues } =
     useForm<CampaignFormValues>({
@@ -302,9 +369,11 @@ export function CampaignComposer({
             fromName: initial.fromName,
             fromEmail: initial.fromEmail,
             replyTo: initial.replyTo ?? "",
-            htmlBody: initial.htmlBody,
+            sections: initialSections,
+            htmlBody: serializeSections(initialSections),
             textBody: initial.textBody ?? "",
             footerText: initial.footerText ?? DEFAULT_FOOTER_TEXT,
+            theme: resolveTheme(initial.theme),
           }
         : {
             name: "",
@@ -316,9 +385,11 @@ export function CampaignComposer({
             fromName: "",
             fromEmail: "",
             replyTo: "",
-            htmlBody: "",
+            sections: initialSections,
+            htmlBody: serializeSections(initialSections),
             textBody: "",
             footerText: DEFAULT_FOOTER_TEXT,
+            theme: { ...DEFAULT_THEME },
           },
     });
 
@@ -384,12 +455,50 @@ export function CampaignComposer({
   const name = watch("name");
   const subject = watch("subject");
   const previewText = watch("previewText");
+  const sections = watch("sections");
   const htmlBody = watch("htmlBody");
   const footerText = watch("footerText");
+  const theme = watch("theme");
+
+  // The single place that updates the body: store the structured sections and keep
+  // htmlBody in sync (serialized from them). Both setValue calls notify the autosave
+  // watcher; the server re-derives htmlBody from `sections` on save.
+  function applySections(next: CampaignSection[]) {
+    setValue("sections", next, { shouldDirty: true });
+    setValue("htmlBody", serializeSections(next), { shouldDirty: true });
+  }
+  // Updates the global theme — drives the live canvas, the preview, and (on the next
+  // autosave) the stored themeJson. shouldDirty so it counts as an edit to persist.
+  function applyTheme(next: CampaignTheme) {
+    setValue("theme", next, { shouldDirty: true });
+  }
   const senderId = watch("senderId");
   const audienceId = watch("audienceId");
   const fromName = watch("fromName");
   const fromEmail = watch("fromEmail");
+
+  // Custom personalization tags for the chosen audience (the fields its signup
+  // forms collect), offered alongside the built-in {{first_name}} etc. in the
+  // editor's insert menu.
+  const [customMergeTags, setCustomMergeTags] = useState<MergeTag[]>([]);
+  useEffect(() => {
+    if (!audienceId) {
+      setCustomMergeTags([]);
+      return;
+    }
+    let live = true;
+    api
+      .get<{ fields: { key: string; label: string }[] }>(`/api/audiences/${audienceId}/fields`)
+      .then((res) => {
+        if (live) {
+          setCustomMergeTags(res.fields.map((f) => ({ label: f.label, insert: `{{${f.key}}}` })));
+        }
+      })
+      .catch(() => live && setCustomMergeTags([]));
+    return () => {
+      live = false;
+    };
+  }, [api, audienceId]);
 
   // Real footer values from the account. Company name is the org name; the
   // mailing address is legally required and may not be set yet.
@@ -489,13 +598,21 @@ export function CampaignComposer({
     setDrafting(true);
     try {
       const audienceName = audiences.find((a) => a.id === getValues("audienceId"))?.name;
-      const res = await api.post<{ subject: string; previewText: string; html: string }>(
-        "/api/ai/draft",
-        { brief: b, audienceName, fromName: getValues("fromName") || undefined },
-      );
+      const res = await api.post<{
+        subject: string;
+        previewText: string;
+        html: string;
+        sections?: CampaignSection[];
+      }>("/api/ai/draft", { brief: b, audienceName, fromName: getValues("fromName") || undefined });
       setValue("subject", res.subject);
       setValue("previewText", res.previewText);
-      setValue("htmlBody", res.html);
+      // Land the AI draft as a full multi-section email the user can tweak, reorder,
+      // or extend. Older responses (flat html only) fall back to a single section.
+      applySections(
+        res.sections && res.sections.length > 0
+          ? res.sections
+          : htmlBodyToSections(res.html),
+      );
       // Give the campaign a sensible title if the user hasn't named it yet.
       if (!getValues("name")?.trim()) setValue("name", res.subject);
       setHasDrafted(true);
@@ -566,6 +683,15 @@ export function CampaignComposer({
     } finally {
       void refreshAiBudget();
     }
+  }
+
+  // Uploads an image for an image section and returns its public URL. Throws on
+  // failure (with the server's message) so the uploader can surface it inline.
+  async function handleUploadImage(file: File): Promise<string> {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await api.upload<{ url: string }>("/api/campaigns/assets", form);
+    return res.url;
   }
 
   // Suggest news@<domain> as the from address until the user edits it.
@@ -673,7 +799,7 @@ export function CampaignComposer({
   return (
     // No submit button — the draft autosaves. Swallow form submits (e.g. Enter in
     // a field) so they can't navigate or reload; autosave already has the changes.
-    <form onSubmit={(e) => e.preventDefault()} className="space-y-6">
+    <form onSubmit={(e) => e.preventDefault()} className="relative space-y-6">
       {/* Full-width content header — the (editable) page title and any page-level
           action buttons. Spans the full width; the message column below is the
           narrower email-width column. */}
@@ -705,8 +831,14 @@ export function CampaignComposer({
         </div>
       </div>
 
-      {/* Message column — constrained to a typical email body width. */}
-      <div className="mx-auto w-full max-w-[600px] space-y-6">
+      {/* Body row — the message column, constrained to a typical email body width and
+          centered. The styling panel no longer sits here; it floats over the right edge
+          (see FloatingStylingPanel below). */}
+      <div className="flex flex-col items-center gap-6">
+      {/* Message column — sized so the themed content card inside lands at the real
+          ~600px email body width *after* the surrounding page padding (sm:p-10 → 80px
+          total), i.e. 600 + 80. */}
+      <div className="w-full max-w-[680px] space-y-6">
 
       {noVerifiedDomain && (
         <Alert>
@@ -782,6 +914,16 @@ export function CampaignComposer({
       <div className="flex items-center justify-end gap-2">
         <Button
           type="button"
+          variant={stylesOpen ? "secondary" : "ghost"}
+          size="sm"
+          onClick={() => setStylesOpen((o) => !o)}
+          aria-pressed={stylesOpen}
+        >
+          <Palette />
+          Style
+        </Button>
+        <Button
+          type="button"
           variant="ghost"
           size="sm"
           onClick={() => setPreviewOpen(true)}
@@ -820,10 +962,28 @@ export function CampaignComposer({
         )}
       </div>
 
-      {/* The email surface: a header that mimics the top of a real email, with the
-          body flowing straight beneath it. Borderless and flat — the rows and body
-          read as one continuous message, not a boxed form. */}
-      <div>
+      {/* The email surface sits on a themed "page": the outer pad shows the page
+          color, and the surface itself adopts the campaign's content background,
+          border, and corner roundness so the live canvas matches the sent email. The
+          canvas CSS vars (themeCanvasVars) flow the text/heading/link/image styling
+          into the section editors below — true WYSIWYG. */}
+      <div
+        className="rounded-2xl p-6 transition-colors sm:p-10"
+        style={{ backgroundColor: theme.pageBg }}
+      >
+      <div
+        className="p-6 transition-colors sm:p-10"
+        style={{
+          ...themeCanvasVars(theme),
+          color: theme.textColor,
+          backgroundColor: theme.contentBg,
+          borderRadius: `${theme.sectionRadius}px`,
+          border:
+            theme.borderWidth > 0
+              ? `${theme.borderWidth}px solid ${theme.borderColor}`
+              : undefined,
+        }}
+      >
         <HeaderRow label="From" htmlFor="senderSelect">
           {senders.length > 0 ? (
             <Select
@@ -1015,19 +1175,25 @@ export function CampaignComposer({
           />
         </HeaderRow>
 
-        {/* Body — flows straight out of the header, sharing the same surface. */}
-        <RichTextEditor
-          value={htmlBody ?? ""}
-          onChange={(html) => setValue("htmlBody", html)}
-          onRewrite={aiEnabled && !aiExhausted ? handleRewrite : undefined}
-          placeholder="Write your email, or describe it above and let AI draft it…"
-          className="rounded-none border-0 bg-transparent"
-        />
+        {/* Body — a stack of sections (1/2/3 columns each) that can be added,
+            removed, and drag-reordered. Each column is the same allowlist-locked
+            editor, so the output is always email-safe. */}
+        <MergeTagsProvider extra={customMergeTags}>
+          <SectionEditor
+            value={sections ?? []}
+            onChange={applySections}
+            onRewrite={aiEnabled && !aiExhausted ? handleRewrite : undefined}
+            onUploadImage={handleUploadImage}
+            placeholder="Write your email, or describe it above and let AI draft it…"
+            className="mt-12 py-2"
+          />
+        </MergeTagsProvider>
 
         {/* Footer — shown in the message itself. The wording is editable; the
             mailing address and unsubscribe link are appended automatically at
-            send time (required by law) and can't be edited or removed. */}
-        <div className="border-t border-border px-6 py-4">
+            send time (required by law) and can't be edited or removed. (Horizontal
+            padding comes from the surface card now.) */}
+        <div className="mt-2 border-t border-border py-4">
           <Textarea
             aria-label="Footer text"
             rows={2}
@@ -1098,6 +1264,7 @@ export function CampaignComposer({
           </div>
         </div>
       </div>
+      </div>
 
       {(audiences.length === 0 || domains.length === 0) && (
         <p className="text-xs text-muted-foreground">
@@ -1123,6 +1290,18 @@ export function CampaignComposer({
       )}
 
       </div>
+
+      </div>
+
+      {/* Styling panel — a floating overlay docked to the right edge, toggled by its
+          own draggable grip (or the toolbar "Style" button). The live canvas + preview
+          re-theme as these change; the next autosave persists the theme. */}
+      <FloatingStylingPanel
+        value={resolveTheme(theme)}
+        onChange={applyTheme}
+        open={stylesOpen}
+        onOpenChange={(o) => setStylesOpen(o)}
+      />
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-2xl">
@@ -1199,7 +1378,13 @@ export function CampaignComposer({
               <iframe
                 title="Email preview"
                 sandbox=""
-                srcDoc={buildPreviewDoc(htmlBody ?? "", footerText ?? "", companyName, companyAddress)}
+                srcDoc={buildPreviewDoc(
+                  htmlBody ?? "",
+                  footerText ?? "",
+                  companyName,
+                  companyAddress,
+                  resolveTheme(theme),
+                )}
                 className="h-[50vh] w-full border-0"
               />
             </div>

@@ -5,6 +5,7 @@ import { requireAccount } from "@/api/context";
 import { findSubscriber } from "@/api/finders";
 import { subscribers } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
+import { normalizeAttributes } from "@/lib/form-fields";
 
 // Editing the contact's details. Status is deliberately not editable here —
 // status transitions (unsubscribe, resubscribe) flow through their own routes so
@@ -13,6 +14,8 @@ const UpdateSubscriberSchema = z.object({
   email: z.email().trim().toLowerCase().optional(),
   firstName: z.string().trim().max(100).optional().or(z.literal("")),
   lastName: z.string().trim().max(100).optional().or(z.literal("")),
+  // Full replacement of the custom attribute bag (the edit UI sends the whole set).
+  attributes: z.record(z.string(), z.string()).optional(),
 });
 
 export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { params }) => {
@@ -26,6 +29,7 @@ export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { pa
   if (data.email !== undefined) set.email = data.email;
   if (data.firstName !== undefined) set.firstName = data.firstName || null;
   if (data.lastName !== undefined) set.lastName = data.lastName || null;
+  if (data.attributes !== undefined) set.attributes = normalizeAttributes(data.attributes);
 
   try {
     await db.update(subscribers).set(set).where(eq(subscribers.id, subscriber.id));

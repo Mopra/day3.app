@@ -6,6 +6,7 @@ import { findAudience } from "@/api/finders";
 import { subscribers } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { isValidEmail } from "@/lib/csv";
+import { normalizeAttributes } from "@/lib/form-fields";
 import { isEmailSuppressed } from "@/services/suppression";
 import { subscriberHeadroom, subscriberLimitMessage } from "@/services/subscriber-limit";
 
@@ -50,6 +51,7 @@ const AddSubscriberSchema = z.object({
   email: z.email().trim().toLowerCase(),
   firstName: z.string().trim().max(100).optional(),
   lastName: z.string().trim().max(100).optional(),
+  attributes: z.record(z.string(), z.string()).optional(),
 });
 
 export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { params }) => {
@@ -58,7 +60,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
   const audience = await findAudience(db, account.id, id);
   if (!audience) throw new HttpError(404, "Not found");
 
-  const { email, firstName, lastName } = await parseJson(req, AddSubscriberSchema);
+  const { email, firstName, lastName, attributes } = await parseJson(req, AddSubscriberSchema);
   if (!isValidEmail(email)) throw new HttpError(400, "Invalid email");
   if (await isEmailSuppressed(db, account.id, email)) {
     throw new HttpError(409, "This email is on the suppression list");
@@ -78,6 +80,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
       email,
       firstName: firstName ?? null,
       lastName: lastName ?? null,
+      attributes: normalizeAttributes(attributes),
       status: "subscribed",
       source: "manual",
       createdAt: now,

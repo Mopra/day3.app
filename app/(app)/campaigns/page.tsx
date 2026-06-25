@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Mail, Trash2 } from "lucide-react";
+import { Copy, Mail, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,11 +25,13 @@ import {
   ListSearch,
   ListSkeleton,
   ListToolbar,
+  RowActions,
   RowOpen,
   SortableHead,
   rowLinkProps,
   useListController,
 } from "@/components/ui/data-list";
+import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
 import { formatDate, statusLabel, statusVariant } from "@/lib/format";
 import type { CampaignListItem } from "@/lib/types";
@@ -60,6 +62,17 @@ export default function CampaignsPage() {
   }, []);
 
   useEffect(load, [load]);
+
+  async function duplicate(c: CampaignListItem) {
+    try {
+      const { id } = await api.post<{ id: string }>(`/api/campaigns/${c.id}/duplicate`);
+      toast.success("Campaign duplicated");
+      // Drop the user straight into the new draft to tweak subject/content and send.
+      router.push(`/campaigns/${id}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't duplicate campaign");
+    }
+  }
 
   async function remove() {
     if (!confirm) return;
@@ -179,21 +192,22 @@ export default function CampaignsPage() {
                     <TableCell className="text-muted-foreground">{formatDate(c.createdAt)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label="Delete campaign"
-                          className="text-muted-foreground hover:text-destructive"
-                          disabled={!canDelete(c.status)}
-                          title={canDelete(c.status) ? "Delete" : "Pause before deleting"}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirm(c);
-                          }}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
                         <RowOpen href={`/campaigns/${c.id}`} />
+                        <RowActions>
+                          <MenuItem onClick={() => duplicate(c)}>
+                            <Copy />
+                            Duplicate
+                          </MenuItem>
+                          <MenuSeparator />
+                          <MenuItem
+                            variant="destructive"
+                            disabled={!canDelete(c.status)}
+                            onClick={() => setConfirm(c)}
+                          >
+                            <Trash2 />
+                            Delete
+                          </MenuItem>
+                        </RowActions>
                       </div>
                     </TableCell>
                   </TableRow>

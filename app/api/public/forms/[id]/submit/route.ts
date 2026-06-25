@@ -8,6 +8,7 @@ import { getQueue } from "@/queue/producer";
 import { isValidEmail } from "@/lib/csv";
 import { enforceRateLimit, clientIp } from "@/lib/rate-limit";
 import { submitFormSignup } from "@/services/form-signup";
+import { splitSubmittedFields } from "@/lib/form-fields";
 
 // The single public ingestion endpoint behind every signup surface. It accepts
 // BOTH a native HTML form POST (application/x-www-form-urlencoded or multipart —
@@ -16,8 +17,6 @@ import { submitFormSignup } from "@/services/form-signup";
 // page; JSON callers get JSON. Reliability is the point: the signup is written to
 // Postgres synchronously and the confirmation email is queued, so a Redis blip
 // never loses a signup.
-
-const MAX_NAME_LEN = 100;
 
 async function readFields(req: NextRequest): Promise<Record<string, string>> {
   const contentType = req.headers.get("content-type") ?? "";
@@ -89,14 +88,23 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
     return errorRedirect(req, form.id, "email");
   }
 
-  const firstName = form.collectName ? (fields.firstName ?? fields.first_name ?? "").trim().slice(0, MAX_NAME_LEN) : "";
-  const lastName = form.collectName ? (fields.lastName ?? fields.last_name ?? "").trim().slice(0, MAX_NAME_LEN) : "";
+  // Accept legacy first/last name aliases (older HTML snippets posted firstName)
+  // so embeds in the wild keep working alongside the new key-based fields.
+  const values: Record<string, string> = {
+    ...fields,
+    first_name: fields.first_name ?? fields.firstName ?? "",
+    last_name: fields.last_name ?? fields.lastName ?? "",
+  };
+  // Only keys declared on the form are read; everything else is ignored, so a
+  // crafted POST can't write arbitrary attributes onto a subscriber.
+  const { firstName, lastName, attributes } = splitSubmittedFields(form.fields, values);
 
   const result = await submitFormSignup(db, getQueue(), {
     form,
     email,
-    firstName: firstName || null,
-    lastName: lastName || null,
+    firstName,
+    lastName,
+    attributes,
     consentIp: clientIp(req),
   });
 

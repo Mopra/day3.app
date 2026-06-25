@@ -41,9 +41,11 @@ import {
   ListSearch,
   ListSkeleton,
   ListToolbar,
+  RowActions,
   SortableHead,
   useListController,
 } from "@/components/ui/data-list";
+import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
 import { domainState } from "@/lib/domain";
 import { formatDate } from "@/lib/format";
@@ -184,7 +186,7 @@ export default function SendersPage() {
     setRemoving(true);
     try {
       await api.del(`/api/senders/${confirmRemove.id}`);
-      toast.success("Sender removed");
+      toast.success("Sender deleted");
       setConfirmRemove(null);
       load();
     } catch (err) {
@@ -297,37 +299,23 @@ export default function SendersPage() {
                     <TableCell className="text-muted-foreground">{formatDate(s.createdAt)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        {!s.isDefault && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-muted-foreground"
-                            onClick={() => makeDefault(s)}
-                          >
-                            <Star className="size-3.5" />
-                            Make default
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label="Edit sender"
-                          title="Edit"
-                          className="text-muted-foreground"
-                          onClick={() => openEdit(s)}
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label="Remove sender"
-                          title="Remove"
-                          className="text-muted-foreground hover:text-destructive"
-                          onClick={() => setConfirmRemove(s)}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
+                        <RowActions>
+                          {!s.isDefault && (
+                            <MenuItem onClick={() => makeDefault(s)}>
+                              <Star />
+                              Make default
+                            </MenuItem>
+                          )}
+                          <MenuItem onClick={() => openEdit(s)}>
+                            <Pencil />
+                            Edit
+                          </MenuItem>
+                          <MenuSeparator />
+                          <MenuItem variant="destructive" onClick={() => setConfirmRemove(s)}>
+                            <Trash2 />
+                            Delete
+                          </MenuItem>
+                        </RowActions>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -418,13 +406,13 @@ export default function SendersPage() {
       <ConfirmDialog
         open={!!confirmRemove}
         onOpenChange={(o) => !o && setConfirmRemove(null)}
-        title="Remove this sender?"
+        title="Delete this sender?"
         description={
           confirmRemove
             ? `${confirmRemove.fromName} <${confirmRemove.fromEmail}> will no longer be available to pick in the composer. Campaigns already sent are unaffected.`
             : undefined
         }
-        confirmLabel="Remove sender"
+        confirmLabel="Delete sender"
         busy={removing}
         onConfirm={remove}
       />

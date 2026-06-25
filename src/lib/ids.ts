@@ -10,6 +10,7 @@ export type IdPrefix =
   | "frm"
   | "imp"
   | "cmp"
+  | "img"
   | "rcp"
   | "evt"
   | "sup"

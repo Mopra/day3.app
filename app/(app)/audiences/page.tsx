@@ -34,11 +34,13 @@ import {
   ListSearch,
   ListSkeleton,
   ListToolbar,
+  RowActions,
   RowOpen,
   SortableHead,
   rowLinkProps,
   useListController,
 } from "@/components/ui/data-list";
+import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { Audience } from "@/lib/types";
@@ -197,31 +199,18 @@ export default function AudiencesPage() {
                     <TableCell className="text-muted-foreground">{formatDate(a.createdAt)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label="Rename audience"
-                          className="text-muted-foreground"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openRename(a);
-                          }}
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label="Delete audience"
-                          className="text-muted-foreground hover:text-destructive"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setConfirmDelete(a);
-                          }}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
                         <RowOpen href={`/audiences/${a.id}`} />
+                        <RowActions>
+                          <MenuItem onClick={() => openRename(a)}>
+                            <Pencil />
+                            Rename
+                          </MenuItem>
+                          <MenuSeparator />
+                          <MenuItem variant="destructive" onClick={() => setConfirmDelete(a)}>
+                            <Trash2 />
+                            Delete
+                          </MenuItem>
+                        </RowActions>
                       </div>
                     </TableCell>
                   </TableRow>

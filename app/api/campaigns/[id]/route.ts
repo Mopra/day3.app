@@ -4,11 +4,15 @@ import { requireAccount } from "@/api/context";
 import { findCampaign } from "@/api/finders";
 import {
   CampaignDraftSchema,
+  campaignBodyFields,
   campaignPersonalizationGaps,
   campaignStats,
+  campaignThemeJson,
   validateDraftOwnership,
 } from "@/api/campaigns";
 import { campaignRecipients, campaigns, riskReviews } from "@/db/schema";
+import { safeParseSections } from "@/lib/sections";
+import { safeParseTheme } from "@/lib/theme";
 import { nowIso } from "@/lib/ids";
 
 export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
@@ -23,7 +27,14 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
   // count query once the campaign is in flight or done.
   const submittable = campaign.status === "draft" || campaign.status === "approved";
   return json({
-    campaign,
+    // Surface the structured sections + theme (parsed from the stored JSON) so the
+    // composer can rehydrate the builder and styling panel; htmlBody remains the
+    // canonical serialized body.
+    campaign: {
+      ...campaign,
+      sections: safeParseSections(campaign.sectionsJson),
+      theme: safeParseTheme(campaign.themeJson),
+    },
     riskReview: review ?? null,
     stats: await campaignStats(db, campaign.id),
     personalization: submittable
@@ -47,6 +58,10 @@ export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { pa
   const error = await validateDraftOwnership(db, account.id, data);
   if (error) throw new HttpError(400, error);
 
+  // htmlBody is derived from `sections` when present (see campaignBodyFields), so the
+  // stored body always matches the builder and is email-safe by construction.
+  const body = campaignBodyFields(data);
+
   await db
     .update(campaigns)
     .set({
@@ -59,7 +74,9 @@ export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { pa
       fromName: data.fromName ?? "",
       fromEmail: data.fromEmail ?? "",
       replyTo: data.replyTo || null,
-      htmlBody: data.htmlBody ?? "",
+      htmlBody: body.htmlBody,
+      sectionsJson: body.sectionsJson,
+      themeJson: campaignThemeJson(data),
       textBody: data.textBody ?? null,
       footerText: data.footerText || null,
       updatedAt: nowIso(),

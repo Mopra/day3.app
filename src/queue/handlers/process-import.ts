@@ -101,6 +101,7 @@ export async function processImport(
             email: canonicalizeEmail(row.email),
             firstName: row.firstName ?? null,
             lastName: row.lastName ?? null,
+            attributes: row.attributes ?? null,
             status: "subscribed" as const,
             source: "import",
             importedAt: now,

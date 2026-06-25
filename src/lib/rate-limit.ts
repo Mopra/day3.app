@@ -39,6 +39,9 @@ const DEFAULTS: Record<string, RateLimitRule> = {
   import: { limit: 10, windowMs: 60_000 },
   // Campaign create.
   campaign_create: { limit: 30, windowMs: 60_000 },
+  // Campaign image upload: a 5 MB upload + storage write each. Generous enough to
+  // build an image-heavy newsletter in one sitting, bounded against storage-fill abuse.
+  campaign_asset: { limit: 60, windowMs: 60_000 },
   // Test-email: triggers a real SES send.
   test_email: { limit: 5, windowMs: 60_000 },
   // Campaign submit → review pipeline.

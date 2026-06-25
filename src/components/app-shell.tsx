@@ -33,13 +33,18 @@ type AnimatedIcon = ComponentType<
 type NavEntry = { to: string; label: string; icon: AnimatedIcon };
 
 const NAV: NavEntry[] = [
+  // Dashboard, Campaigns + Audiences lead as the daily-driver pages (an audience
+  // is the campaign's counterpart, so it sits just below), then the rest follows
+  // the real first-run setup flow (see OnboardingChecklist): what you send as
+  // (Domains → Senders) → grow your audience (Forms) → measure (Metrics) →
+  // account (Billing, Settings).
   { to: "/dashboard", label: "Dashboard", icon: LayoutGridIcon },
   { to: "/campaigns", label: "Campaigns", icon: MailCheckIcon },
-  { to: "/metrics", label: "Metrics", icon: ChartColumnIcon },
   { to: "/audiences", label: "Audiences", icon: UsersIcon },
-  { to: "/forms", label: "Forms", icon: FormInputIcon },
-  { to: "/senders", label: "Senders", icon: AtSignIcon },
   { to: "/domains", label: "Domains", icon: EarthIcon },
+  { to: "/senders", label: "Senders", icon: AtSignIcon },
+  { to: "/forms", label: "Forms", icon: FormInputIcon },
+  { to: "/metrics", label: "Metrics", icon: ChartColumnIcon },
   { to: "/billing", label: "Billing", icon: CreditCardIcon },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];

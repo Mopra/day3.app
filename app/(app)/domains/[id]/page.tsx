@@ -7,18 +7,10 @@ import { ArrowLeft, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { RowActions } from "@/components/ui/data-list";
+import { MenuItem } from "@/components/ui/menu";
 import { Skeleton } from "@/components/ui/skeleton";
-import { OrbitLoader } from "@/components/ui/orbit-loader";
 import { DomainSetupGuide } from "@/components/domain-setup-guide";
 import { ApiError, useApi } from "@/lib/api";
 import { domainState } from "@/lib/domain";
@@ -36,6 +28,7 @@ export default function DomainDetailPage() {
   const router = useRouter();
   const [domain, setDomain] = useState<SendingDomain | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
 
   const load = useCallback(() => {
@@ -55,10 +48,10 @@ export default function DomainDetailPage() {
     setRemoving(true);
     try {
       await api.del(`/api/domains/${id}`);
-      toast.success("Domain removed");
+      toast.success("Domain deleted");
       router.push("/domains");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to remove domain");
+      toast.error(err instanceof Error ? err.message : "Couldn't delete domain");
       setRemoving(false);
     }
   }
@@ -102,35 +95,25 @@ export default function DomainDetailPage() {
               </p>
             </div>
 
-            <Dialog>
-              <DialogTrigger
-                render={
-                  <Button variant="ghost" size="sm">
-                    <Trash2 />
-                    Remove
-                  </Button>
-                }
-              />
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Remove {domain.domain}?</DialogTitle>
-                  <DialogDescription>
-                    You can add it again later, but you&apos;ll need to verify it from scratch.
-                    Campaigns currently using this domain will be blocked from sending.
-                  </DialogDescription>
-                </DialogHeader>
-                <DialogFooter>
-                  <DialogClose render={<Button variant="outline">Cancel</Button>} />
-                  <Button variant="destructive" onClick={remove} disabled={removing}>
-                    {removing ? <OrbitLoader size={16} /> : <Trash2 />}
-                    Remove domain
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <RowActions>
+              <MenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
+                <Trash2 />
+                Delete
+              </MenuItem>
+            </RowActions>
           </div>
 
           <DomainSetupGuide domain={domain} onChange={setDomain} />
+
+          <ConfirmDialog
+            open={deleteOpen}
+            onOpenChange={setDeleteOpen}
+            title={`Delete "${domain.domain}"?`}
+            description="This removes the domain and its senders from Day3. Campaigns already sent are unaffected. You can add it again later, but you'll need to re-verify it (and re-add its DNS records) to send from it again."
+            confirmLabel="Delete domain"
+            busy={removing}
+            onConfirm={remove}
+          />
         </>
       )}
     </div>

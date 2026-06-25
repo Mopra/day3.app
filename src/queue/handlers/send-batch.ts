@@ -15,6 +15,7 @@ import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
 import type { EmailProvider } from "../../email/provider";
 import { renderCampaignEmail, extractTrackableLinks } from "../../services/render";
+import { safeParseTheme } from "../../lib/theme";
 import { signUnsubscribeToken, unsubscribeUrl } from "../../services/unsubscribe";
 import {
   signOpenToken,
@@ -307,6 +308,10 @@ async function sendToClaimed(
   // are extracted once; only the per-recipient signed token differs below.
   const trackableLinks = deps.appUrl ? extractTrackableLinks(campaign.htmlBody) : [];
 
+  // The global theme is the same for every recipient — parse it once (null →
+  // DEFAULT_THEME inside renderCampaignEmail).
+  const theme = safeParseTheme(campaign.themeJson);
+
   // Accumulated in memory and flushed once per exit point (see flushBatchWrites).
   const pendingEvents: (typeof emailEvents.$inferInsert)[] = [];
 
@@ -382,10 +387,12 @@ async function sendToClaimed(
 
     const rendered = renderCampaignEmail({
       campaign,
+      theme,
       subscriber: {
         email: recipient.email,
         firstName: subscriber?.firstName,
         lastName: subscriber?.lastName,
+        attributes: subscriber?.attributes,
       },
       companyName: account.name,
       companyAddress: account.companyAddress,

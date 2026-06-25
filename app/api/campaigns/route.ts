@@ -1,7 +1,12 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
-import { CampaignDraftSchema, validateDraftOwnership } from "@/api/campaigns";
+import {
+  CampaignDraftSchema,
+  campaignBodyFields,
+  campaignThemeJson,
+  validateDraftOwnership,
+} from "@/api/campaigns";
 import { campaigns } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -43,6 +48,7 @@ export const POST = route(async (req) => {
 
   const id = newId("cmp");
   const now = nowIso();
+  const body = campaignBodyFields(data);
   await db.insert(campaigns).values({
     id,
     accountId: account.id,
@@ -55,7 +61,9 @@ export const POST = route(async (req) => {
     fromName: data.fromName ?? "",
     fromEmail: data.fromEmail ?? "",
     replyTo: data.replyTo || null,
-    htmlBody: data.htmlBody ?? "",
+    htmlBody: body.htmlBody,
+    sectionsJson: body.sectionsJson,
+    themeJson: campaignThemeJson(data),
     textBody: data.textBody ?? null,
     footerText: data.footerText || null,
     status: "draft",

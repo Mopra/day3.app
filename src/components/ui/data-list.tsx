@@ -10,14 +10,25 @@
  *     button — a clickable name alone is never enough.
  *   • Empty, no-match, and loading states are consistent everywhere.
  *   • Columns are sortable from the header.
+ *
+ * Destructive actions follow one app-wide convention so the product never offers
+ * two ways to do the same thing:
+ *   • The verb is always "Delete" (never "Remove"), on the menu item, the
+ *     confirm button ("Delete <noun>"), and the success toast ("<Noun> deleted").
+ *   • The trigger lives in a <RowActions/> kebab — in list rows AND in detail-page
+ *     headers — never as a bare inline icon or a text button.
+ *   • Confirmation always goes through <ConfirmDialog/> (never window.confirm or a
+ *     hand-rolled <Dialog/>).
+ * "Unsubscribe" is a separate, non-destructive action and keeps its own verb.
  */
 
 import * as React from "react";
 import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
-import { ArrowDown, ArrowUp, ChevronRight, ChevronsUpDown, Search, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, ChevronsUpDown, MoreHorizontal, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Menu, MenuContent, MenuTrigger } from "@/components/ui/menu";
 import {
   Select,
   SelectContent,
@@ -238,6 +249,45 @@ export function RowOpen({
       {label}
       <ChevronRight className="size-4 transition-transform group-hover:translate-x-0.5" />
     </Button>
+  );
+}
+
+/**
+ * The kebab "⋯" menu every navigable row carries for secondary actions
+ * (duplicate, delete, …). Keeps destructive or rare actions out of the row's
+ * immediate reach — they live one click in, behind a dropdown, so the row stays
+ * calm and an accidental delete isn't sitting right next to "Open".
+ *
+ * Pass <MenuItem>s (from "@/components/ui/menu") as children. Stops row
+ * propagation so opening the menu never triggers the row's click-to-navigate.
+ */
+export function RowActions({
+  children,
+  label = "More actions",
+  className,
+}: {
+  children: React.ReactNode;
+  label?: string;
+  className?: string;
+}) {
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={label}
+            title={label}
+            className={cn("text-muted-foreground", className)}
+            onClick={(e) => e.stopPropagation()}
+          />
+        }
+      >
+        <MoreHorizontal className="size-4" />
+      </MenuTrigger>
+      <MenuContent>{children}</MenuContent>
+    </Menu>
   );
 }
 

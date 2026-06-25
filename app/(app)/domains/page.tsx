@@ -4,10 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
-import { AlertCircle, CheckCircle2, Clock, Globe } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clock, Globe, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
@@ -35,11 +36,13 @@ import {
   ListSearch,
   ListSkeleton,
   ListToolbar,
+  RowActions,
   RowOpen,
   SortableHead,
   rowLinkProps,
   useListController,
 } from "@/components/ui/data-list";
+import { MenuItem } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
 import { domainState, recheckWindowExpired } from "@/lib/domain";
 import { formatDate } from "@/lib/format";
@@ -118,6 +121,8 @@ export default function DomainsPage() {
   const [open, setOpen] = useState(false);
   const [autoEmail, setAutoEmail] = useState(true);
   const [status, setStatus] = useState("all");
+  const [confirmDelete, setConfirmDelete] = useState<SendingDomain | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const { register, handleSubmit, reset, watch, setValue, formState } = useForm<DomainForm>();
 
   const load = useCallback(() => {
@@ -181,6 +186,21 @@ export default function DomainsPage() {
       toast.error(err instanceof Error ? err.message : "Failed to add domain");
     }
   });
+
+  async function remove() {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    try {
+      await api.del(`/api/domains/${confirmDelete.id}`);
+      toast.success("Domain deleted");
+      setDomains((l) => l?.filter((d) => d.id !== confirmDelete.id) ?? null);
+      setConfirmDelete(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete domain");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   const previewDomain = cleanDomain(domainValue ?? "");
 
@@ -299,10 +319,18 @@ export default function DomainsPage() {
                     </TableCell>
                     <TableCell className="text-muted-foreground">{formatDate(d.createdAt)}</TableCell>
                     <TableCell className="text-right">
-                      <RowOpen
-                        href={`/domains/${d.id}`}
-                        label={domainState(d) === "verified" ? "Open" : "Finish setup"}
-                      />
+                      <div className="flex items-center justify-end gap-1">
+                        <RowOpen
+                          href={`/domains/${d.id}`}
+                          label={domainState(d) === "verified" ? "Open" : "Finish setup"}
+                        />
+                        <RowActions>
+                          <MenuItem variant="destructive" onClick={() => setConfirmDelete(d)}>
+                            <Trash2 />
+                            Delete
+                          </MenuItem>
+                        </RowActions>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -311,6 +339,16 @@ export default function DomainsPage() {
           )}
         </CardContent>
       </Card>
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onOpenChange={(o) => !o && setConfirmDelete(null)}
+        title={`Delete "${confirmDelete?.domain}"?`}
+        description="This removes the domain and its senders from Day3. Campaigns already sent are unaffected. You'll need to re-verify it (and re-add its DNS records) to send from it again."
+        confirmLabel="Delete domain"
+        busy={deleting}
+        onConfirm={remove}
+      />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { findAudience } from "@/api/finders";
 import { audiences, forms } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { ensureAccountSlug, uniqueFormSlug } from "@/lib/slug";
+import { FORM_FIELD_TYPES, normalizeFields } from "@/lib/form-fields";
 
 // GET /api/forms — list this account's signup forms with their audience name.
 export const GET = route(async () => {
@@ -34,6 +35,16 @@ const CreateFormSchema = z.object({
   slug: z.string().trim().max(48).optional(),
   doubleOptIn: z.boolean().optional(),
   collectName: z.boolean().optional(),
+  fields: z
+    .array(
+      z.object({
+        key: z.string().trim().min(1).max(40),
+        label: z.string().trim().min(1).max(60),
+        type: z.enum(FORM_FIELD_TYPES),
+        required: z.boolean(),
+      }),
+    )
+    .optional(),
   headline: z.string().trim().max(140).optional(),
   description: z.string().trim().max(500).optional(),
   buttonLabel: z.string().trim().max(40).optional(),
@@ -63,6 +74,14 @@ export const POST = route(async (req) => {
   const id = newId("frm");
   const now = nowIso();
 
+  // `fields` is canonical; fall back to the legacy collectName flag (seed a first
+  // name field) so older clients still work. collectName is kept in sync.
+  const fields = input.fields
+    ? normalizeFields(input.fields)
+    : input.collectName
+      ? normalizeFields([{ key: "first_name", label: "First name", type: "text", required: false }])
+      : [];
+
   await db.insert(forms).values({
     id,
     accountId: account.id,
@@ -71,7 +90,8 @@ export const POST = route(async (req) => {
     name: input.name,
     status: "active",
     doubleOptIn: input.doubleOptIn ?? true,
-    collectName: input.collectName ?? false,
+    collectName: fields.some((f) => f.key === "first_name"),
+    fields,
     headline: input.headline || null,
     description: input.description || null,
     buttonLabel: input.buttonLabel?.trim() || "Subscribe",

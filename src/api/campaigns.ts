@@ -6,6 +6,8 @@ import {
   personalizationFieldsUsed,
   type PersonalizableField,
 } from "../services/render";
+import { SectionsSchema, serializeSections, type CampaignSection } from "../lib/sections";
+import { CampaignThemeSchema, type CampaignThemeInput } from "../lib/theme";
 
 export const CampaignFieldsSchema = z.object({
   name: z.string().trim().min(1).max(150),
@@ -25,6 +27,13 @@ export const CampaignFieldsSchema = z.object({
     .optional(),
   htmlBody: z.string().min(1).max(500_000),
   textBody: z.string().max(500_000).optional(),
+  // The section builder's structured body. When present, htmlBody is derived from
+  // it server-side (see campaignBodyFields) so the two never drift.
+  sections: SectionsSchema.optional(),
+  // The campaign's global theme (page/content background, text/heading/link colors,
+  // border, corner roundness). Stored as JSON; applied at render time, not baked into
+  // htmlBody. Omitted falls back to the default look.
+  theme: CampaignThemeSchema.optional(),
   // Editable footer wording only. The physical address and unsubscribe link are
   // appended canonically at send time and are not part of this. Empty/omitted
   // falls back to the default sentence.
@@ -49,9 +58,39 @@ export const CampaignDraftSchema = z.object({
   replyTo: z.union([z.literal(""), z.email().toLowerCase()]).optional(),
   htmlBody: z.string().max(500_000).optional(),
   textBody: z.string().max(500_000).optional(),
+  // The section builder's structured body. The composer sends this on every
+  // autosave; htmlBody is derived from it server-side (campaignBodyFields).
+  sections: SectionsSchema.optional(),
+  // The composer sends the global theme on every autosave; stored as themeJson.
+  theme: CampaignThemeSchema.optional(),
   footerText: z.string().trim().max(2_000).optional(),
 });
 export type CampaignDraft = z.infer<typeof CampaignDraftSchema>;
+
+// The theme JSON to persist from a draft/create payload: the validated theme
+// stringified, or null when the caller sent none (renders with DEFAULT_THEME).
+export function campaignThemeJson(data: { theme?: CampaignThemeInput }): string | null {
+  return data.theme ? JSON.stringify(data.theme) : null;
+}
+
+// Resolves the body fields to persist from a draft/create payload. When the client
+// sends the structured `sections`, htmlBody is *derived* from it server-side — so
+// the stored, send-authoritative body can never drift from the sections and is
+// always email-safe by construction (serializeSections emits only allowlisted
+// markup). Without sections (a legacy/non-composer caller) the flat htmlBody is used
+// as-is and the sections column is cleared.
+export function campaignBodyFields(data: {
+  htmlBody?: string;
+  sections?: CampaignSection[];
+}): { htmlBody: string; sectionsJson: string | null } {
+  if (data.sections) {
+    return {
+      htmlBody: serializeSections(data.sections),
+      sectionsJson: JSON.stringify(data.sections),
+    };
+  }
+  return { htmlBody: data.htmlBody ?? "", sectionsJson: null };
+}
 
 // Validates only the fields a draft actually provides: the audience/domain must
 // belong to the account if chosen, and a from address (if set alongside a domain)

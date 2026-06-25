@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   parseSubscriberCsv,
+  toSubscriberCsv,
   isValidEmail,
   validateCsvUpload,
   countCsvDataRows,
   MAX_IMPORT_BYTES,
 } from "../src/lib/csv";
 import { runDeterministicRiskChecks } from "../src/services/risk";
-import { renderCampaignEmail, personalizationFieldsUsed } from "../src/services/render";
+import {
+  renderCampaignEmail,
+  personalizationFieldsUsed,
+  sanitizeHtml,
+} from "../src/services/render";
 import {
   checkSendEligibility,
   entitlementsFor,
@@ -54,6 +59,37 @@ describe("csv parsing", () => {
     expect(isValidEmail("a@b.co")).toBe(true);
     expect(isValidEmail("a b@c.co")).toBe(false);
     expect(isValidEmail("nope")).toBe(false);
+  });
+});
+
+describe("csv export", () => {
+  it("serializes subscribers with a header and the union of attribute keys", () => {
+    const csv = toSubscriberCsv([
+      { email: "a@x.co", firstName: "Ann", lastName: null, status: "subscribed", attributes: { phone: "123" } },
+      { email: "b@x.co", firstName: null, lastName: "Bee", status: "unsubscribed", attributes: { company: "Acme" } },
+    ]);
+    const lines = csv.trimEnd().split("\r\n");
+    expect(lines[0]).toBe("email,first_name,last_name,status,company,phone");
+    expect(lines[1]).toBe("a@x.co,Ann,,subscribed,,123");
+    expect(lines[2]).toBe("b@x.co,,Bee,unsubscribed,Acme,");
+  });
+
+  it("quotes fields containing commas, quotes, or newlines", () => {
+    const csv = toSubscriberCsv([
+      { email: "c@x.co", firstName: 'Jo, "JJ"', lastName: "Line\nBreak", status: "subscribed" },
+    ]);
+    const dataLine = csv.trimEnd().split("\r\n")[1];
+    expect(dataLine).toBe('c@x.co,"Jo, ""JJ""","Line\nBreak",subscribed');
+  });
+
+  it("round-trips through the parser, ignoring the export-only status column", () => {
+    const csv = toSubscriberCsv([
+      { email: "RT@X.co", firstName: "Ray", lastName: "Tee", status: "unsubscribed", attributes: { phone: "555" } },
+    ]);
+    const parsed = parseSubscriberCsv(csv);
+    expect(parsed.rows).toEqual([
+      { email: "rt@x.co", firstName: "Ray", lastName: "Tee", attributes: { phone: "555" } },
+    ]);
   });
 });
 
@@ -470,6 +506,69 @@ describe("email rendering", () => {
     // Exactly one unsubscribe entry in the text fallback as well.
     const textLinks = out.text.match(/https:\/\/app\.test\/unsubscribe\?token=abc/g) ?? [];
     expect(textLinks).toHaveLength(1);
+  });
+});
+
+describe("sanitizer layout attributes (column sections)", () => {
+  it("keeps presentational table/td attributes the section builder emits", () => {
+    const html =
+      '<table role="presentation" width="100%"><tbody><tr>' +
+      '<td valign="top" width="50%"><p>Left</p></td>' +
+      '<td valign="top" width="50%"><p>Right</p></td>' +
+      "</tr></tbody></table>";
+    // The serialized column layout must survive sanitization byte-for-byte, so the
+    // builder's WYSIWYG promise holds for multi-column sections.
+    expect(sanitizeHtml(html)).toBe(html);
+  });
+
+  it("still strips style, class, and event handlers from table cells", () => {
+    const out = sanitizeHtml(
+      '<table style="position:absolute" class="x" onclick="evil()">' +
+        '<tbody><tr><td style="background:url(x)" class="c" onmouseover="y()" width="50%">Hi</td></tr></tbody>' +
+        "</table>",
+    );
+    expect(out).not.toMatch(/style=/i);
+    expect(out).not.toMatch(/class=/i);
+    expect(out).not.toMatch(/onclick|onmouseover/i);
+    // The allowlisted presentational attribute (and the content) is retained.
+    expect(out).toContain('width="50%"');
+    expect(out).toContain("Hi");
+  });
+
+  it("keeps the allowlisted d3-col class but drops any other class", () => {
+    // d3-col is the responsive-stacking hook the serializer emits on multi-column
+    // cells; it must survive so the document <style>'s @media rule can target it.
+    expect(sanitizeHtml('<td class="d3-col" width="50%">x</td>')).toBe(
+      '<td class="d3-col" width="50%">x</td>',
+    );
+    // d3-quote-round is the callout-roundness hook; it must survive on both the
+    // quote table and its cell so the document <style> can round the corners.
+    expect(sanitizeHtml('<table class="d3-quote-round"><tbody><tr><td bgcolor="#eee" class="d3-quote-round">x</td></tr></tbody></table>')).toBe(
+      '<table class="d3-quote-round"><tbody><tr><td bgcolor="#eee" class="d3-quote-round">x</td></tr></tbody></table>',
+    );
+    // Anything not on ALLOWED_CLASSES is dropped (content kept), so a class can never
+    // smuggle an arbitrary style hook into the delivered email.
+    expect(sanitizeHtml('<td class="evil">x</td>')).toBe("<td>x</td>");
+    // A token list is kept only if every token is allowlisted (all-or-nothing).
+    expect(sanitizeHtml('<td class="d3-col evil">x</td>')).toBe("<td>x</td>");
+  });
+
+  it("keeps validated bgcolor and <font color> (filled buttons / shaded callouts)", () => {
+    const html =
+      '<table role="presentation" bgcolor="#f4f4f5"><tbody><tr>' +
+      '<td bgcolor="#2563eb" height="40"><font color="#ffffff">Go</font></td>' +
+      "</tr></tbody></table>";
+    // The serialized button/callout markup must survive sanitization byte-for-byte.
+    expect(sanitizeHtml(html)).toBe(html);
+  });
+
+  it("accepts rgb()/named colors but drops CSS-function or junk color values", () => {
+    expect(sanitizeHtml('<td bgcolor="rgb(37,99,235)">x</td>')).toBe('<td bgcolor="rgb(37,99,235)">x</td>');
+    expect(sanitizeHtml('<font color="white">x</font>')).toBe('<font color="white">x</font>');
+    // url()/expression() and other non-color junk are stripped, content kept.
+    expect(sanitizeHtml('<td bgcolor="url(http://evil)"><font color="expression(alert(1))">x</font></td>')).toBe(
+      "<td><font>x</font></td>",
+    );
   });
 });
 

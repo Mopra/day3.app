@@ -17,8 +17,37 @@ type FormState =
   | "unavailable"
   | "error";
 
+// The presentation fields the view reads. Narrowed from the full row so the live
+// editor (which holds a client-side SignupForm) can render the same component with
+// unsaved edits, while server callers still pass the full Drizzle `Form`.
+export type PublicFormFields = Pick<
+  Form,
+  | "id"
+  | "accentColor"
+  | "headline"
+  | "description"
+  | "collectName"
+  | "fields"
+  | "buttonLabel"
+  | "doubleOptIn"
+  | "successMessage"
+>;
+
+// Map a custom field type to a native HTML input type.
+function htmlInputType(type: string): string {
+  switch (type) {
+    case "email":
+    case "tel":
+    case "url":
+    case "number":
+      return type;
+    default:
+      return "text";
+  }
+}
+
 export type PublicFormViewProps = {
-  form: Form;
+  form: PublicFormFields;
   companyName: string;
   state?: string;
   reason?: string;
@@ -209,21 +238,29 @@ export function PublicFormView({ form, companyName, state, reason, embed = false
         ) : null}
 
         <form method="post" action={action}>
-          {form.collectName ? (
-            <>
-              <label style={labelStyle} htmlFor="day3-first">
-                First name
+          {form.fields.map((field) => (
+            <div key={field.key}>
+              <label style={labelStyle} htmlFor={`day3-${field.key}`}>
+                {field.label}
+                {field.required ? <span style={{ color: accent }}> *</span> : null}
               </label>
               <input
-                id="day3-first"
+                id={`day3-${field.key}`}
                 style={inputStyle}
-                type="text"
-                name="firstName"
-                autoComplete="given-name"
-                maxLength={100}
+                type={htmlInputType(field.type)}
+                name={field.key}
+                required={field.required}
+                autoComplete={
+                  field.key === "first_name"
+                    ? "given-name"
+                    : field.key === "last_name"
+                      ? "family-name"
+                      : "off"
+                }
+                maxLength={500}
               />
-            </>
-          ) : null}
+            </div>
+          ))}
 
           <label style={labelStyle} htmlFor="day3-email">
             Email
@@ -276,7 +313,14 @@ export function PublicFormView({ form, companyName, state, reason, embed = false
       <div style={card}>
         {content}
         <p style={{ margin: "18px 0 0", fontSize: 11, color: "#cbd5e1", textAlign: "center" }}>
-          Powered by Day3
+          <a
+            href="https://go.day3.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "inherit", textDecoration: "none" }}
+          >
+            Powered by Day3
+          </a>
         </p>
       </div>
       {embed ? <script dangerouslySetInnerHTML={{ __html: AUTO_RESIZE_SCRIPT }} /> : null}

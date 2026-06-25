@@ -1,21 +1,27 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { CalendarClock } from "lucide-react";
 import { useApi } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { statusLabel, statusVariant } from "@/lib/format";
 import { CampaignComposer, type CampaignFormValues } from "@/components/campaign-composer";
+import { CampaignActions } from "@/components/campaign-actions";
 
 export default function CampaignNewPage() {
   const api = useApi();
+  const router = useRouter();
   // The draft is created on the first autosave, then patched in place. We swap the
   // URL to the real campaign without a remount (history.replaceState) so editing is
   // never interrupted and a refresh lands on the saved draft. `creating` is a lock
-  // so a burst of edits during the first save can't create duplicate drafts.
+  // so a burst of edits during the first save can't create duplicate drafts. Once
+  // the draft exists we mirror its id into state so the real (working) send actions
+  // can replace the disabled placeholders — without remounting the composer.
   const createdId = useRef<string | null>(null);
   const creating = useRef<Promise<string> | null>(null);
+  const [savedId, setSavedId] = useState<string | null>(null);
 
   async function onAutosave(values: CampaignFormValues) {
     if (!createdId.current && !creating.current) {
@@ -24,6 +30,7 @@ export default function CampaignNewPage() {
         .then((res) => {
           createdId.current = res.id;
           window.history.replaceState(null, "", `/campaigns/${res.id}`);
+          setSavedId(res.id);
           return res.id;
         });
       await creating.current;
@@ -35,10 +42,10 @@ export default function CampaignNewPage() {
     await api.patch(`/api/campaigns/${id}`, values);
   }
 
-  // The send actions act on a saved campaign's id and live on the campaign's own
-  // page. While composing a brand-new draft they're shown disabled as placeholders;
-  // once the draft exists (the URL has become /campaigns/<id>), a refresh opens the
-  // full campaign page where Schedule and Submit are live.
+  // Before the draft exists, the send actions have nothing to act on, so they're
+  // shown disabled as placeholders. The moment the first autosave creates the draft
+  // (the URL has become /campaigns/<id>), they're swapped for the live actions —
+  // no refresh, and the composer keeps its place since this page never remounts.
   const pendingActions = (
     <>
       <Button type="button" variant="outline" disabled title="Keep writing — your draft is saving automatically">
@@ -56,7 +63,18 @@ export default function CampaignNewPage() {
       <CampaignComposer
         onAutosave={onAutosave}
         titleBadge={<Badge variant={statusVariant("draft")}>{statusLabel("draft")}</Badge>}
-        titleActions={pendingActions}
+        titleActions={
+          savedId ? (
+            // After submit/schedule, land on the campaign's own page for the live
+            // send/status view (composing is done, so a navigation is fine here).
+            <CampaignActions
+              campaignId={savedId}
+              onSent={() => router.push(`/campaigns/${savedId}`)}
+            />
+          ) : (
+            pendingActions
+          )
+        }
       />
     </div>
   );

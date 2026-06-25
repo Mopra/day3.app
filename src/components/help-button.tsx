@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 
-const CONTACT_EMAIL = "contact@day3.app";
+const CONTACT_EMAIL = "connect@day3.app";
 
 // Bottom-of-sidebar Help widget. Opens a popover with a single message box that
 // relays to the support inbox (POST /api/support); falls back to a plain mailto
