@@ -16,6 +16,11 @@ const isPublicRoute = createRouteMatcher([
   "/",
   "/sign-in(.*)",
   "/sign-up(.*)",
+  // Safety-net aliases: some Clerk flows redirect to /login (or /signup), which
+  // this app does not serve. These routes redirect to /sign-in (or /sign-up) so
+  // users never dead-end on the 404 page mid-auth.
+  "/login(.*)",
+  "/signup(.*)",
   // Public legal pages (linked from the marketing footer + every email footer).
   "/privacy",
   "/terms",

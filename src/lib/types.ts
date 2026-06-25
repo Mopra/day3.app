@@ -3,9 +3,11 @@
 import type { CampaignSection } from "./sections";
 import type { CampaignThemeInput } from "./theme";
 import type { FormField } from "./form-fields";
+import type { FormDesign } from "./form-design";
 
 export type { CampaignSection };
 export type { FormField };
+export type { FormDesign };
 
 export type Account = {
   id: string;
@@ -133,10 +135,15 @@ export type SignupForm = {
   fields: FormField[];
   headline: string | null;
   description: string | null;
+  // Optional text block shown below the form.
+  footerText: string | null;
   buttonLabel: string;
   successMessage: string | null;
   redirectUrl: string | null;
   accentColor: string | null;
+  // Resolved form design (backgrounds, text colors, roundness, banner image). The
+  // detail/list endpoints return this already resolved from the stored JSON.
+  design: FormDesign;
   submitCount: number;
   confirmedCount: number;
   createdAt: string;
@@ -152,6 +159,7 @@ export type FormInstall = {
   htmlSnippet: string;
   inlineSnippet: string;
   popupSnippet: string;
+  aiPrompt: string;
 };
 
 export type ImportRow = {

@@ -270,6 +270,11 @@ export const forms = pgTable(
     // truth for what the form renders.
     fields: jsonb("fields").$type<FormField[]>().notNull().default([]),
     accentColor: text("accent_color"),
+    // Optional text block shown below the form (in addition to headline/description).
+    footerText: text("footer_text"),
+    // The form's tunable look (backgrounds, text colors, card roundness, top banner
+    // image) as a JSON string. See lib/form-design.ts. Null → the default look.
+    design: text("design"),
 
     // Denormalized counters for the dashboard (best-effort, incremented inline).
     submitCount: integer("submit_count").notNull().default(0),

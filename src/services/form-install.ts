@@ -10,6 +10,7 @@ export type FormInstall = {
   htmlSnippet: string; // raw <form> for full control / no-JS
   inlineSnippet: string; // JS widget, rendered inline where the div sits
   popupSnippet: string; // JS widget, opens as a modal on click
+  aiPrompt: string; // self-contained prompt to paste into an AI coding assistant
 };
 
 export function buildFormInstall(form: Form, accountSlug: string | null): FormInstall {
@@ -63,7 +64,28 @@ export function buildFormInstall(form: Form, accountSlug: string | null): FormIn
      data-day3-trigger="exit-intent"  (when leaving)
      data-day3-trigger="scroll:50"    (after scrolling 50%) -->`;
 
-  return { hostedUrl, prettyUrl, iframeSnippet, htmlSnippet, inlineSnippet, popupSnippet };
+  // A copy-paste prompt for the user's own AI assistant (ChatGPT, Claude, Cursor,
+  // Copilot…). It bundles the two snippets the AI shouldn't tamper with and the
+  // rules that keep signups flowing, so a non-technical user can hand the whole
+  // integration to an AI without knowing what an iframe or a form action is.
+  const collected = ["Email", ...(form.fields ?? []).map((f) => f.label)].join(", ");
+  const aiPrompt = `I want to add my newsletter signup form to my website. The form is hosted by Day3 — please integrate it cleanly so visitors can subscribe. It collects: ${collected}.
+
+RECOMMENDED — embed this iframe. It auto-resizes and works on any site. Paste it exactly as-is where the form should appear; do NOT change the src, the data-day3-form attribute, or the <script>:
+
+${iframeSnippet}
+
+ALTERNATIVE — if you'd rather build a native form so it fully matches my site's design, use this raw HTML instead. You may restyle it freely, but keep the action URL, every name="..." attribute, and the hidden "_hp" honeypot field exactly as written — those are what deliver signups to Day3:
+
+${htmlSnippet}
+
+Please:
+- First ask me what my website is built with (e.g. plain HTML, WordPress, Webflow, Squarespace, Shopify, React/Next.js), then give me step-by-step instructions for that platform.
+- Place the form somewhere sensible (a footer, a dedicated section, or a popup) and make sure it's responsive on mobile.
+- Pick ONE of the two options above — don't include both.
+- You don't need to build any backend or database: after someone signs up, Day3 handles confirmation emails and stores the subscriber automatically.`;
+
+  return { hostedUrl, prettyUrl, iframeSnippet, htmlSnippet, inlineSnippet, popupSnippet, aiPrompt };
 }
 
 function escapeAttr(value: string): string {

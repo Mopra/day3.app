@@ -10,164 +10,16 @@
 // Every color committed here passes isThemeColor (a hex/rgb/named token), the same
 // gate the server re-applies — so the panel can never produce a value the email
 // document would reject or that could break out of an inline style.
-import { useRef, useState } from "react";
-import { HexColorPicker } from "react-colorful";
+import { useRef } from "react";
 import { GripVertical, Palette, RotateCcw } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { ColorField, SliderField } from "@/components/ui/color-field";
 import {
   DEFAULT_THEME,
   MAX_BORDER_WIDTH,
   MAX_RADIUS,
-  isThemeColor,
   type CampaignTheme,
 } from "@/lib/theme";
-
-// Quick-pick palette shown in every color popover — neutrals, a few brand-ish
-// accents, and transparent (for backgrounds/borders that should disappear).
-const SWATCHES = [
-  "#ffffff", "#f4f4f5", "#fafaf9", "#111827", "#1a1a1a", "#2563eb",
-  "#7c3aed", "#db2777", "#16a34a", "#ea580c", "#e5e7eb", "transparent",
-];
-
-// Renders a swatch's fill — a checkerboard for "transparent" so it reads as "no
-// fill" rather than white.
-function swatchStyle(color: string): React.CSSProperties {
-  if (color === "transparent") {
-    return {
-      backgroundImage:
-        "linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%),linear-gradient(45deg,#ccc 25%,transparent 25%,transparent 75%,#ccc 75%)",
-      backgroundSize: "8px 8px",
-      backgroundPosition: "0 0,4px 4px",
-    };
-  }
-  return { backgroundColor: color };
-}
-
-// A single labeled color control: a swatch+value trigger opening a popover with the
-// native picker, a hex field, and the quick palette. Only commits valid colors.
-function ColorField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (color: string) => void;
-}) {
-  // The hex text field is locally editable so a half-typed value (e.g. "#2") doesn't
-  // get rejected mid-keystroke; it commits once it parses as a real color.
-  const [draft, setDraft] = useState(value);
-  // react-colorful's HexColorPicker only understands #rrggbb — fall back to white for
-  // the picker position when the value is transparent/named, without changing the value.
-  const pickerValue = /^#[0-9a-f]{6}$/i.test(value) ? value : "#ffffff";
-
-  return (
-    <div className="flex items-center justify-between gap-2">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <Popover>
-        <PopoverTrigger
-          render={
-            <button
-              type="button"
-              aria-label={`${label}: ${value}`}
-              className="flex items-center gap-2 rounded-md border border-border px-2 py-1 transition-colors hover:bg-muted"
-            />
-          }
-        >
-          <span
-            className="size-4 rounded-sm border border-foreground/10"
-            style={swatchStyle(value)}
-          />
-          <span className="font-mono text-xs tabular-nums text-foreground">{value}</span>
-        </PopoverTrigger>
-        <PopoverContent side="left" align="start" className="w-56 space-y-3">
-          <HexColorPicker
-            color={pickerValue}
-            onChange={(c) => {
-              setDraft(c);
-              onChange(c);
-            }}
-            aria-label={`${label} picker`}
-          />
-          <div className="flex items-center gap-2">
-            <span
-              className="size-9 shrink-0 rounded-md border border-border"
-              style={swatchStyle(value)}
-            />
-            <Input
-              aria-label={`${label} hex`}
-              value={draft}
-              onChange={(e) => {
-                const next = e.target.value;
-                setDraft(next);
-                if (isThemeColor(next)) onChange(next.trim());
-              }}
-              onBlur={() => setDraft(value)}
-              placeholder="#2563eb"
-              className="h-9 font-mono text-xs"
-            />
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {SWATCHES.map((c) => (
-              <button
-                key={c}
-                type="button"
-                aria-label={c}
-                title={c}
-                onClick={() => {
-                  setDraft(c);
-                  onChange(c);
-                }}
-                style={swatchStyle(c)}
-                className={cn(
-                  "size-6 rounded-md border border-foreground/10 transition-transform hover:scale-110",
-                  value === c && "ring-2 ring-foreground/40 ring-offset-1 ring-offset-popover",
-                )}
-              />
-            ))}
-          </div>
-        </PopoverContent>
-      </Popover>
-    </div>
-  );
-}
-
-// A labeled px slider (image/section roundness, border width).
-function SliderField({
-  label,
-  value,
-  onChange,
-  min = 0,
-  max,
-}: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-  min?: number;
-  max: number;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between">
-        <span className="text-sm text-muted-foreground">{label}</span>
-        <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">
-          {value}px
-        </span>
-      </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        aria-label={label}
-        className="w-full accent-primary"
-      />
-    </div>
-  );
-}
 
 // A small titled group of controls inside the panel.
 function Group({ title, children }: { title: string; children: React.ReactNode }) {

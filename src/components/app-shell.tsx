@@ -12,6 +12,7 @@ import { useApi } from "@/lib/api";
 import { formatDuration } from "@/lib/format";
 import { AiBudgetProvider, useAiBudget } from "@/components/ai-budget-context";
 import { HelpButton } from "@/components/help-button";
+import { PreviewBanner } from "@/components/preview-banner";
 import { LayoutGridIcon } from "@/components/ui/animated-icons/layout-grid";
 import { MailCheckIcon } from "@/components/ui/animated-icons/mail-check";
 import { ChartColumnIcon } from "@/components/ui/animated-icons/chart-column";
@@ -151,46 +152,71 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <AiBudgetProvider>
-      <div className="flex h-screen bg-background">
-        <aside className="flex w-56 shrink-0 flex-col">
-          <Link href="/dashboard" className="flex h-14 items-center px-4">
-            <Image
-              src="/day3-mark-light.svg"
-              alt="Day3"
-              width={46}
-              height={13}
-              priority
-            />
-          </Link>
-          <nav className="flex flex-1 flex-col gap-1 px-2">
-            {[...NAV, ...adminNav].map((item) => (
-              <NavItem key={item.to} {...item} active={isActive(item.to)} />
-            ))}
-          </nav>
-          {/* Help — a navigation-style item, kept above the AI budget meter.
-              No docs site yet, so the popover is the whole help surface. */}
-          <div className="px-2 pb-1">
-            <HelpButton />
+      <div className="flex h-screen flex-col bg-background">
+        <PreviewBanner />
+        <div className="flex min-h-0 flex-1">
+          <aside className="flex w-56 shrink-0 flex-col">
+            <Link href="/dashboard" className="flex h-14 items-center px-4">
+              <Image
+                src="/day3-mark-light.svg"
+                alt="Day3"
+                width={46}
+                height={13}
+                priority
+              />
+            </Link>
+            <nav className="flex flex-1 flex-col gap-1 px-2">
+              {[...NAV, ...adminNav].map((item) => (
+                <NavItem key={item.to} {...item} active={isActive(item.to)} />
+              ))}
+            </nav>
+            {/* Help — a navigation-style item, kept above the AI budget meter.
+                No docs site yet, so the popover is the whole help surface. */}
+            <div className="px-2 pb-1">
+              <HelpButton />
+            </div>
+            <SidebarAiBudget />
+            {/* Workspace + account controls, bottom-left of the sidebar — the
+                conventional placement. px-5 (20px) matches the nav/Help/AI gutter;
+                the org switcher's own left padding is zeroed so its avatar sits
+                flush at that gutter rather than a few px to the right. */}
+            <div className="flex items-center justify-between gap-2 px-5 py-3 mb-5">
+              {/* min-w-0 lets the switcher shrink below its content width so a long
+                  org name truncates (ellipsis) instead of pushing the avatar out
+                  of the fixed-width sidebar. */}
+              <div className="min-w-0 flex-1">
+                <OrganizationSwitcher
+                  hidePersonal
+                  appearance={{
+                    elements: {
+                      organizationSwitcherTrigger: {
+                        paddingLeft: 0,
+                        maxWidth: "100%",
+                        minWidth: 0,
+                      },
+                      organizationPreview: { minWidth: 0 },
+                      organizationPreviewTextContainer: { minWidth: 0 },
+                      organizationPreviewMainIdentifier: {
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      },
+                    },
+                  }}
+                />
+              </div>
+              <div className="shrink-0">
+                <UserButton />
+              </div>
+            </div>
+          </aside>
+          <div className="flex min-w-0 flex-1 flex-col">
+            {/* No top chrome bar: each page renders its own heading, and the
+                account controls live in the sidebar. The content panel floats. */}
+            <main className="m-5 min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-card px-8 py-6">
+              {children}
+            </main>
           </div>
-          <SidebarAiBudget />
-          {/* Workspace + account controls, bottom-left of the sidebar — the
-              conventional placement. px-5 (20px) matches the nav/Help/AI gutter;
-              the org switcher's own left padding is zeroed so its avatar sits
-              flush at that gutter rather than a few px to the right. */}
-          <div className="flex items-center justify-between gap-2 px-5 py-3 mb-5">
-            <OrganizationSwitcher
-              hidePersonal
-              appearance={{ elements: { organizationSwitcherTrigger: { paddingLeft: 0 } } }}
-            />
-            <UserButton />
-          </div>
-        </aside>
-        <div className="flex min-w-0 flex-1 flex-col">
-          {/* No top chrome bar: each page renders its own heading, and the
-              account controls live in the sidebar. The content panel floats. */}
-          <main className="m-5 min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-card px-8 py-6">
-            {children}
-          </main>
         </div>
       </div>
     </AiBudgetProvider>

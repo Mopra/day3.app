@@ -8,6 +8,8 @@ import { nowIso } from "@/lib/ids";
 import { ensureAccountSlug, uniqueFormSlug } from "@/lib/slug";
 import { buildFormInstall } from "@/services/form-install";
 import { FORM_FIELD_TYPES, normalizeFields } from "@/lib/form-fields";
+import { FormDesignSchema, formDesignJson, resolveFormDesign } from "@/lib/form-design";
+import { isThemeColor } from "@/lib/theme";
 
 // Custom field definitions sent by the editor. Lightly validated here, then run
 // through normalizeFields (dedupe keys, drop reserved/malformed) before storing.
@@ -44,7 +46,14 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
   const install = buildFormInstall(form, accountSlug);
   const hasVerifiedDomain = await accountHasVerifiedDomain(db, account.id);
 
-  return json({ form, install, hasVerifiedDomain, companyName: account.name ?? "this sender" });
+  // Hand the editor a complete, resolved design object (it edits it directly); the
+  // stored column is a partial JSON string.
+  return json({
+    form: { ...form, design: resolveFormDesign(form.design) },
+    install,
+    hasVerifiedDomain,
+    companyName: account.name ?? "this sender",
+  });
 });
 
 const UpdateFormSchema = z.object({
@@ -57,15 +66,19 @@ const UpdateFormSchema = z.object({
   fields: z.array(FormFieldSchema).optional(),
   headline: z.string().trim().max(140).optional().or(z.literal("")),
   description: z.string().trim().max(500).optional().or(z.literal("")),
+  footerText: z.string().trim().max(500).optional().or(z.literal("")),
+  design: FormDesignSchema.optional(),
   buttonLabel: z.string().trim().min(1).max(40).optional(),
   successMessage: z.string().trim().max(300).optional().or(z.literal("")),
   redirectUrl: z.string().trim().url().max(2000).optional().or(z.literal("")),
+  // Any plain color (hex/rgb/named) — same gate the design colors use, so the accent
+  // control can share the styling popover.
   accentColor: z
     .string()
     .trim()
-    .regex(/^#[0-9a-fA-F]{3,8}$/)
-    .optional()
-    .or(z.literal("")),
+    .max(64)
+    .refine((v) => v === "" || isThemeColor(v), "must be a plain color")
+    .optional(),
 });
 
 export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { params }) => {
@@ -98,6 +111,8 @@ export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { pa
   }
   if (input.headline !== undefined) set.headline = input.headline || null;
   if (input.description !== undefined) set.description = input.description || null;
+  if (input.footerText !== undefined) set.footerText = input.footerText || null;
+  if (input.design !== undefined) set.design = formDesignJson(input.design);
   if (input.buttonLabel !== undefined) set.buttonLabel = input.buttonLabel;
   if (input.successMessage !== undefined) set.successMessage = input.successMessage || null;
   if (input.redirectUrl !== undefined) set.redirectUrl = input.redirectUrl || null;
@@ -106,7 +121,7 @@ export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { pa
   await db.update(forms).set(set).where(and(eq(forms.id, form.id), eq(forms.accountId, account.id)));
 
   const updated = await findForm(db, account.id, form.id);
-  return json({ form: updated });
+  return json({ form: updated ? { ...updated, design: resolveFormDesign(updated.design) } : updated });
 });
 
 export const DELETE = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {

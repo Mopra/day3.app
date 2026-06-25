@@ -7,6 +7,7 @@ import { audiences, forms } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { ensureAccountSlug, uniqueFormSlug } from "@/lib/slug";
 import { FORM_FIELD_TYPES, normalizeFields } from "@/lib/form-fields";
+import { resolveFormDesign } from "@/lib/form-design";
 
 // GET /api/forms — list this account's signup forms with their audience name.
 export const GET = route(async () => {
@@ -25,7 +26,11 @@ export const GET = route(async () => {
   const audienceName = new Map(audienceRows.map((a) => [a.id, a.name]));
 
   return json({
-    forms: rows.map((f) => ({ ...f, audienceName: audienceName.get(f.audienceId) ?? null })),
+    forms: rows.map((f) => ({
+      ...f,
+      design: resolveFormDesign(f.design),
+      audienceName: audienceName.get(f.audienceId) ?? null,
+    })),
   });
 });
 

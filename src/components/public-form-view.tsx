@@ -1,5 +1,7 @@
 import type { CSSProperties } from "react";
 import type { Form } from "@/db/schema";
+import { resolveFormDesign, type FormDesign, type FormDesignInput } from "@/lib/form-design";
+import { isThemeColor } from "@/lib/theme";
 
 // Server-rendered, fully self-contained signup form. Uses inline styles only so
 // it renders identically whether shown as a hosted page, inside an embed iframe
@@ -26,12 +28,17 @@ export type PublicFormFields = Pick<
   | "accentColor"
   | "headline"
   | "description"
+  | "footerText"
   | "collectName"
   | "fields"
   | "buttonLabel"
   | "doubleOptIn"
   | "successMessage"
->;
+> & {
+  // The stored JSON string (server render) or an already-resolved design object (the
+  // live editor). resolveFormDesign normalizes either into a complete FormDesign.
+  design: string | FormDesignInput | null;
+};
 
 // Map a custom field type to a native HTML input type.
 function htmlInputType(type: string): string {
@@ -55,7 +62,7 @@ export type PublicFormViewProps = {
 };
 
 function safeAccent(value: string | null): string {
-  return value && /^#[0-9a-fA-F]{3,8}$/.test(value) ? value : "#111827";
+  return value && isThemeColor(value) ? value : "#111827";
 }
 
 function normalizeState(state?: string): FormState {
@@ -73,7 +80,12 @@ function normalizeState(state?: string): FormState {
   }
 }
 
-const wrapper = (embed: boolean): CSSProperties => ({
+// Card padding — also the inset the banner image cancels so it sits flush to the edges.
+const CARD_PADDING = 28;
+
+// Embeds stay transparent so they blend into the host site; the hosted page paints the
+// user's page background behind the card.
+const wrapper = (embed: boolean, design: FormDesign): CSSProperties => ({
   boxSizing: "border-box",
   minHeight: embed ? "auto" : "100vh",
   margin: 0,
@@ -81,21 +93,43 @@ const wrapper = (embed: boolean): CSSProperties => ({
   display: "flex",
   alignItems: embed ? "stretch" : "center",
   justifyContent: "center",
-  background: embed ? "transparent" : "#f6f7f9",
+  background: embed ? "transparent" : design.pageBg,
   fontFamily:
     "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",
-  color: "#111827",
+  color: design.textColor,
 });
 
-const card: CSSProperties = {
+const card = (design: FormDesign): CSSProperties => ({
   boxSizing: "border-box",
   width: "100%",
   maxWidth: 440,
-  background: "#ffffff",
-  borderRadius: 14,
-  padding: 28,
+  background: design.cardBg,
+  borderRadius: design.cornerRadius,
+  // Clip the flush banner image's corners to the card's roundness.
+  overflow: "hidden",
+  padding: CARD_PADDING,
   boxShadow: "0 1px 3px rgba(0,0,0,0.08), 0 8px 24px rgba(0,0,0,0.04)",
-};
+});
+
+// The top banner image, rendered flush across the card by cancelling the card padding.
+function BannerImage({ design }: { design: FormDesign }) {
+  if (!design.imageUrl) return null;
+  return (
+    // Plain <img> (not next/image): a self-contained, inline-styled form rendered
+    // standalone (hosted page / iframe), where next/image isn't available.
+    <img
+      src={design.imageUrl}
+      alt={design.imageAlt}
+      style={{
+        display: "block",
+        width: `calc(100% + ${CARD_PADDING * 2}px)`,
+        maxHeight: 220,
+        objectFit: "cover",
+        margin: `-${CARD_PADDING}px -${CARD_PADDING}px 22px`,
+      }}
+    />
+  );
+}
 
 const labelStyle: CSSProperties = {
   display: "block",
@@ -123,10 +157,12 @@ function StatusCard({
   title,
   body,
   accent,
+  design,
 }: {
   title: string;
   body: string;
   accent: string;
+  design: FormDesign;
 }) {
   return (
     <div style={{ textAlign: "center" }}>
@@ -148,17 +184,19 @@ function StatusCard({
       >
         ✓
       </div>
-      <h1 style={{ margin: "0 0 8px", fontSize: 19 }}>{title}</h1>
-      <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "#4b5563" }}>{body}</p>
+      <h1 style={{ margin: "0 0 8px", fontSize: 19, color: design.headingColor }}>{title}</h1>
+      <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: design.textColor }}>{body}</p>
     </div>
   );
 }
 
 export function PublicFormView({ form, companyName, state, reason, embed = false }: PublicFormViewProps) {
   const accent = safeAccent(form.accentColor);
+  const design = resolveFormDesign(form.design);
   const view = normalizeState(state);
   const action = `/api/public/forms/${form.id}/submit`;
   const headline = form.headline?.trim() || `Subscribe to ${companyName}`;
+  const footerText = form.footerText?.trim();
 
   let content: React.ReactNode;
 
@@ -166,6 +204,7 @@ export function PublicFormView({ form, companyName, state, reason, embed = false
     content = (
       <StatusCard
         accent={accent}
+        design={design}
         title="Almost there — check your inbox"
         body={
           form.successMessage?.trim() ||
@@ -177,6 +216,7 @@ export function PublicFormView({ form, companyName, state, reason, embed = false
     content = (
       <StatusCard
         accent={accent}
+        design={design}
         title="You're subscribed! 🎉"
         body={form.successMessage?.trim() || `Thanks for subscribing to ${companyName}.`}
       />
@@ -185,6 +225,7 @@ export function PublicFormView({ form, companyName, state, reason, embed = false
     content = (
       <StatusCard
         accent={accent}
+        design={design}
         title="You're not subscribed"
         body="This address previously opted out, so we didn't re-subscribe it."
       />
@@ -193,6 +234,7 @@ export function PublicFormView({ form, companyName, state, reason, embed = false
     content = (
       <StatusCard
         accent="#9ca3af"
+        design={design}
         title="This link is invalid or has expired"
         body="Please sign up again to receive a fresh confirmation link."
       />
@@ -201,6 +243,7 @@ export function PublicFormView({ form, companyName, state, reason, embed = false
     content = (
       <StatusCard
         accent="#9ca3af"
+        design={design}
         title="This form is no longer available"
         body="The owner has turned off this signup form."
       />
@@ -209,9 +252,9 @@ export function PublicFormView({ form, companyName, state, reason, embed = false
     // default + error → render the form
     content = (
       <>
-        <h1 style={{ margin: "0 0 6px", fontSize: 20 }}>{headline}</h1>
+        <h1 style={{ margin: "0 0 6px", fontSize: 20, color: design.headingColor }}>{headline}</h1>
         {form.description?.trim() ? (
-          <p style={{ margin: "0 0 18px", fontSize: 14, lineHeight: 1.6, color: "#4b5563" }}>
+          <p style={{ margin: "0 0 18px", fontSize: 14, lineHeight: 1.6, color: design.textColor }}>
             {form.description}
           </p>
         ) : (
@@ -304,13 +347,29 @@ export function PublicFormView({ form, companyName, state, reason, embed = false
             We&apos;ll email you a link to confirm your subscription.
           </p>
         ) : null}
+
+        {footerText ? (
+          <p
+            style={{
+              margin: "16px 0 0",
+              fontSize: 13,
+              lineHeight: 1.6,
+              color: design.textColor,
+              textAlign: "center",
+              whiteSpace: "pre-line",
+            }}
+          >
+            {footerText}
+          </p>
+        ) : null}
       </>
     );
   }
 
   return (
-    <main style={wrapper(embed)}>
-      <div style={card}>
+    <main style={wrapper(embed, design)}>
+      <div style={card(design)}>
+        <BannerImage design={design} />
         {content}
         <p style={{ margin: "18px 0 0", fontSize: 11, color: "#cbd5e1", textAlign: "center" }}>
           <a

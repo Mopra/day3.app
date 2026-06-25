@@ -99,6 +99,13 @@
       "when": 1782388070580,
       "tag": "0013_gorgeous_sabra",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1782420715058,
+      "tag": "0014_bouncy_karma",
+      "breakpoints": true
     }
   ]
 }

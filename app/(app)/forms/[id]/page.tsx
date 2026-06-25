@@ -10,10 +10,14 @@ import {
   CloudOff,
   Copy,
   ExternalLink,
+  ImagePlus,
   ListChecks,
+  Loader2,
   Palette,
+  RotateCcw,
   Share2,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -34,7 +38,16 @@ import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { PublicFormView } from "@/components/public-form-view";
 import { FormFieldsEditor } from "@/components/form-fields-editor";
+import { ColorField, SliderField } from "@/components/ui/color-field";
+import { compressImageForEmail } from "@/lib/image-compress";
+import { DEFAULT_FORM_DESIGN, MAX_FORM_RADIUS, type FormDesign } from "@/lib/form-design";
 import type { FormField, FormInstall, SignupForm } from "@/lib/types";
+
+// Accent swatches deliberately exclude "transparent" — an invisible button helps no one.
+const ACCENT_SWATCHES = [
+  "#111827", "#1a1a1a", "#2563eb", "#7c3aed", "#db2777", "#16a34a",
+  "#ea580c", "#0891b2", "#4f46e5", "#e11d48",
+];
 
 // How long the form must sit unchanged before we autosave it. Short, so saving
 // feels near-instant — there's no manual Save button (matches the campaign composer).
@@ -208,6 +221,101 @@ function ToggleRow({
   );
 }
 
+// The form's banner image: an upload dropzone when empty, or a preview with
+// replace/remove plus an alt-text field. Uploads reuse the shared campaign-assets
+// endpoint (account-scoped public bucket) and are downscaled first, same as the
+// campaign image sections.
+function FormImageField({
+  url,
+  alt,
+  onChange,
+  onAltChange,
+  upload,
+}: {
+  url: string | null;
+  alt: string;
+  onChange: (url: string | null) => void;
+  onAltChange: (alt: string) => void;
+  upload: (file: File) => Promise<string>;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function pick(file: File | null | undefined) {
+    if (!file) return;
+    setBusy(true);
+    try {
+      // Downscale/re-encode oversized photos before upload; fall back to the original
+      // if optimization fails so an upload is never blocked by it.
+      const prepared = await compressImageForEmail(file).catch(() => file);
+      onChange(await upload(prepared));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't upload that image");
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        className="hidden"
+        onChange={(e) => void pick(e.target.files?.[0])}
+      />
+      {url ? (
+        <div className="space-y-2.5">
+          <div className="overflow-hidden rounded-lg border border-border">
+            {/* Plain <img> (not next/image): an arbitrary uploaded URL, editor preview only. */}
+            <img src={url} alt={alt} className="max-h-32 w-full object-cover" />
+          </div>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => inputRef.current?.click()}
+            >
+              {busy ? <Loader2 className="size-4 animate-spin" /> : <ImagePlus className="size-4" />}
+              Replace
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => onChange(null)}>
+              <Trash2 className="size-4" />
+              Remove
+            </Button>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="form-image-alt">Image description</Label>
+            <Input
+              id="form-image-alt"
+              value={alt}
+              placeholder="Describe the image"
+              onChange={(e) => onAltChange(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Shown if the image can&apos;t load, and read aloud by screen readers.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+          className="flex w-full flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-border/80 px-4 py-6 text-sm text-muted-foreground transition-colors hover:border-border hover:bg-muted/40 disabled:opacity-60"
+        >
+          {busy ? <Loader2 className="size-5 animate-spin" /> : <ImagePlus className="size-5" />}
+          {busy ? "Uploading…" : "Add a banner image"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function FormDetailPage() {
   const api = useApi();
   const router = useRouter();
@@ -288,10 +396,12 @@ export default function FormDetailPage() {
           fields: f.fields,
           headline: f.headline ?? "",
           description: f.description ?? "",
+          footerText: f.footerText ?? "",
           buttonLabel: f.buttonLabel,
           successMessage: f.successMessage ?? "",
           redirectUrl: f.redirectUrl ?? "",
           accentColor: f.accentColor ?? "",
+          design: f.design,
         });
         setAutosaveStatus("saved");
         refreshInstall();
@@ -325,6 +435,20 @@ export default function FormDetailPage() {
   function patch(changes: Partial<SignupForm>) {
     setForm((f) => (f ? { ...f, ...changes } : f));
     scheduleAutosave();
+  }
+
+  // Merge a change into the nested design object and schedule a save.
+  function patchDesign(changes: Partial<FormDesign>) {
+    setForm((f) => (f ? { ...f, design: { ...f.design, ...changes } } : f));
+    scheduleAutosave();
+  }
+
+  // Uploads a banner image to the shared asset bucket and returns its public URL.
+  async function uploadImage(file: File): Promise<string> {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await api.upload<{ url: string }>("/api/campaigns/assets", fd);
+    return res.url;
   }
 
   async function remove() {
@@ -427,7 +551,7 @@ export default function FormDetailPage() {
 
                   <Separator />
 
-                  <GroupLabel>What subscribers see</GroupLabel>
+                  <GroupLabel>Content</GroupLabel>
                   <div className="space-y-1.5">
                     <Label htmlFor="headline">Headline</Label>
                     <Input
@@ -447,32 +571,86 @@ export default function FormDetailPage() {
                       onChange={(e) => patch({ description: e.target.value })}
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="buttonLabel">Button label</Label>
-                      <Input
-                        id="buttonLabel"
-                        value={form.buttonLabel}
-                        onChange={(e) => patch({ buttonLabel: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="accent">Accent color</Label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          id="accent"
-                          type="color"
-                          className="h-9 w-12 cursor-pointer rounded-md border border-input bg-transparent"
-                          value={form.accentColor || "#111827"}
-                          onChange={(e) => patch({ accentColor: e.target.value })}
-                        />
-                        <Input
-                          value={form.accentColor ?? ""}
-                          placeholder="#111827"
-                          onChange={(e) => patch({ accentColor: e.target.value })}
-                        />
-                      </div>
-                    </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="footerText">Footer text</Label>
+                    <Textarea
+                      id="footerText"
+                      rows={2}
+                      placeholder="Optional — a note below the form (privacy line, what to expect…)."
+                      value={form.footerText ?? ""}
+                      onChange={(e) => patch({ footerText: e.target.value })}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="buttonLabel">Button label</Label>
+                    <Input
+                      id="buttonLabel"
+                      value={form.buttonLabel}
+                      onChange={(e) => patch({ buttonLabel: e.target.value })}
+                    />
+                  </div>
+
+                  <Separator />
+
+                  <div className="flex items-center justify-between">
+                    <GroupLabel>Appearance</GroupLabel>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        patch({ accentColor: "#111827" });
+                        patchDesign({ ...DEFAULT_FORM_DESIGN });
+                      }}
+                      className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      <RotateCcw className="size-3" />
+                      Reset
+                    </button>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Banner image</Label>
+                    <FormImageField
+                      url={form.design.imageUrl}
+                      alt={form.design.imageAlt}
+                      onChange={(imageUrl) => patchDesign({ imageUrl })}
+                      onAltChange={(imageAlt) => patchDesign({ imageAlt })}
+                      upload={uploadImage}
+                    />
+                  </div>
+
+                  <div className="space-y-3 rounded-lg border border-border/70 p-3">
+                    <ColorField
+                      label="Page background"
+                      value={form.design.pageBg}
+                      onChange={(c) => patchDesign({ pageBg: c })}
+                    />
+                    <ColorField
+                      label="Card background"
+                      value={form.design.cardBg}
+                      onChange={(c) => patchDesign({ cardBg: c })}
+                    />
+                    <ColorField
+                      label="Heading"
+                      value={form.design.headingColor}
+                      onChange={(c) => patchDesign({ headingColor: c })}
+                    />
+                    <ColorField
+                      label="Text"
+                      value={form.design.textColor}
+                      onChange={(c) => patchDesign({ textColor: c })}
+                    />
+                    <ColorField
+                      label="Button"
+                      value={form.accentColor || "#111827"}
+                      onChange={(c) => patch({ accentColor: c })}
+                      swatches={ACCENT_SWATCHES}
+                    />
+                    <SliderField
+                      label="Corner roundness"
+                      value={form.design.cornerRadius}
+                      onChange={(v) => patchDesign({ cornerRadius: v })}
+                      max={MAX_FORM_RADIUS}
+                    />
                   </div>
                 </div>
               )}
@@ -550,6 +728,10 @@ export default function FormDetailPage() {
                     <TabsTrigger value="embed">Embed</TabsTrigger>
                     <TabsTrigger value="popup">Popup</TabsTrigger>
                     <TabsTrigger value="html">HTML</TabsTrigger>
+                    <TabsTrigger value="ai">
+                      <Sparkles className="size-3.5" />
+                      AI prompt
+                    </TabsTrigger>
                   </TabsList>
 
                   <TabsContent value="share" className="space-y-3 pt-4">
@@ -593,6 +775,16 @@ export default function FormDetailPage() {
                     </p>
                     <Snippet code={install.htmlSnippet} />
                     <CopyButton value={install.htmlSnippet} label="Copy HTML" />
+                  </TabsContent>
+
+                  <TabsContent value="ai" className="space-y-3 pt-4">
+                    <p className="text-sm text-muted-foreground">
+                      No code, no copy-paste juggling. Copy this prompt, paste it into your AI
+                      assistant (ChatGPT, Claude, Cursor, Copilot…), and it&apos;ll walk you through
+                      putting the form on your site.
+                    </p>
+                    <Snippet code={install.aiPrompt} />
+                    <CopyButton value={install.aiPrompt} label="Copy AI prompt" />
                   </TabsContent>
                 </Tabs>
               )}

@@ -113,14 +113,21 @@ The app passes this name on every send; if it doesn't exist, sends fail.
    the AI routes return 403. (AI also needs `OPENROUTER_API_KEY` configured.)
 
 ### Note on Clerk environments
-The app is currently on the **test** Clerk instance (`pk_test_…`, `expert-feline-46`) —
-fine for testing on go.day3.app. For production auth on your own domain, create a Clerk
-**production** instance, then swap `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` + `CLERK_SECRET_KEY`
-(and re-do 2A/2B on the prod instance).
+**Production is live on the Clerk production instance** (frontend domain
+`clerk.day3.app`, email/password only). On Vercel, the **Production** environment uses
+the live keys (`pk_live_…` / `sk_live_…`) and the prod-instance webhook signing secret;
+**Preview/Development still use the test instance** (`pk_test_…`, `expert-feline-46`) so
+local/dev work is unaffected. The webhook (2A) and billing plans (2B) were recreated on
+the prod instance.
+
+To rotate any of these later, swap the Production env vars
+(`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `CLERK_WEBHOOK_SIGNING_SECRET`)
+and redeploy.
 
 ---
 
 ## What I can do for you (Vercel side)
 Give me the values and I'll set + redeploy:
-- the **SNS Topic ARN** → I set `SES_SNS_TOPIC_ARN` and flip `EMAIL_PROVIDER=ses`;
-- the **Clerk signing secret** (`whsec_…`) → I set `CLERK_WEBHOOK_SIGNING_SECRET`.
+- the **SNS Topic ARN** → I set `SES_SNS_TOPIC_ARN` and flip `EMAIL_PROVIDER=ses`.
+
+> Clerk production auth is already live — see "Note on Clerk environments" above.

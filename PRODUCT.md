@@ -297,10 +297,21 @@ One form primitive, multiple install surfaces, all hosted on **`go.day3.app`**:
 - **Popup** — JS widget (`embed.js`) triggered by button click, delay, exit-intent,
   or scroll depth.
 - **Raw HTML** — a plain `<form>` that POSTs directly to Day3 (no JavaScript).
+- **AI prompt** — a one-click copyable prompt bundling the embed/HTML snippets and
+  guardrails (don't rename fields, keep the action URL) that a user pastes into their
+  own AI assistant (ChatGPT, Claude, Cursor…) to get the form onto their site.
 
-Form configuration: headline, description, button label, accent color, success
-message, optional post-signup redirect, active/off toggle, and a **double opt-in**
-toggle. **Fields** are fully customizable — email is always collected, and you can add
+Form configuration: headline, description, an optional **footer text** block, button
+label, success message, optional post-signup redirect, active/off toggle, and a
+**double opt-in** toggle. **Design** is tunable from the same panel — a clean,
+Apple-inspired set of controls: page & card **background colors**, **heading** and
+**body text** colors, **button (accent) color**, **corner roundness**, and an optional
+**banner image** uploaded to the asset bucket and shown flush across the top of the
+card. Colors are validated (hex/rgb/named only) and applied as inline styles at render
+time, so the design carries across the hosted page, the iframe embed, and the popup
+widget automatically (the raw-HTML snippet stays "restyle it yourself"). Defaults
+reproduce the prior clean white-card look, so existing forms are unchanged until edited.
+**Fields** are fully customizable — email is always collected, and you can add
 any number of extra fields (first/last name, phone, company, anything) with a label,
 type, and required flag; each becomes a personalization tag (e.g. `{{phone}}`) usable
 in campaigns. A **live preview** updates as you edit, and the
