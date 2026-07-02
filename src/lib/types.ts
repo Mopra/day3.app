@@ -42,6 +42,7 @@ export type OnboardingState = {
   hasSubscribers: boolean;
   hasCampaign: boolean;
   hasSentCampaign: boolean;
+  hasMailingAddress: boolean;
   accountPaused: boolean;
   canSend: boolean;
   sendBlockedReason: string | null;

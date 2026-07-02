@@ -20,7 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { RowOpen, rowLinkProps } from "@/components/ui/data-list";
+import { ListError, RowOpen, rowLinkProps } from "@/components/ui/data-list";
 import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { formatDate, statusLabel, statusVariant } from "@/lib/format";
@@ -67,40 +67,72 @@ export default function DashboardPage() {
   const [health, setHealth] = useState<AccountHealth | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [campaigns, setCampaigns] = useState<CampaignListItem[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    // Sync resolves the local account and refreshes billing entitlements
-    // from Clerk on every dashboard load.
+    setLoadError(false);
+    // Sync resolves the local account, then account + onboarding are fetched in
+    // parallel (they both read the synced row — no need to serialize them).
     api
       .post<{ account: Account }>("/api/account/sync")
       .then(async ({ account }) => {
         setAccount(account);
-        const res = await api.get<{ account: Account; health: AccountHealth }>("/api/account");
+        const [res, ob] = await Promise.all([
+          api.get<{ account: Account; health: AccountHealth }>("/api/account"),
+          api.get<{ onboarding: OnboardingState }>("/api/account/onboarding"),
+        ]);
         setAccount(res.account);
         setHealth(res.health);
-        // Onboarding state is computed from the synced account, so fetch it
-        // after sync to reflect the latest billing entitlements.
-        const ob = await api.get<{ onboarding: OnboardingState }>("/api/account/onboarding");
         setOnboarding(ob.onboarding);
       })
-      .catch((err) => toast.error(err.message));
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err.message);
+      });
     api
       .get<{ campaigns: CampaignListItem[] }>("/api/campaigns")
       .then((res) => setCampaigns(res.campaigns.slice(0, 5)))
       .catch(() => setCampaigns([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [organization?.id]);
+  }, [organization?.id, reloadKey]);
 
   // Derived, once, so the value and footer of each card stay in sync.
-  const usage = account && planCanSend(account.plan) ? usageInfo(account) : null;
+  const canSend = account ? planCanSend(account.plan) : false;
+  const usage = account && canSend ? usageInfo(account) : null;
   const sendingDegraded = !!health && health.status !== "normal";
-  const statusDot = !account
-    ? "bg-muted-foreground/40"
-    : !account.sendingEnabled
-      ? "bg-destructive"
-      : sendingDegraded
-        ? "bg-amber-500"
-        : "bg-emerald-500";
+  // A brand-new free account is *set-up mode*, not "broken" — reserve the red/
+  // "Disabled" treatment for a real fault (risk pause, or a paid account whose
+  // sending is off). Free reads as an informational blue, so day one never looks
+  // like something failed.
+  const sendingState: "loading" | "paused" | "setup" | "disabled" | "degraded" | "normal" =
+    !account
+      ? "loading"
+      : account.riskStatus === "paused"
+        ? "paused"
+        : !canSend
+          ? "setup"
+          : !account.sendingEnabled
+            ? "disabled"
+            : sendingDegraded
+              ? "degraded"
+              : "normal";
+  const statusDot = {
+    loading: "bg-muted-foreground/40",
+    paused: "bg-destructive",
+    setup: "bg-blue-500",
+    disabled: "bg-destructive",
+    degraded: "bg-amber-500",
+    normal: "bg-emerald-500",
+  }[sendingState];
+  const sendingValue = {
+    loading: "",
+    paused: "Paused",
+    setup: "Set-up mode",
+    disabled: "Disabled",
+    degraded: "Enabled",
+    normal: "Enabled",
+  }[sendingState];
 
   return (
     <div className="space-y-6">
@@ -115,6 +147,17 @@ export default function DashboardPage() {
         </div>
         <Button render={<Link href="/campaigns/new">New campaign</Link>} />
       </div>
+
+      {loadError && !account && (
+        <Card>
+          <CardContent>
+            <ListError
+              onRetry={() => setReloadKey((k) => k + 1)}
+              message="We couldn't load your dashboard. Check your connection and try again."
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {account?.riskStatus === "paused" && (
         <Alert variant="destructive">
@@ -146,9 +189,23 @@ export default function DashboardPage() {
           {account ? (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-2xl font-semibold">{planLabel(account.plan)}</span>
-              <Badge variant={account.subscriptionStatus === "active" ? "default" : "outline"}>
-                {account.subscriptionStatus}
-              </Badge>
+              {/* On free, "active" reads as contradictory next to "Sending: set-up
+                  mode" — say what free actually is. Reserve the status word for paid. */}
+              {!canSend ? (
+                <Badge variant="secondary">Set-up &amp; drafts</Badge>
+              ) : (
+                <Badge
+                  variant={
+                    account.subscriptionStatus === "active"
+                      ? "default"
+                      : account.subscriptionStatus === "past_due"
+                        ? "destructive"
+                        : "outline"
+                  }
+                >
+                  {account.subscriptionStatus}
+                </Badge>
+              )}
             </div>
           ) : (
             <Skeleton className="h-8 w-24" />
@@ -201,9 +258,15 @@ export default function DashboardPage() {
           footer={
             !account ? (
               <Skeleton className="h-4 w-24" />
-            ) : !account.sendingEnabled ? (
+            ) : sendingState === "setup" ? (
+              <Link href="/billing" className="text-primary underline-offset-4 hover:underline">
+                Subscribe to unlock sending
+              </Link>
+            ) : sendingState === "paused" ? (
+              <span className="text-muted-foreground">Paused — contact support</span>
+            ) : sendingState === "disabled" ? (
               <span className="text-muted-foreground">Sending is turned off</span>
-            ) : sendingDegraded ? (
+            ) : sendingState === "degraded" ? (
               <span className="text-muted-foreground tabular-nums">
                 Bounce {(health!.bounceRate * 100).toFixed(2)}% · Complaints{" "}
                 {(health!.complaintRate * 100).toFixed(3)}%
@@ -216,7 +279,7 @@ export default function DashboardPage() {
           {account ? (
             <span className="inline-flex items-center gap-2 text-2xl font-semibold">
               <span className={cn("size-2.5 rounded-full", statusDot)} aria-hidden />
-              {account.sendingEnabled ? "Enabled" : "Disabled"}
+              {sendingValue}
             </span>
           ) : (
             <Skeleton className="h-8 w-28" />

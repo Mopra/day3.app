@@ -20,6 +20,7 @@ import {
 import {
   ListCount,
   ListEmpty,
+  ListError,
   ListFilter,
   ListNoResults,
   ListSearch,
@@ -52,12 +53,17 @@ export default function CampaignsPage() {
   const [status, setStatus] = useState("all");
   const [confirm, setConfirm] = useState<CampaignListItem | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(() => {
+    setLoadError(false);
     api
       .get<{ campaigns: CampaignListItem[] }>("/api/campaigns")
       .then((res) => setCampaigns(res.campaigns))
-      .catch((err) => toast.error(err.message));
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err.message);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -143,7 +149,9 @@ export default function CampaignsPage() {
 
       <Card>
         <CardContent>
-          {list.view === null ? (
+          {loadError && campaigns === null ? (
+            <ListError onRetry={load} />
+          ) : list.view === null ? (
             <ListSkeleton />
           ) : list.isEmpty ? (
             <ListEmpty

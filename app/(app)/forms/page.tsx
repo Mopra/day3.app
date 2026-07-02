@@ -38,6 +38,7 @@ import {
 import {
   ListCount,
   ListEmpty,
+  ListError,
   ListFilter,
   ListNoResults,
   ListSearch,
@@ -70,6 +71,7 @@ export default function FormsPage() {
   const [status, setStatus] = useState("all");
   const [confirmDelete, setConfirmDelete] = useState<SignupForm | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   const [name, setName] = useState("");
   const [audienceId, setAudienceId] = useState("");
@@ -77,10 +79,14 @@ export default function FormsPage() {
   const [collectName, setCollectName] = useState(false);
 
   const load = useCallback(() => {
+    setLoadError(false);
     api
       .get<{ forms: SignupForm[] }>("/api/forms")
       .then((res) => setForms(res.forms))
-      .catch((err) => toast.error(err.message));
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err.message);
+      });
     api
       .get<{ audiences: Audience[] }>("/api/audiences")
       .then((res) => setAudiences(res.audiences))
@@ -261,7 +267,9 @@ export default function FormsPage() {
 
       <Card>
         <CardContent>
-          {list.view === null ? (
+          {loadError && forms === null ? (
+            <ListError onRetry={load} />
+          ) : list.view === null ? (
             <ListSkeleton />
           ) : list.isEmpty ? (
             <ListEmpty

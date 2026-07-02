@@ -31,6 +31,7 @@ import {
 import {
   ListCount,
   ListEmpty,
+  ListError,
   ListFilter,
   ListNoResults,
   ListSearch,
@@ -179,14 +180,20 @@ export default function MetricsPage() {
   const { organization } = useOrganization();
   const [rows, setRows] = useState<CampaignMetricsRow[] | null>(null);
   const [campaign, setCampaign] = useState("all");
+  const [loadError, setLoadError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    setLoadError(false);
     api
       .get<{ campaigns: CampaignMetricsRow[] }>("/api/metrics")
       .then((res) => setRows(res.campaigns))
-      .catch((err) => toast.error(err.message));
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err.message);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [organization?.id]);
+  }, [organization?.id, reloadKey]);
 
   // Counts for the chosen scope: all campaigns summed, or the one selected.
   const counts = useMemo<CampaignMetricCounts | null>(() => {
@@ -238,6 +245,21 @@ export default function MetricsPage() {
       )}
     </div>
   );
+
+  // Load failed before any data arrived — offer a retry instead of an endless
+  // skeleton.
+  if (loadError && !rows) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <Card>
+          <CardContent>
+            <ListError onRetry={() => setReloadKey((k) => k + 1)} />
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   // Loading.
   if (!counts) {

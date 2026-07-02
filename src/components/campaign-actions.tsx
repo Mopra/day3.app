@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { CalendarClock, Trash2 } from "lucide-react";
+import { CalendarClock, Check, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
@@ -38,6 +38,9 @@ function fixLinkFor(reason: string): { href: string; label: string } | null {
     r.includes("billing")
   ) {
     return { href: "/billing", label: "Go to billing" };
+  }
+  if (r.includes("address") || r.includes("settings")) {
+    return { href: "/settings", label: "Add your address" };
   }
   if (r.includes("domain")) {
     return { href: "/domains", label: "Verify a domain" };
@@ -280,6 +283,23 @@ export function CampaignActions({
                 <dd className="min-w-0 break-words font-medium">{campaign.subject}</dd>
               </div>
             </dl>
+            {/* A quick green "everything's ready" reassurance at the point of no
+                return — the button is only enabled once these pass, so this is
+                confidence, not a gate. */}
+            {onboarding && (
+              <ul className="space-y-1.5 text-sm text-muted-foreground">
+                {[
+                  { ok: onboarding.hasVerifiedDomain, label: "Verified sending domain" },
+                  { ok: onboarding.hasMailingAddress, label: "Business address on file" },
+                  { ok: onboarding.hasSubscribers, label: "Audience has subscribers" },
+                ].map((c) => (
+                  <li key={c.label} className="flex items-center gap-2">
+                    <Check className="size-4 shrink-0 text-emerald-600" />
+                    {c.label}
+                  </li>
+                ))}
+              </ul>
+            )}
             {blockFix && (
               <p className="text-sm text-muted-foreground">
                 <Link href={blockFix.href} className="font-medium underline underline-offset-4">

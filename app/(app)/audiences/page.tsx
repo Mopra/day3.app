@@ -30,6 +30,7 @@ import {
 import {
   ListCount,
   ListEmpty,
+  ListError,
   ListNoResults,
   ListSearch,
   ListSkeleton,
@@ -58,12 +59,17 @@ export default function AudiencesPage() {
   const [savingRename, setSavingRename] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Audience | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   const load = useCallback(() => {
+    setLoadError(false);
     api
       .get<{ audiences: Audience[] }>("/api/audiences")
       .then((res) => setAudiences(res.audiences))
-      .catch((err) => toast.error(err.message));
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err.message);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -160,7 +166,9 @@ export default function AudiencesPage() {
 
       <Card>
         <CardContent>
-          {list.view === null ? (
+          {loadError && audiences === null ? (
+            <ListError onRetry={load} />
+          ) : list.view === null ? (
             <ListSkeleton />
           ) : list.isEmpty ? (
             <ListEmpty

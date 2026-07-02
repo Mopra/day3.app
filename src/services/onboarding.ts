@@ -14,6 +14,10 @@ export type OnboardingState = {
   hasSubscribers: boolean;
   hasCampaign: boolean;
   hasSentCampaign: boolean;
+  // A physical mailing address is legally required in every email footer, so it's
+  // a send gate — surfaced here so the UI greys the Send button with a fix link
+  // rather than letting the user hit a raw error only after confirming.
+  hasMailingAddress: boolean;
   // Send gating, mirroring the campaign-submit route's checks.
   accountPaused: boolean;
   canSend: boolean;
@@ -50,11 +54,18 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
   const eligibility = checkSendEligibility(account);
   const hasVerifiedDomain = !!verifiedDomain;
   const hasSubscribers = Number(subscriberCount) > 0;
+  const hasMailingAddress = !!account.companyAddress?.trim();
 
   // The first concrete thing stopping a send, in the order a user must fix them.
+  // Mirrors the real gate order (plan eligibility, then campaignSendGateError:
+  // mailing address → verified domain → subscribers) so a user never sees the
+  // Send button enabled and then fails on a gate that was knowable up front.
   let sendBlockedReason: string | null = null;
   if (!eligibility.allowed) {
     sendBlockedReason = eligibility.reason;
+  } else if (!hasMailingAddress) {
+    sendBlockedReason =
+      "Add your business mailing address in Settings — it's legally required in every email.";
   } else if (!hasVerifiedDomain) {
     sendBlockedReason = "Verify a sending domain before you can send.";
   } else if (!hasSubscribers) {
@@ -67,6 +78,7 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
     hasSubscribers,
     hasCampaign: Number(campaignCounts?.total ?? 0) > 0,
     hasSentCampaign: Number(campaignCounts?.sent ?? 0) > 0,
+    hasMailingAddress,
     accountPaused: account.riskStatus === "paused" || !account.sendingEnabled,
     canSend: sendBlockedReason === null,
     sendBlockedReason,

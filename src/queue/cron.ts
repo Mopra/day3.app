@@ -6,6 +6,7 @@ import { nowIso } from "../lib/ids";
 import { DOMAIN_RECHECK_WINDOW_DAYS } from "../lib/domain";
 import { logJob } from "../lib/job-log";
 import { enforceAccountHealth } from "../services/health";
+import { notifyAccount } from "../services/notifications";
 import { getDomainIdentity, type DomainIdentityState } from "../services/ses-identity";
 import { SEND_BATCH_SIZE, type JobQueue } from "./messages";
 
@@ -107,7 +108,7 @@ export async function releaseDueCampaigns(
       campaignContentError(campaign) ??
       (await campaignSendGateError(db, campaign.accountId, campaign));
     if (gateError) {
-      await db
+      const reverted = await db
         .update(campaigns)
         .set({
           status: "draft",
@@ -115,7 +116,26 @@ export async function releaseDueCampaigns(
           pausedReason: `Scheduled send didn't start: ${gateError}`,
           updatedAt: nowIso(),
         })
-        .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "scheduled")));
+        .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "scheduled")))
+        .returning({ id: campaigns.id });
+      // Tell the user — a scheduled send that silently reverts to draft is the
+      // worst kind of surprise (they think it went out). Best-effort; the DB
+      // change above is the source of truth. Only notify if we actually claimed
+      // the transition (a concurrent sweep may have handled it).
+      if (reverted.length > 0) {
+        const account = await db.query.accounts.findFirst({
+          where: eq(accounts.id, campaign.accountId),
+        });
+        if (account) {
+          await notifyAccount(db, account, {
+            kind: "scheduled_send_failed",
+            title: `Your scheduled send didn't go out: "${campaign.name}"`,
+            body: `We couldn't start the scheduled send because: ${gateError} The campaign is back in your drafts — fix that and send again when you're ready.`,
+            ctaHref: `/campaigns/${campaign.id}`,
+            ctaLabel: "Open the campaign",
+          });
+        }
+      }
       continue;
     }
 

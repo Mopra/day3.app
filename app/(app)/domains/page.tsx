@@ -31,6 +31,7 @@ import {
 import {
   ListCount,
   ListEmpty,
+  ListError,
   ListFilter,
   ListNoResults,
   ListSearch,
@@ -123,13 +124,18 @@ export default function DomainsPage() {
   const [status, setStatus] = useState("all");
   const [confirmDelete, setConfirmDelete] = useState<SendingDomain | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const { register, handleSubmit, reset, watch, setValue, formState } = useForm<DomainForm>();
 
   const load = useCallback(() => {
+    setLoadError(false);
     api
       .get<{ domains: SendingDomain[] }>("/api/domains")
       .then((res) => setDomains(res.domains))
-      .catch((err) => toast.error(err.message));
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err.message);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -277,7 +283,9 @@ export default function DomainsPage() {
 
       <Card>
         <CardContent>
-          {list.view === null ? (
+          {loadError && domains === null ? (
+            <ListError onRetry={load} />
+          ) : list.view === null ? (
             <ListSkeleton />
           ) : list.isEmpty ? (
             <ListEmpty

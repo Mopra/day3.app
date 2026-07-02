@@ -25,6 +25,7 @@ import {
 import {
   ListCount,
   ListEmpty,
+  ListError,
   ListFilter,
   ListNoResults,
   ListSearch,
@@ -208,6 +209,9 @@ export default function ActivityPage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<ActivityEvent | null>(null);
+  const [loadError, setLoadError] = useState(false);
+  // Bumped by the retry button to re-run the first-page effect after a failure.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchInput.trim()), 250);
@@ -241,6 +245,7 @@ export default function ActivityPage() {
   // (Re)load the first page on mount and whenever a filter changes.
   useEffect(() => {
     let cancelled = false;
+    setLoadError(false);
     api
       .get<{ events: ActivityEvent[]; total: number }>(activityUrl(0))
       .then((res) => {
@@ -248,12 +253,16 @@ export default function ActivityPage() {
         setEvents(res.events);
         setTotal(res.total);
       })
-      .catch((err) => toast.error(err.message));
+      .catch((err) => {
+        if (cancelled) return;
+        setLoadError(true);
+        toast.error(err.message);
+      });
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activityUrl]);
+  }, [activityUrl, reloadKey]);
 
   async function loadMore() {
     if (!events || loadingMore) return;
@@ -318,7 +327,9 @@ export default function ActivityPage() {
 
       <Card>
         <CardContent>
-          {!events ? (
+          {loadError && !events ? (
+            <ListError onRetry={() => setReloadKey((k) => k + 1)} />
+          ) : !events ? (
             <ListSkeleton rows={8} />
           ) : events.length === 0 && !hasFilters ? (
             <ListEmpty

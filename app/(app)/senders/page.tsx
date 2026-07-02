@@ -36,6 +36,7 @@ import {
 import {
   ListCount,
   ListEmpty,
+  ListError,
   ListFilter,
   ListNoResults,
   ListSearch,
@@ -67,6 +68,7 @@ export default function SendersPage() {
   const [senders, setSenders] = useState<Sender[] | null>(null);
   const [domains, setDomains] = useState<SendingDomain[]>([]);
   const [status, setStatus] = useState("all");
+  const [loadError, setLoadError] = useState(false);
 
   // Add/edit dialog. `editing` holds the sender being edited (null = add new).
   const [open, setOpen] = useState(false);
@@ -82,10 +84,14 @@ export default function SendersPage() {
   const verifiedDomains = domains.filter((d) => domainState(d) === "verified");
 
   const load = useCallback(() => {
+    setLoadError(false);
     api
       .get<{ senders: Sender[] }>("/api/senders")
       .then((res) => setSenders(res.senders))
-      .catch((err) => toast.error(err.message));
+      .catch((err) => {
+        setLoadError(true);
+        toast.error(err.message);
+      });
     api
       .get<{ domains: SendingDomain[] }>("/api/domains")
       .then((res) => setDomains(res.domains))
@@ -230,7 +236,9 @@ export default function SendersPage() {
 
       <Card>
         <CardContent>
-          {list.view === null ? (
+          {loadError && senders === null ? (
+            <ListError onRetry={load} />
+          ) : list.view === null ? (
             <ListSkeleton />
           ) : list.isEmpty ? (
             <ListEmpty

@@ -530,6 +530,38 @@ export const riskReviews = pgTable("risk_reviews", {
   createdAt: tstz("created_at").notNull(),
 });
 
+// In-app notifications for account-level events the user needs to know about even
+// when the tab is closed (a scheduled send that failed to release, a completed
+// import, signups turned away at the plan cap, an auto-pause). Written by
+// services/notifications.ts alongside the email it sends; read by the sidebar
+// notification bell. Account-scoped; newest-first.
+export const NOTIFICATION_KINDS = [
+  "scheduled_send_failed",
+  "campaign_sent",
+  "import_completed",
+  "import_failed",
+  "subscribers_cap_reached",
+  "account_paused",
+] as const;
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    kind: text("kind").$type<NotificationKind>().notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    // Optional in-app link to the page that resolves the notification.
+    ctaLabel: text("cta_label"),
+    ctaHref: text("cta_href"),
+    readAt: tstz("read_at"),
+    createdAt: tstz("created_at").notNull(),
+  },
+  (t) => [index("idx_notifications_account_created").on(t.accountId, t.createdAt)],
+);
+
 export const jobLogs = pgTable("job_logs", {
   id: text("id").primaryKey(),
   jobType: text("job_type").notNull(),

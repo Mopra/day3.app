@@ -7,6 +7,7 @@ import { maxSubscribersForPlan } from "../lib/plans-catalog";
 import type { JobQueue } from "../queue/messages";
 import { isEmailSuppressed } from "./suppression";
 import { countAccountSubscribers } from "./subscriber-limit";
+import { notifyAccountThrottled } from "./notifications";
 
 // Every public signup surface (hosted page, iframe, raw HTML form, future API)
 // funnels through submitFormSignup. It is the single place a public signup is
@@ -73,7 +74,27 @@ export async function submitFormSignup(
     const existing = await db.query.subscribers.findFirst({
       where: and(eq(subscribers.audienceId, form.audienceId), eq(subscribers.email, email)),
     });
-    if (!existing) return { outcome: "opted_out" };
+    if (!existing) {
+      // A real signup is being turned away because the list is full. Silently
+      // dropping it (and only it) protects the cap, but the account owner must
+      // know their form has stopped collecting — otherwise they just see the
+      // count plateau at 500 with no explanation. Notify at most once a day.
+      if (account) {
+        await notifyAccountThrottled(
+          db,
+          account,
+          {
+            kind: "subscribers_cap_reached",
+            title: "Your signup form has hit the Free plan limit",
+            body: `You've reached the Free plan's ${cap.toLocaleString()}-subscriber limit, so new signups from your forms are being turned away. Upgrade to a paid plan for unlimited subscribers and keep growing your list.`,
+            ctaHref: "/billing",
+            ctaLabel: "Upgrade your plan",
+          },
+          24,
+        );
+      }
+      return { outcome: "opted_out" };
+    }
   }
 
   const wantsConfirmation = form.doubleOptIn;

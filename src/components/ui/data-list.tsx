@@ -25,7 +25,7 @@
 import * as React from "react";
 import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
-import { ArrowDown, ArrowUp, ChevronRight, ChevronsUpDown, MoreHorizontal, Search, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, ChevronsUpDown, MoreHorizontal, RefreshCw, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Menu, MenuContent, MenuTrigger } from "@/components/ui/menu";
@@ -336,6 +336,36 @@ export function ListNoResults({
       <p className="text-sm text-muted-foreground">{message}</p>
       <Button variant="outline" size="sm" className="mt-3" onClick={onClear}>
         Clear filters
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Shown when the list's initial fetch fails. Without this a `.catch` that only
+ * toasts leaves the page on its loading skeleton forever — one transient hiccup
+ * becomes a dead screen. Gives the user a clear reason and a Retry that re-runs
+ * the page's loader.
+ */
+export function ListError({
+  onRetry,
+  message = "We couldn't load this. Check your connection and try again.",
+  title = "Couldn't load",
+}: {
+  onRetry: () => void;
+  message?: string;
+  title?: string;
+}) {
+  return (
+    <div className="flex flex-col items-center px-6 py-12 text-center">
+      <div className="flex size-11 items-center justify-center rounded-full bg-destructive/10">
+        <AlertTriangle className="size-5 text-destructive" />
+      </div>
+      <p className="mt-3 font-medium">{title}</p>
+      <p className="mt-1 max-w-sm text-sm text-muted-foreground">{message}</p>
+      <Button variant="outline" size="sm" className="mt-4" onClick={onRetry}>
+        <RefreshCw className="size-4" />
+        Try again
       </Button>
     </div>
   );

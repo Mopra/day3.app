@@ -70,6 +70,29 @@ describe("computeOnboardingState", () => {
     expect(state.sendBlockedReason).toBeNull();
   });
 
+  it("blocks the send on a missing mailing address before domain/subscribers", async () => {
+    const db = await testDb();
+    // Everything else in place, but no company mailing address.
+    const account = await seedAccount(db, { companyAddress: null });
+    await seedDomain(db, account.id);
+    const audience = await seedAudience(db, account.id);
+    await seedSubscribers(db, account.id, audience.id, TEST_EMAILS);
+
+    const state = await computeOnboardingState(db, account);
+
+    expect(state.hasMailingAddress).toBe(false);
+    expect(state.canSend).toBe(false);
+    // The address is the blocker the user sees — not a post-confirm surprise.
+    expect(state.sendBlockedReason).toMatch(/address/i);
+  });
+
+  it("reports a mailing address as present when set", async () => {
+    const db = await testDb();
+    const account = await seedAccount(db);
+    const state = await computeOnboardingState(db, account);
+    expect(state.hasMailingAddress).toBe(true);
+  });
+
   it("does not count unsubscribed-only audiences as having subscribers", async () => {
     const db = await testDb();
     const account = await seedAccount(db);

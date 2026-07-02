@@ -16,6 +16,7 @@ export type IdPrefix =
   | "sup"
   | "rsk"
   | "job"
+  | "ntf"
   | "dnsint";
 
 export function newId(prefix: IdPrefix): string {
