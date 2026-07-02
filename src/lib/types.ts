@@ -291,6 +291,22 @@ export type Recipient = {
   updatedAt: string;
 };
 
+// One row in the account-wide Activity log — an email_events row joined with
+// its campaign's name. `payloadJson` is the raw provider payload (SES/SNS
+// message, {error} for send failures, {url} for clicks) shown under
+// "Technical details".
+export type ActivityEvent = {
+  id: string;
+  eventType: string;
+  email: string | null;
+  campaignId: string | null;
+  campaignName: string | null;
+  provider: string;
+  providerMessageId: string | null;
+  payloadJson: string | null;
+  createdAt: string;
+};
+
 export type RiskReview = {
   riskLevel: string;
   riskScore: number;

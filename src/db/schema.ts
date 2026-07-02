@@ -470,6 +470,9 @@ export const emailEvents = pgTable(
   (t) => [
     index("idx_email_events_campaign_id").on(t.campaignId),
     index("idx_email_events_provider_message_id").on(t.providerMessageId),
+    // The Activity page lists an account's events newest-first with offset
+    // pagination — this composite index serves that scan directly.
+    index("idx_email_events_account_created").on(t.accountId, t.createdAt),
     // SNS delivers at-least-once: the same delivery/bounce/complaint notification
     // can arrive multiple times. De-dup on (providerMessageId, eventType) so a
     // redelivery is a no-op insert (see onConflictDoNothing in the SES webhook).

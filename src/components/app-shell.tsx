@@ -12,10 +12,10 @@ import { useApi } from "@/lib/api";
 import { formatDuration } from "@/lib/format";
 import { AiBudgetProvider, useAiBudget } from "@/components/ai-budget-context";
 import { HelpButton } from "@/components/help-button";
-import { PreviewBanner } from "@/components/preview-banner";
 import { LayoutGridIcon } from "@/components/ui/animated-icons/layout-grid";
 import { MailCheckIcon } from "@/components/ui/animated-icons/mail-check";
 import { ChartColumnIcon } from "@/components/ui/animated-icons/chart-column";
+import { ActivityIcon } from "@/components/ui/animated-icons/activity";
 import { UsersIcon } from "@/components/ui/animated-icons/users";
 import { FormInputIcon } from "@/components/ui/animated-icons/form-input";
 import { AtSignIcon } from "@/components/ui/animated-icons/at-sign";
@@ -46,6 +46,7 @@ const NAV: NavEntry[] = [
   { to: "/senders", label: "Senders", icon: AtSignIcon },
   { to: "/forms", label: "Forms", icon: FormInputIcon },
   { to: "/metrics", label: "Metrics", icon: ChartColumnIcon },
+  { to: "/activity", label: "Activity", icon: ActivityIcon },
   { to: "/billing", label: "Billing", icon: CreditCardIcon },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
@@ -153,7 +154,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <AiBudgetProvider>
       <div className="flex h-screen flex-col bg-background">
-        <PreviewBanner />
         <div className="flex min-h-0 flex-1">
           <aside className="flex w-56 shrink-0 flex-col">
             <Link href="/dashboard" className="flex h-14 items-center px-4">

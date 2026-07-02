@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-06-25**.
+> Last verified against the codebase: **2026-07-02**.
 
 ---
 
@@ -398,7 +398,24 @@ rewritten. The first click stamps `clicked_at` (and back-fills `opened_at`, sinc
 proves an open) and records one `click` event; repeat clicks are no-ops. Per-link
 click breakdowns are not surfaced yet (the click event stores the URL for future use).
 
-### 6.11 In-app help
+### 6.11 Activity (email event log)
+A dedicated **Activity** page (in the main nav) lists every email event for the
+account newest-first — sent, delivered, opened, clicked, bounced, marked as spam,
+unsubscribed, failed, and provider errors — so users can check status and
+troubleshoot ("did jane@example.com get the newsletter, and if not, why?"):
+- **Filters:** by event type, by campaign, and a search box matching the recipient
+  email (substring). Offset-paginated with "Load more".
+- **Detail drawer:** clicking a row opens a side panel with a plain-language
+  explanation of the event (e.g. permanent vs. temporary bounce, what suppression
+  means), the recipient, time, a link to the campaign, the failure reason /
+  clicked URL / bounce diagnostic where applicable, and the raw provider payload
+  behind a collapsed "Technical details" section.
+- Backed by the append-only `email_events` table (written by the send pipeline,
+  the SES webhook, and the tracking endpoints); the page is read-only. The name
+  "Activity" is deliberately broader than email so future sources (e.g. an API
+  audit log) can slot in alongside without renaming.
+
+### 6.12 In-app help
 A **Help** button sits at the bottom of the sidebar on every page. It opens a small
 popover with a single message box; sending relays the message to the support inbox
 (`connect@day3.app`) with the signed-in user set as Reply-To, so the team can reply
