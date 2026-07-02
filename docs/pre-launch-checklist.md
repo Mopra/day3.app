@@ -151,7 +151,8 @@ That single keyword rule is the whole task. Without it, the most important failu
 
 ## 5. Already-known launch items (unchanged)
 
-- AWS SES production access (the main blocker) — lead the request with: opt-in,
-  one-click unsubscribe, and bounce/complaint auto-suppression are already built in.
+- ~~AWS SES production access (the main blocker)~~ — **✅ Granted 2026-07-02.** The
+  account is out of the sandbox; the remaining step is to flip `EMAIL_PROVIDER=ses`
+  on both tiers and redeploy/restart (see `go-live.md` §1F).
 - Real Clerk Billing plan config; production `CLERK_WEBHOOK_SIGNING_SECRET`.
 - A final human smoke test: sign-up → org → verify domain → send a real campaign.

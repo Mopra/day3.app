@@ -62,12 +62,14 @@ The app passes this name on every send; if it doesn't exist, sends fail.
 4. (Recommended) Lock the webhook to this topic: set `SES_SNS_TOPIC_ARN` on Vercel
    to the Topic ARN, then redeploy. The webhook rejects messages from any other topic.
 
-### 1E. Production access (leave sandbox)
-1. SES → **Account dashboard** → **Request production access** (you said this is in
-   progress). Until granted you are in **sandbox**: you can only send to *verified*
-   recipients.
-2. To test in sandbox: SES → **Identities** → **Create identity** → **Email address**
-   → enter your own address → click the verification link AWS emails you.
+### 1E. Production access — ✅ GRANTED (2026-07-02)
+Amazon SES production access has been approved: the account is **out of the sandbox**
+and can send to any recipient (no per-address verification required). Nothing to do
+here — proceed to 1F to flip the provider.
+
+> Historical: while in sandbox you could only send to verified identities
+> (SES → **Identities** → **Create identity** → verify your own address). No longer
+> a constraint.
 
 ### 1F. Flip the provider to SES
 - **Vercel:** set `EMAIL_PROVIDER=ses` (and `SES_SNS_TOPIC_ARN` from 1D) → redeploy.
