@@ -68,6 +68,11 @@ const fullSchema = z.object({
   // to boot. OPENROUTER_MODEL overrides the default model slug.
   OPENROUTER_API_KEY: secret("OPENROUTER_API_KEY").optional(),
   OPENROUTER_MODEL: z.string().optional(),
+  // Campaign risk review (worker): "mock"/unset = deterministic checks only;
+  // anything else layers the AI pass on top (escalate-only, fails open — see
+  // src/services/risk-ai.ts). Needs OPENROUTER_API_KEY, enforced below.
+  AI_REVIEW_MODE: z.string().optional(),
+  OPENROUTER_RISK_MODEL: z.string().optional(),
   // Error sink (optional). When set, failed/dead-lettered jobs, 500s, and
   // reputation auto-pauses are POSTed here (see src/lib/logger.ts). Unset → no
   // error reporting; a production boot without it logs a loud warning below.
@@ -89,6 +94,9 @@ const workerSchema = fullSchema.pick({
   UNSUBSCRIBE_SECRET: true,
   EMAIL_PROVIDER: true,
   AWS_REGION: true,
+  AI_REVIEW_MODE: true,
+  OPENROUTER_API_KEY: true,
+  OPENROUTER_RISK_MODEL: true,
 });
 
 function sesRegionRefinement(
@@ -136,12 +144,28 @@ function dnsKeyRefinement(
   }
 }
 
+// The AI risk-review pass fails open at runtime (a model outage keeps campaigns
+// moving on the deterministic result), but a mode without a key is a config
+// error, not an outage — every review would silently skip AI. Fail the boot.
+function aiReviewRefinement(
+  env: { AI_REVIEW_MODE?: string; OPENROUTER_API_KEY?: string },
+  ctx: z.RefinementCtx,
+) {
+  if (env.AI_REVIEW_MODE && env.AI_REVIEW_MODE !== "mock" && !env.OPENROUTER_API_KEY) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["OPENROUTER_API_KEY"],
+      message: "OPENROUTER_API_KEY is required when AI_REVIEW_MODE is not 'mock' (the AI risk-review pass calls OpenRouter)",
+    });
+  }
+}
+
 const schemas = {
   web: fullSchema
     .superRefine(sesRegionRefinement)
     .superRefine(sesTopicRefinement)
     .superRefine(dnsKeyRefinement),
-  worker: workerSchema.superRefine(sesRegionRefinement),
+  worker: workerSchema.superRefine(sesRegionRefinement).superRefine(aiReviewRefinement),
 } as const;
 
 let cached: Partial<Record<EnvProfile, Env>> = {};

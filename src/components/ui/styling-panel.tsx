@@ -113,8 +113,10 @@ export function StylingPanel({
   );
 }
 
-// The styling panel as a floating drawer fixed to the right edge of the screen and
+// The styling panel as a floating card near the right edge of the screen and
 // vertically centered in the viewport, so it stays put as the composer scrolls.
+// It floats with a small gap from the edge (rather than flush to it) so it clears
+// the window's vertical scrollbar instead of sitting on top of it.
 // A slim vertical grip is the handle: tap to toggle, or drag it left to
 // open / right to collapse. The panel expands *inward* over the content — its width
 // animates from 0 to its full size — so it never pushes past the content's right edge
@@ -155,10 +157,11 @@ export function FloatingStylingPanel({
   };
 
   return (
-    // Fixed to the viewport and vertically centered on screen, pinned to the right
-    // edge; lets clicks through except on the handle/panel themselves. Staying fixed
-    // means the panel keeps its centered position as the composer scrolls.
-    <div className="pointer-events-none fixed top-1/2 right-0 z-40 -translate-y-1/2">
+    // Fixed to the viewport and vertically centered on screen, floated a few px off
+    // the right edge so it clears the scrollbar; lets clicks through except on the
+    // handle/panel themselves. Staying fixed means the panel keeps its centered
+    // position as the composer scrolls.
+    <div className="pointer-events-none fixed top-1/2 right-3 z-40 -translate-y-1/2">
       <div className="pointer-events-auto flex items-stretch justify-end">
         {/* Grip — the draggable handle on the panel's inner side. When collapsed it's
             the only thing showing, a small tab flush to the content edge. */}
@@ -182,7 +185,7 @@ export function FloatingStylingPanel({
             open ? "w-72" : "w-0",
           )}
         >
-          <div className="max-h-[80vh] w-72 overflow-y-auto rounded-l-xl border border-r-0 border-border bg-card p-5 shadow-xl">
+          <div className="max-h-[80vh] w-72 overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-xl">
             <StylingPanel value={value} onChange={onChange} />
           </div>
         </div>

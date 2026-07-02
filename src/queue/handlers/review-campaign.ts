@@ -52,6 +52,14 @@ export async function reviewCampaign(
     categoriesJson: JSON.stringify(review.categories),
     summary: review.summary,
     recommendedAction: review.recommendedAction,
+    guidanceJson: review.guidance.length > 0 ? JSON.stringify(review.guidance) : null,
+    // The AI verdict (or the failure that made the review fall back to
+    // deterministic-only) — audit trail for the admin queue and cost tracking.
+    rawResponseJson: review.ai
+      ? JSON.stringify(review.ai)
+      : review.aiError
+        ? JSON.stringify({ aiError: review.aiError })
+        : null,
     createdAt: nowIso(),
   });
 
@@ -84,6 +92,16 @@ export async function reviewCampaign(
     entityType: "campaign",
     entityId: campaign.id,
     status: "completed",
-    payload: { riskLevel: review.riskLevel, riskScore: review.riskScore, approved },
+    payload: {
+      riskLevel: review.riskLevel,
+      riskScore: review.riskScore,
+      approved,
+      // AI-pass observability: which model ran and what it cost in tokens, or
+      // why it was skipped/failed (review then fell back to deterministic-only).
+      ...(review.ai
+        ? { aiModel: review.ai.model, aiUsage: review.ai.usage, aiRiskLevel: review.ai.riskLevel }
+        : {}),
+      ...(review.aiError ? { aiError: review.aiError } : {}),
+    },
   });
 }

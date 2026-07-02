@@ -313,6 +313,8 @@ export type RiskReview = {
   summary: string;
   recommendedAction: string;
   categoriesJson: string;
+  // JSON array of user-facing fix-it steps; null when the review found nothing.
+  guidanceJson: string | null;
   createdAt: string;
 };
 

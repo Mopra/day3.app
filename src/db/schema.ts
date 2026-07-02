@@ -522,6 +522,9 @@ export const riskReviews = pgTable("risk_reviews", {
   summary: text("summary").notNull(),
   recommendedAction: text("recommended_action").notNull(),
 
+  // User-facing fix-it steps (JSON array of strings) shown on the campaign page
+  // when the review flags or blocks the send.
+  guidanceJson: text("guidance_json"),
   rawResponseJson: text("raw_response_json"),
 
   createdAt: tstz("created_at").notNull(),

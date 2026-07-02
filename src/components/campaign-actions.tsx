@@ -9,7 +9,6 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useUser } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { CalendarClock, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -21,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SendDots } from "@/components/ui/send-loader";
+import { SendTestButton } from "@/components/send-test-button";
 import { RowActions } from "@/components/ui/data-list";
 import { MenuItem } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
@@ -70,7 +70,6 @@ export function CampaignActions({
 }) {
   const api = useApi();
   const router = useRouter();
-  const { user } = useUser();
 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
@@ -190,7 +189,6 @@ export function CampaignActions({
   // and a half-built action bar would be worse than a brief absence.
   if (!campaign) return null;
 
-  const ownEmail = user?.primaryEmailAddress?.emailAddress;
   const deletable =
     campaign.status !== "sending" && campaign.status !== "generating_recipients";
   const submittable = campaign.status === "draft" || campaign.status === "approved";
@@ -204,15 +202,7 @@ export function CampaignActions({
 
   return (
     <>
-      {ownEmail && (
-        <Button
-          variant="outline"
-          disabled={busy}
-          onClick={() => action("test-email", { toEmail: ownEmail }, `Test sent to ${ownEmail}`)}
-        >
-          Send test to me
-        </Button>
-      )}
+      <SendTestButton campaignId={campaignId} disabled={busy} />
       {submittable && (
         <Button
           variant="outline"

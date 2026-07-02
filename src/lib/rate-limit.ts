@@ -92,9 +92,47 @@ export type RateLimitResult = {
   retryAfterSeconds: number;
 };
 
+// Hard cap on how long the limiter will wait for Redis before giving up and
+// failing open. A healthy round-trip is a few ms; this is generous. It exists
+// because the shared producer connection uses `maxRetriesPerRequest: null`
+// (required by BullMQ), which means a command issued while Redis is unreachable
+// is queued and NEVER rejects — it just hangs. Without this bound the limiter's
+// fail-open path is unreachable and a Redis outage hangs every guarded request.
+// Overridable via RATE_LIMIT_STORE_TIMEOUT_MS; a healthy round-trip is a few ms.
+function storeTimeoutMs(): number {
+  return Number(process.env.RATE_LIMIT_STORE_TIMEOUT_MS) || 1000;
+}
+
+class RateLimitStoreTimeout extends Error {
+  constructor(ms: number) {
+    super(`rate-limit store did not respond within ${ms}ms`);
+    this.name = "RateLimitStoreTimeout";
+  }
+}
+
+// Race a store operation against a timeout so a hung/disconnected Redis surfaces
+// as a rejection the caller can fail open on, instead of hanging forever.
+function withTimeout<T>(op: Promise<T>): Promise<T> {
+  const ms = storeTimeoutMs();
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new RateLimitStoreTimeout(ms)), ms);
+    op.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
 /**
  * Increment the fixed-window counter for `key` and decide if the request is
- * allowed. Fails open (allowed=true) when the store throws — and logs it.
+ * allowed. Fails open (allowed=true) when the store throws OR does not respond
+ * within STORE_TIMEOUT_MS — and logs it.
  */
 export async function checkRateLimit(
   name: string,
@@ -104,24 +142,24 @@ export async function checkRateLimit(
 ): Promise<RateLimitResult> {
   const redisKey = `ratelimit:${name}:${key}`;
   try {
-    const count = await store.incr(redisKey);
+    const count = await withTimeout(store.incr(redisKey));
     if (count === 1) {
       // First hit in this window — set the TTL that defines the window.
-      await store.pexpire(redisKey, rule.windowMs);
+      await withTimeout(store.pexpire(redisKey, rule.windowMs));
     }
     if (count <= rule.limit) {
       return { allowed: true, retryAfterSeconds: 0 };
     }
-    let ttl = await store.pttl(redisKey);
+    let ttl = await withTimeout(store.pttl(redisKey));
     // pttl: -1 = no expiry set (lost the EXPIRE race), -2 = key gone.
     if (ttl < 0) {
-      await store.pexpire(redisKey, rule.windowMs);
+      await withTimeout(store.pexpire(redisKey, rule.windowMs));
       ttl = rule.windowMs;
     }
     return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(ttl / 1000)) };
   } catch (err) {
-    // Fail open: a limiter outage must not take down the endpoint, but it must
-    // be visible.
+    // Fail open: a limiter outage (unreachable, or hung past the timeout) must
+    // not take down the endpoint, but it must be visible.
     console.error(`[rate-limit] store unreachable for ${redisKey}; failing open`, err);
     return { allowed: true, retryAfterSeconds: 0 };
   }

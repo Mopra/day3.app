@@ -41,6 +41,22 @@ class BrokenRedis implements RateLimitStore {
   }
 }
 
+// A store whose commands never settle — mirrors a real ioredis connection with
+// `maxRetriesPerRequest: null` while Redis is unreachable (the command is queued
+// forever, never resolving or rejecting). The limiter must still fail open via
+// its timeout rather than hang the request.
+class HangingRedis implements RateLimitStore {
+  incr(): Promise<number> {
+    return new Promise<number>(() => {});
+  }
+  pexpire(): Promise<number> {
+    return new Promise<number>(() => {});
+  }
+  pttl(): Promise<number> {
+    return new Promise<number>(() => {});
+  }
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -83,6 +99,19 @@ describe("checkRateLimit (fixed window)", () => {
     const r = await checkRateLimit("test_email", "acc_1", new BrokenRedis(), rule);
     expect(r.allowed).toBe(true);
     expect(errSpy).toHaveBeenCalled();
+  });
+
+  it("fails open (does not hang) when the store never responds", async () => {
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Short timeout so the test is fast; the real default is 1000ms.
+    process.env.RATE_LIMIT_STORE_TIMEOUT_MS = "50";
+    const started = Date.now();
+    const r = await checkRateLimit("support", "acc_1", new HangingRedis(), rule);
+    const elapsed = Date.now() - started;
+    expect(r.allowed).toBe(true);
+    expect(elapsed).toBeLessThan(1000);
+    expect(errSpy).toHaveBeenCalled();
+    delete process.env.RATE_LIMIT_STORE_TIMEOUT_MS;
   });
 });
 

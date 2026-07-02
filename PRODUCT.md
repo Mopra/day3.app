@@ -120,7 +120,7 @@ Key pricing facts:
 | **Form** | A hosted/embeddable signup form that captures new subscribers into an audience. |
 | **Suppression entry** | A blocklist record (per-account or global) that prevents sending to an address that unsubscribed, bounced, complained, or was manually suppressed. |
 | **Import** | A CSV upload job that adds subscribers to an audience. |
-| **Risk review** | An automated spam/abuse assessment of a campaign before it sends. |
+| **Risk review** | An automated spam/abuse assessment of a campaign before it sends: deterministic content checks, plus an optional AI pass that can only raise (never lower) the verdict. Produces a risk level and user-facing fix-it guidance. |
 
 ---
 
@@ -216,7 +216,8 @@ Key pricing facts:
   mailing address and the per-recipient one-click unsubscribe link are appended
   automatically at send time and can't be edited or removed (required by law; exactly
   one working link is guaranteed).
-- **Send a test email** to yourself before sending for real.
+- **Send a test email** before sending for real — to your own address (pre-filled) or
+  any addresses you type in, up to 5 per test. The subject is prefixed with `[Test]`.
 - **Submit & send** kicks off a review → recipient-generation → batched-send pipeline.
 - **Schedule for later:** pick a future date/time and the campaign parks in `scheduled`;
   a cron sweep releases it into the same review→send pipeline when due (granularity ~15
@@ -234,7 +235,18 @@ Key pricing facts:
 - **Live delivery stats:** total recipients, sent, delivered, bounced, complained,
   unsubscribed, failed, skipped — plus a recipient-level table and an undeliverable list.
   (Account-wide and per-campaign rates, including opens, live on the Metrics page — §6.10.)
-- **Risk review** runs before send; risky campaigns can be routed to admin review.
+- **Risk review** runs before send: deterministic content checks (prohibited industries,
+  phishing language, purchased-list/cold-outreach signals, link shorteners, misleading
+  subjects, sender-identity mismatch, …) plus an optional AI pass (`AI_REVIEW_MODE=ai`,
+  via OpenRouter on a small model) that judges intent/context and can only **escalate**
+  the deterministic verdict, never lower it — so content-embedded prompt injection has
+  nothing to gain. The AI pass fails open (a model outage falls back to the deterministic
+  result) and is platform-funded — never plan-gated, never charged to the org's AI budget.
+  Risky campaigns are routed to admin review. A **blocked campaign** shows the sender
+  exactly what was flagged, concrete fix-it steps, why it matters for sender reputation,
+  and a one-click **Duplicate & fix** path (blocked campaigns themselves are immutable);
+  medium-risk campaigns still send but surface the guidance as suggestions for the next
+  send. The team also reviews flagged campaigns, so false alarms can be released manually.
 
 ### 6.2 AI assist (optional)
 AI features are **optional and gated** — if no AI key is configured, the AI UI is
@@ -451,8 +463,9 @@ Day3 is split into two cooperating tiers that share one Postgres database:
    (eligible account, verified domain, audience has subscribers) and moves to
    `pending_review`. A scheduled campaign waits in `scheduled` until a cron sweep
    re-checks the gates and releases it at its due time.
-2. **Review** — an automated risk check approves it (or routes it to admin review /
-   blocks it).
+2. **Review** — the automated risk check (deterministic + optional escalate-only AI
+   pass) approves it, or blocks it with user-facing guidance and routes it to admin
+   review.
 3. **Generate recipients** — eligible (`subscribed`, non-suppressed) subscribers are
    bulk-inserted as `campaign_recipients` (chunked, dedup-safe).
 4. **Batched send** — the worker atomically reserves monthly quota, claims ~25 pending

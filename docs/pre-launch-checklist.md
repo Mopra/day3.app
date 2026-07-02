@@ -96,7 +96,11 @@ AWS_SECRET_ACCESS_KEY=<secret>
 SES_CONFIGURATION_SET=day3-default
 
 # --- Campaign risk review (deterministic checks always run) ---
-AI_REVIEW_MODE=mock
+# "ai" layers an escalate-only AI pass via OpenRouter (recommended in production;
+# needs OPENROUTER_API_KEY — see .env.worker.example). "mock" = deterministic only.
+AI_REVIEW_MODE=ai
+OPENROUTER_API_KEY=<key>
+# OPENROUTER_RISK_MODEL=anthropic/claude-haiku-4.5
 
 # --- Error reporting (set the SAME value as Vercel) ---
 ERROR_REPORTING_DSN=<HTTP collector URL — see §4>

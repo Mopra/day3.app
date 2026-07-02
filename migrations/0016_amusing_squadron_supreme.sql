@@ -1,0 +1,1 @@
+ALTER TABLE "risk_reviews" ADD COLUMN "guidance_json" text;

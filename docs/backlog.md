@@ -64,5 +64,20 @@ The entry point exists; build the **erasure path** behind it.
 - In-flight sends are never interrupted mid-purge.
 - Global suppressions and any legally-retained records survive.
 - Deleting a Clerk user removes their PII from `account_users`.
-</content>
-</invoke>
+
+---
+
+## Deliverability onboarding & ESP-migration help
+
+**Status:** not started · **Priority:** should-have before courting migrators from other ESPs
+
+New sending domains get junked by Outlook for their first weeks (cold-start
+reputation — our own first test send hit this with perfect SPF/DKIM/DMARC), and
+migrators from other platforms lose their reputation if they mint a fresh
+subdomain or skip importing their suppression list.
+
+Full design in [deliverability-migration.md](deliverability-migration.md): four
+features — migration copy in domain setup, suppression-list import (bulk-load
+into the existing `suppression_entries` machinery), domain warm-up ramping
+(daily caps reusing the send-batch pause/resume path), and a customer-facing
+"getting into the inbox" doc. Build order and open questions in the doc.

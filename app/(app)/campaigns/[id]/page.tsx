@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useUser } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { CalendarClock, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +39,7 @@ import { useApi } from "@/lib/api";
 import { formatDateTime, statusLabel, statusVariant } from "@/lib/format";
 import { sanitizeHtml } from "@/services/render";
 import { CampaignComposer, type CampaignFormValues } from "@/components/campaign-composer";
+import { SendTestButton } from "@/components/send-test-button";
 import type {
   Campaign,
   CampaignStats,
@@ -58,6 +58,18 @@ function personalizationMessage(g: PersonalizationGap): string {
   return g.fallback
     ? `${who} — they'll see "${g.fallback}" instead.`
     : `${who} — their ${label} will appear blank. Add a fallback like {{${g.field}|there}} so it reads well.`;
+}
+
+// The review's fix-it steps, parsed from the stored JSON array. Defensive: a
+// malformed value renders as "no guidance" rather than crashing the page.
+function riskGuidance(review: RiskReview | null): string[] {
+  if (!review?.guidanceJson) return [];
+  try {
+    const parsed: unknown = JSON.parse(review.guidanceJson);
+    return Array.isArray(parsed) ? parsed.filter((g): g is string => typeof g === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 // Maps a send-blocking condition to the page that fixes it, so the user gets a
@@ -151,7 +163,6 @@ export default function CampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
   const api = useApi();
   const router = useRouter();
-  const { user } = useUser();
   const searchParams = useSearchParams();
   // Dev-only: force the send banner onto a real campaign page without sending,
   // e.g. /campaigns/<id>?send=sending. Ignored in production builds.
@@ -324,6 +335,21 @@ export default function CampaignDetailPage() {
     }
   }
 
+  // A blocked campaign can't be edited or resubmitted — the way forward is a
+  // fresh draft copy with the flagged content fixed.
+  const [duplicating, setDuplicating] = useState(false);
+  async function duplicateAndFix() {
+    setDuplicating(true);
+    try {
+      const res = await api.post<{ id: string }>(`/api/campaigns/${id}/duplicate`);
+      toast.success("Draft copy created — make the changes there and send that");
+      router.push(`/campaigns/${res.id}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't create a copy");
+      setDuplicating(false);
+    }
+  }
+
   async function remove() {
     setDeleting(true);
     try {
@@ -338,7 +364,6 @@ export default function CampaignDetailPage() {
 
   if (!campaign) return <OrbitLoaderScreen />;
 
-  const ownEmail = user?.primaryEmailAddress?.emailAddress;
   // Mid-send campaigns can't be deleted — pause first (mirrors the API guard).
   const deletable =
     campaign.status !== "sending" && campaign.status !== "generating_recipients";
@@ -356,15 +381,7 @@ export default function CampaignDetailPage() {
 
   const actionButtons = (
     <>
-      {ownEmail && (
-        <Button
-          variant="outline"
-          disabled={busy}
-          onClick={() => action("test-email", { toEmail: ownEmail }, `Test sent to ${ownEmail}`)}
-        >
-          Send test to me
-        </Button>
-      )}
+      <SendTestButton campaignId={id} disabled={busy} />
       {submittable && (
         <Button
           variant="outline"
@@ -523,24 +540,75 @@ export default function CampaignDetailPage() {
         </Alert>
       )}
 
-      {riskReview && (
+      {campaign.status === "blocked" && (
+        <Alert variant="destructive">
+          <AlertTitle>This campaign didn&apos;t pass the safety review</AlertTitle>
+          <AlertDescription>
+            <div className="space-y-3">
+              <p>
+                Our automated review flagged content that mailbox providers punish with
+                spam-folder placement — and that damages deliverability for every email
+                you send after this one. Here&apos;s what to change:
+              </p>
+              {riskGuidance(riskReview).length > 0 ? (
+                <ul className="list-disc space-y-1 pl-4">
+                  {riskGuidance(riskReview).map((g) => (
+                    <li key={g}>{g}</li>
+                  ))}
+                </ul>
+              ) : (
+                riskReview && <p>{riskReview.summary}</p>
+              )}
+              <p>
+                A blocked campaign can&apos;t be edited or sent again — create a copy,
+                make the changes there, and send that instead. Flagged campaigns also get
+                a second look from our team, so a genuine false alarm can be released
+                without changes.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={duplicating}
+                onClick={duplicateAndFix}
+              >
+                {duplicating && <OrbitLoader size={16} />}
+                Duplicate &amp; fix
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {riskReview && campaign.status !== "blocked" && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Risk review</CardTitle>
+            <CardTitle className="text-base">Safety review</CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-wrap items-center gap-3 text-sm">
-            <Badge
-              variant={
-                riskReview.riskLevel === "low"
-                  ? "default"
-                  : riskReview.riskLevel === "medium"
-                    ? "secondary"
-                    : "destructive"
-              }
-            >
-              {riskReview.riskLevel} · {riskReview.riskScore}
-            </Badge>
-            <span className="text-muted-foreground">{riskReview.summary}</span>
+          <CardContent className="space-y-3 text-sm">
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge
+                variant={
+                  riskReview.riskLevel === "low"
+                    ? "default"
+                    : riskReview.riskLevel === "medium"
+                      ? "secondary"
+                      : "destructive"
+                }
+              >
+                {riskReview.riskLevel} · {riskReview.riskScore}
+              </Badge>
+              <span className="text-muted-foreground">{riskReview.summary}</span>
+            </div>
+            {riskGuidance(riskReview).length > 0 && (
+              <div className="space-y-1">
+                <p className="font-medium">Suggestions for your next send</p>
+                <ul className="list-disc space-y-1 pl-4 text-muted-foreground">
+                  {riskGuidance(riskReview).map((g) => (
+                    <li key={g}>{g}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
