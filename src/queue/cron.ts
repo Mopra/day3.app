@@ -6,7 +6,7 @@ import { nowIso } from "../lib/ids";
 import { DOMAIN_RECHECK_WINDOW_DAYS } from "../lib/domain";
 import { logJob } from "../lib/job-log";
 import { enforceAccountHealth } from "../services/health";
-import { notifyAccount } from "../services/notifications";
+import { notifyAccount, notifyCampaignSent } from "../services/notifications";
 import { getDomainIdentity, type DomainIdentityState } from "../services/ses-identity";
 import { SEND_BATCH_SIZE, type JobQueue } from "./messages";
 
@@ -73,11 +73,17 @@ async function reconcileSendingCampaigns(db: Db, jobsQueue: JobQueue): Promise<v
         batchSize: SEND_BATCH_SIZE,
       });
     } else if (Number(inFlight) === 0) {
-      await db
+      const completed = await db
         .update(campaigns)
         .set({ status: "sent", sentAt: nowIso(), updatedAt: nowIso() })
-        .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "sending")));
+        .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "sending")))
+        .returning({ id: campaigns.id });
       await enforceAccountHealth(db, campaign.accountId);
+      // If this reconcile is the one that completed the send (the worker's last
+      // batch didn't), it owns the "campaign sent" notification.
+      if (completed.length > 0) {
+        await notifyCampaignSent(db, campaign);
+      }
     }
   }
 }

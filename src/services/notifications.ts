@@ -1,6 +1,13 @@
-import { and, desc, eq, gt, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { accountUsers, notifications, type Account, type NotificationKind } from "../db/schema";
+import {
+  accountUsers,
+  accounts,
+  campaignRecipients,
+  notifications,
+  type Account,
+  type NotificationKind,
+} from "../db/schema";
 import { emailProviderFromEnv } from "../email/factory";
 import { newId, nowIso } from "../lib/ids";
 
@@ -159,6 +166,37 @@ export async function notifyAccountThrottled(
     return; // fail closed on the throttle so a broken check can't spam
   }
   await notifyAccount(db, account, input);
+}
+
+// Notify an account that one of its campaigns finished sending. Called from
+// whichever path completes the send (the last send batch, or the cron reconcile),
+// guarded by the caller so it fires exactly once. Computes the reached count for
+// a concrete headline.
+export async function notifyCampaignSent(
+  db: Db,
+  campaign: { id: string; name: string; accountId: string },
+): Promise<void> {
+  const account = await db.query.accounts.findFirst({
+    where: eq(accounts.id, campaign.accountId),
+  });
+  if (!account) return;
+  const [row] = await db
+    .select({ n: sql<number>`count(*)`.as("n") })
+    .from(campaignRecipients)
+    .where(
+      and(
+        eq(campaignRecipients.campaignId, campaign.id),
+        inArray(campaignRecipients.status, ["sent", "delivered"]),
+      ),
+    );
+  const reached = Number(row?.n ?? 0);
+  await notifyAccount(db, account, {
+    kind: "campaign_sent",
+    title: `"${campaign.name}" is out 🎉`,
+    body: `Delivered to ${reached.toLocaleString()} ${reached === 1 ? "subscriber" : "subscribers"}. See how it's performing.`,
+    ctaHref: `/campaigns/${campaign.id}`,
+    ctaLabel: "View results",
+  });
 }
 
 // Reads for the in-app bell. Account-scoped, newest-first.

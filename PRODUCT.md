@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-07-02**.
+> Last verified against the codebase: **2026-07-03**.
 
 ---
 
@@ -433,6 +433,26 @@ popover with a single message box; sending relays the message to the support inb
 (`connect@day3.app`) with the signed-in user set as Reply-To, so the team can reply
 straight back by email. The popover also links the same address directly for users who
 prefer their own mail client. Available on every plan; there is no separate docs site yet.
+
+### 6.13 Notifications
+Day3 tells you about things that happen while you're not looking, on two channels:
+- **In-app bell** in the sidebar (with an unread count) lists recent account events
+  newest-first; opening it marks them read. Backed by a `notifications` table.
+- **Email** to the account's admins for the same events (so a closed tab isn't a
+  blind spot), sent from the Day3 support identity.
+
+Events raised: a **scheduled send that couldn't start** (a gate lapsed by its due
+time — the campaign returns to drafts with the reason, and you're told rather than
+left to discover it), a **campaign finishing sending** (with the reached count and a
+link to its results), and **signups turned away at the free-plan subscriber cap**
+(throttled to once a day, with an upgrade link). The service fails open — a
+notification never blocks the flow that triggered it.
+
+### 6.14 Getting around
+- A **command palette** (⌘K / Ctrl-K) jumps to any page or the common create actions
+  from anywhere.
+- A **plan pill** in the sidebar shows the current tier on every screen; on the free
+  plan it links to billing.
 
 ---
 

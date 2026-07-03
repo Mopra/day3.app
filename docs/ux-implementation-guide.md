@@ -135,3 +135,22 @@ Progress is tracked in the session todo list; each batch is committed on
   to `<CampaignActions>` risked breaking reschedule/cancel. Instead both send-
   confirmation dialogs were made content-identical (same readiness checklist), which
   achieves the user-facing consistency goal without the structural risk.
+- **4.4 Undo on deletes.** A real undo needs soft-delete infrastructure (a
+  `deleted_at` column + restore endpoints + a retention sweep) across campaigns,
+  audiences, and subscribers — a feature in its own right, not a toast tweak.
+  Deletes remain protected by an explicit `ConfirmDialog`. Deferred to a focused
+  follow-up so it ships with the schema + tests it needs.
+- **4.3 CSV column-mapping preview.** A "here's what we detected" step needs a
+  preview-parse endpoint and a mapping-confirm UI. The pain it targets (silent
+  header-mismatch failures) is now largely mitigated by the honest skip breakdown
+  (Batch 2.6) and the sample template. Deferred as a moderate follow-up.
+
+## What shipped (Batch 4 QOL)
+
+- In-app **notification bell** in the sidebar (unread badge, mark-read on open),
+  backed by the `notifications` table and `/api/notifications`. Surfaces the
+  async events the notification service raises.
+- **campaign_sent** notification wired into both send-completion paths (worker
+  batch + cron reconcile), guarded so it fires exactly once.
+- Sidebar **plan pill** (Free links to billing; paid shows the tier).
+- **Cmd/Ctrl+K command palette** for navigation + create actions.

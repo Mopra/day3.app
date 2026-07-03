@@ -10,8 +10,11 @@ import { Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useApi } from "@/lib/api";
 import { formatDuration } from "@/lib/format";
+import { planCanSend, planLabel } from "@/lib/plans-catalog";
 import { AiBudgetProvider, useAiBudget } from "@/components/ai-budget-context";
 import { HelpButton } from "@/components/help-button";
+import { NotificationBell } from "@/components/notification-bell";
+import { CommandPalette } from "@/components/command-palette";
 import { LayoutGridIcon } from "@/components/ui/animated-icons/layout-grid";
 import { MailCheckIcon } from "@/components/ui/animated-icons/mail-check";
 import { ChartColumnIcon } from "@/components/ui/animated-icons/chart-column";
@@ -136,6 +139,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const api = useApi();
   const pathname = usePathname();
   const [isAdmin, setIsAdmin] = useState(false);
+  const [plan, setPlan] = useState<string | null>(null);
   useReloadOnOrgChange();
 
   useEffect(() => {
@@ -143,6 +147,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       .get<{ isAdmin: boolean }>("/api/account/me")
       .then((me) => setIsAdmin(me.isAdmin))
       .catch(() => setIsAdmin(false));
+    // Plan pill — orients the user on every screen (Free reads as set-up mode).
+    api
+      .get<{ account: { plan: string } }>("/api/account")
+      .then((res) => setPlan(res.account.plan))
+      .catch(() => setPlan(null));
   }, [api]);
 
   const isActive = (to: string) => pathname === to || pathname.startsWith(`${to}/`);
@@ -170,11 +179,33 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 <NavItem key={item.to} {...item} active={isActive(item.to)} />
               ))}
             </nav>
-            {/* Help — a navigation-style item, kept above the AI budget meter.
-                No docs site yet, so the popover is the whole help surface. */}
+            {/* Notifications + Help — navigation-style items above the AI meter.
+                The bell surfaces async account events (finished sends, failed
+                schedules, capped signups); no docs site yet, so Help's popover is
+                the whole help surface. */}
             <div className="px-2 pb-1">
+              <NotificationBell />
               <HelpButton />
             </div>
+            {/* Plan pill — a persistent reminder of the tier. Free links to
+                billing (its whole value is the upgrade path); paid plans just
+                show the tier. */}
+            {plan && (
+              <div className="px-4 pb-1">
+                {planCanSend(plan) ? (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                    {planLabel(plan)} plan
+                  </span>
+                ) : (
+                  <Link
+                    href="/billing"
+                    className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
+                  >
+                    {planLabel(plan)} plan · Upgrade
+                  </Link>
+                )}
+              </div>
+            )}
             <SidebarAiBudget />
             {/* Workspace + account controls, bottom-left of the sidebar — the
                 conventional placement. px-5 (20px) matches the nav/Help/AI gutter;
@@ -219,6 +250,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </div>
+      <CommandPalette />
     </AiBudgetProvider>
   );
 }

@@ -25,6 +25,7 @@ import {
 } from "../../services/open-tracking";
 import { getSuppressedEmails, addSuppression } from "../../services/suppression";
 import { enforceAccountHealth } from "../../services/health";
+import { notifyCampaignSent } from "../../services/notifications";
 import type { JobQueue } from "../messages";
 
 export type SendBatchDeps = {
@@ -193,11 +194,17 @@ export async function sendCampaignBatch(
       // Rows stuck in "sending" belong to a concurrent batch or a crashed
       // one; the cron sweep resolves them. Only finish when none remain.
       if (Number(inFlight) === 0) {
-        await db
+        const completed = await db
           .update(campaigns)
           .set({ status: "sent", sentAt: nowIso(), updatedAt: nowIso() })
-          .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "sending")));
+          .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "sending")))
+          .returning({ id: campaigns.id });
         await enforceAccountHealth(db, campaign.accountId);
+        // Notify exactly once — only the batch whose UPDATE actually flipped the
+        // status from "sending" to "sent" owns the completion.
+        if (completed.length > 0) {
+          await notifyCampaignSent(db, campaign);
+        }
       }
     }
   }
