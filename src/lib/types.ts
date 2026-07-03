@@ -170,6 +170,12 @@ export type ImportRow = {
   totalRows: number;
   importedRows: number;
   skippedRows: number;
+  // Skip breakdown (sum to skippedRows) — lets the UI explain *why* rows didn't
+  // import rather than showing a bare "N skipped".
+  invalidRows: number;
+  suppressedRows: number;
+  duplicateRows: number;
+  overCapRows: number;
   error: string | null;
   createdAt: string;
 };
@@ -180,6 +186,7 @@ export type CampaignListItem = {
   subject: string;
   status: string;
   riskLevel: string | null;
+  scheduledAt: string | null;
   sentAt: string | null;
   createdAt: string;
   audienceName: string | null;

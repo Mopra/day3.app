@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Activity as ActivityIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -196,11 +197,14 @@ function DetailRow({ label, children }: { label: string; children: React.ReactNo
 
 export default function ActivityPage() {
   const api = useApi();
+  const searchParams = useSearchParams();
   const [events, setEvents] = useState<ActivityEvent[] | null>(null);
   const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [type, setType] = useState("all");
-  const [campaign, setCampaign] = useState("all");
+  // Deep link from a sent campaign ("Troubleshoot a recipient") pre-filters to
+  // that campaign via ?campaignId=<id>.
+  const [campaign, setCampaign] = useState(searchParams.get("campaignId") ?? "all");
   const [campaignOptions, setCampaignOptions] = useState([
     { value: "all", label: "All campaigns" },
   ]);

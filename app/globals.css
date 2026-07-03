@@ -421,6 +421,25 @@
   }
 }
 
+/* Indeterminate progress sweep — used by <Progress indeterminate /> for work
+   whose total isn't known yet (e.g. an import that hasn't reported its row
+   count). Honest "we're working" motion, no faked percentage. */
+.animate-progress-indeterminate {
+  animation: d3progressSweep 1.4s ease-in-out infinite;
+}
+@keyframes d3progressSweep {
+  0% { left: -33%; }
+  100% { left: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-progress-indeterminate {
+    animation: none;
+    left: 0;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+
 /* Rich text editor (see src/components/ui/rich-text-editor.tsx). Styles the
    ProseMirror content to read like the clean, newsletter-safe email subscribers
    receive — only the tags the sanitizer allows are styled here. */

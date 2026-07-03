@@ -23,7 +23,8 @@ import {
 import { ListError, RowOpen, rowLinkProps } from "@/components/ui/data-list";
 import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { formatDate, statusLabel, statusVariant } from "@/lib/format";
+import { formatDate } from "@/lib/format";
+import { CampaignStatusBadge } from "@/components/ui/campaign-status-badge";
 import { planCanSend, planLabel } from "@/lib/plans-catalog";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { UpgradeNudge, UsageBar, usageInfo } from "@/components/plan-usage";
@@ -336,7 +337,7 @@ export default function DashboardPage() {
                       </Link>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={statusVariant(c.status)}>{statusLabel(c.status)}</Badge>
+                      <CampaignStatusBadge status={c.status} scheduledAt={c.scheduledAt} />
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
                       {c.sentCount.toLocaleString()}

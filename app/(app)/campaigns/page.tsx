@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Copy, Mail, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -33,11 +32,12 @@ import {
   useListController,
 } from "@/components/ui/data-list";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
+import { NextSteps } from "@/components/next-steps";
 import { useApi } from "@/lib/api";
-import { formatDate, statusLabel, statusVariant } from "@/lib/format";
-import type { CampaignListItem } from "@/lib/types";
-
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+import { formatDate } from "@/lib/format";
+import { CampaignStatusBadge } from "@/components/ui/campaign-status-badge";
+import { campaignStatusLabel } from "@/lib/format";
+import type { CampaignListItem, OnboardingState } from "@/lib/types";
 
 // A campaign mid-send can't be deleted (the worker is reading its rows); pause
 // it first. Everything else — drafts, scheduled, paused, sent, failed — is fair
@@ -68,6 +68,17 @@ export default function CampaignsPage() {
   }, []);
 
   useEffect(load, [load]);
+
+  // Onboarding state powers the "next step" strip so a new user is guided from
+  // the campaigns list toward whatever they still need (domain, audience, …).
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
+  useEffect(() => {
+    api
+      .get<{ onboarding: OnboardingState }>("/api/account/onboarding")
+      .then((res) => setOnboarding(res.onboarding))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function duplicate(c: CampaignListItem) {
     try {
@@ -101,7 +112,7 @@ export default function CampaignsPage() {
     const present = Array.from(new Set((campaigns ?? []).map((c) => c.status)));
     return [
       { value: "all", label: "All statuses" },
-      ...present.map((s) => ({ value: s, label: cap(statusLabel(s)) })),
+      ...present.map((s) => ({ value: s, label: campaignStatusLabel(s) })),
     ];
   }, [campaigns]);
 
@@ -129,6 +140,8 @@ export default function CampaignsPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Campaigns</h1>
         <Button render={<Link href="/campaigns/new">New campaign</Link>} />
       </div>
+
+      {onboarding && <NextSteps onboarding={onboarding} hideWhenOn="campaign" />}
 
       {campaigns && campaigns.length > 0 && (
         <ListToolbar>
@@ -191,7 +204,7 @@ export default function CampaignsPage() {
                       {c.subject}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={statusVariant(c.status)}>{statusLabel(c.status)}</Badge>
+                      <CampaignStatusBadge status={c.status} scheduledAt={c.scheduledAt} />
                     </TableCell>
                     <TableCell className="text-muted-foreground">{c.audienceName ?? "—"}</TableCell>
                     <TableCell className="text-right tabular-nums">

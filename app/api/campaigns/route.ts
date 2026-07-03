@@ -20,6 +20,7 @@ export const GET = route(async () => {
       subject: campaigns.subject,
       status: campaigns.status,
       riskLevel: campaigns.riskLevel,
+      scheduledAt: campaigns.scheduledAt,
       sentAt: campaigns.sentAt,
       createdAt: campaigns.createdAt,
       audienceName: sql<string>`(

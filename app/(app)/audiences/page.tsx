@@ -42,9 +42,10 @@ import {
   useListController,
 } from "@/components/ui/data-list";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
+import { NextSteps } from "@/components/next-steps";
 import { useApi } from "@/lib/api";
 import { formatDate } from "@/lib/format";
-import type { Audience } from "@/lib/types";
+import type { Audience, OnboardingState } from "@/lib/types";
 
 export default function AudiencesPage() {
   const api = useApi();
@@ -74,6 +75,17 @@ export default function AudiencesPage() {
   }, []);
 
   useEffect(load, [load]);
+
+  // Onboarding state drives the "next step" strip, so the flow keeps its
+  // momentum. Best-effort — a failure here just hides the strip.
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
+  useEffect(() => {
+    api
+      .get<{ onboarding: OnboardingState }>("/api/account/onboarding")
+      .then((res) => setOnboarding(res.onboarding))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const list = useListController(audiences, {
     searchText: (a) => a.name,
@@ -156,6 +168,8 @@ export default function AudiencesPage() {
           </DialogContent>
         </Dialog>
       </div>
+
+      {onboarding && <NextSteps onboarding={onboarding} hideWhenOn="audience" />}
 
       {audiences && audiences.length > 0 && (
         <ListToolbar>

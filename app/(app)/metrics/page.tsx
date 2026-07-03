@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useOrganization } from "@clerk/nextjs";
 import {
   BarChart3,
@@ -178,8 +178,11 @@ export default function MetricsPage() {
   const api = useApi();
   const router = useRouter();
   const { organization } = useOrganization();
+  const searchParams = useSearchParams();
   const [rows, setRows] = useState<CampaignMetricsRow[] | null>(null);
-  const [campaign, setCampaign] = useState("all");
+  // Deep link from a sent campaign ("See opens & clicks") pre-selects that
+  // campaign via ?campaign=<id>.
+  const [campaign, setCampaign] = useState(searchParams.get("campaign") ?? "all");
   const [loadError, setLoadError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 

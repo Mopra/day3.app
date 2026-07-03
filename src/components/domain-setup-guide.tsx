@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
+  ArrowRight,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -13,6 +14,7 @@ import {
   RefreshCw,
   Zap,
 } from "lucide-react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -666,19 +668,37 @@ function StatusHero({
 }) {
   if (state === "verified") {
     return (
-      <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-5 sm:flex-row sm:items-center">
-        <CheckCircle2 className="size-8 shrink-0 text-primary" />
-        <div className="flex-1">
-          <h2 className="font-medium">Your domain is verified</h2>
-          <p className="text-sm text-muted-foreground">
-            Campaigns can now be sent from{" "}
-            <span className="font-medium text-foreground">
-              {domain.fromEmail ?? domain.domain}
-            </span>
-            {domain.adminOverrideVerified && domain.verificationStatus !== "verified"
-              ? " (verified by support)."
-              : "."}
-          </p>
+      <div className="flex flex-col gap-4 rounded-xl border border-primary/20 bg-primary/5 p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <CheckCircle2 className="size-8 shrink-0 text-primary" />
+          <div className="flex-1">
+            <h2 className="font-medium">Your domain is verified 🎉</h2>
+            <p className="text-sm text-muted-foreground">
+              We&apos;ve set up{" "}
+              <span className="font-medium text-foreground">
+                {domain.fromName ? `${domain.fromName} ` : ""}
+                &lt;{domain.fromEmail ?? domain.domain}&gt;
+              </span>{" "}
+              as your default sender — you can add more or change it any time under{" "}
+              <Link href="/senders" className="underline underline-offset-4">
+                Senders
+              </Link>
+              {domain.adminOverrideVerified && domain.verificationStatus !== "verified"
+                ? " (verified by support)."
+                : "."}
+            </p>
+          </div>
+        </div>
+        {/* Momentum: verifying a domain is a milestone, not an end. Point the user
+            straight at the next steps instead of leaving them on this page. */}
+        <div className="flex flex-col gap-2 border-t border-primary/15 pt-4 sm:flex-row">
+          <Button render={<Link href="/audiences" />} className="sm:w-auto">
+            Import your audience
+            <ArrowRight className="size-4" />
+          </Button>
+          <Button variant="outline" render={<Link href="/campaigns/new" />} className="sm:w-auto">
+            Create your first campaign
+          </Button>
         </div>
       </div>
     );

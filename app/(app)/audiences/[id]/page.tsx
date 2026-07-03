@@ -58,6 +58,20 @@ const STATUS_FILTERS = [
 // 50s and let "Load more" fetch the next page.
 const PAGE = 50;
 
+// Turn the per-reason skip counts into a plain-language sentence, so "N skipped"
+// stops being a black box (duplicates? bad emails? suppressed? over the cap?).
+function importSkipBreakdown(imp: ImportRow): string {
+  const parts: string[] = [];
+  if (imp.duplicateRows > 0)
+    parts.push(`${imp.duplicateRows.toLocaleString()} already in this audience`);
+  if (imp.invalidRows > 0) parts.push(`${imp.invalidRows.toLocaleString()} invalid email${imp.invalidRows === 1 ? "" : "s"}`);
+  if (imp.suppressedRows > 0)
+    parts.push(`${imp.suppressedRows.toLocaleString()} previously unsubscribed or bounced`);
+  if (imp.overCapRows > 0)
+    parts.push(`${imp.overCapRows.toLocaleString()} over your plan's subscriber limit`);
+  return parts.length > 0 ? `${parts.join(" · ")}.` : "";
+}
+
 type AddForm = { email: string; firstName?: string; lastName?: string };
 
 type EditForm = { email: string; firstName?: string; lastName?: string };
@@ -222,6 +236,33 @@ export default function AudienceDetailPage() {
   useEffect(loadAudience, [loadAudience]);
   useEffect(loadSubscribers, [loadSubscribers]);
   useEffect(loadImports, [loadImports]);
+
+  // Toast when an import finishes — the upload only said "started", so without
+  // this the completion is a silent badge flip on the next poll. On first load we
+  // seed the "already announced" set with the existing history so we never toast
+  // past imports; after that, a fresh terminal transition is announced once.
+  const announcedImports = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    if (announcedImports.current === null) {
+      announcedImports.current = new Set(
+        imports.filter((i) => i.status === "completed" || i.status === "failed").map((i) => i.id),
+      );
+      return;
+    }
+    for (const imp of imports) {
+      if (imp.status !== "completed" && imp.status !== "failed") continue;
+      if (announcedImports.current.has(imp.id)) continue;
+      announcedImports.current.add(imp.id);
+      if (imp.status === "completed") {
+        toast.success(
+          `Import complete — ${imp.importedRows.toLocaleString()} added` +
+            (imp.skippedRows > 0 ? ` · ${imp.skippedRows.toLocaleString()} skipped` : ""),
+        );
+      } else {
+        toast.error("Import failed — see the details below.");
+      }
+    }
+  }, [imports]);
 
   async function loadMore() {
     if (!subscribers || loadingMore) return;
@@ -508,20 +549,33 @@ export default function AudienceDetailPage() {
           </CardHeader>
           <CardContent className="space-y-4">
             {imports.slice(0, 5).map((imp) => (
-              <div key={imp.id} className="space-y-1">
+              <div key={imp.id} className="space-y-1.5">
                 <div className="flex items-center justify-between gap-2 text-sm">
                   <span className="truncate">{imp.filename}</span>
                   <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground">
-                      {imp.totalRows > 0
-                        ? `${imp.importedRows} imported · ${imp.skippedRows} skipped · ${imp.totalRows} total`
-                        : null}
+                    <span className="text-muted-foreground tabular-nums">
+                      {imp.status === "processing" && imp.totalRows > 0
+                        ? `${imp.importedRows.toLocaleString()} added…`
+                        : imp.status === "completed"
+                          ? `${imp.importedRows.toLocaleString()} imported · ${imp.skippedRows.toLocaleString()} skipped · ${imp.totalRows.toLocaleString()} total`
+                          : null}
                     </span>
                     <Badge variant={statusVariant(imp.status)}>{imp.status}</Badge>
                   </div>
                 </div>
-                {(imp.status === "pending" || imp.status === "processing") && (
-                  <Progress value={imp.status === "pending" ? 5 : 50} />
+                {imp.status === "processing" && imp.totalRows > 0 ? (
+                  // Honest progress: how far through the file's rows we are.
+                  <Progress
+                    value={Math.min(100, Math.round((imp.importedRows / imp.totalRows) * 100))}
+                  />
+                ) : imp.status === "pending" || imp.status === "processing" ? (
+                  // No denominator yet — indeterminate rather than a fake number.
+                  <Progress indeterminate />
+                ) : null}
+                {imp.status === "completed" && imp.skippedRows > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Skipped: {importSkipBreakdown(imp)}
+                  </p>
                 )}
                 {imp.status === "failed" && (
                   <Alert variant="destructive">

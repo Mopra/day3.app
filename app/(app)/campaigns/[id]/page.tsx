@@ -36,7 +36,13 @@ import {
 } from "@/components/ui/data-list";
 import { MenuItem } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
-import { formatDateTime, statusLabel, statusVariant } from "@/lib/format";
+import {
+  campaignStatusLabel,
+  formatDateTime,
+  recipientStatusLabel,
+  statusVariant,
+} from "@/lib/format";
+import { CampaignStatusBadge } from "@/components/ui/campaign-status-badge";
 import { sanitizeHtml } from "@/services/render";
 import { CampaignComposer, type CampaignFormValues } from "@/components/campaign-composer";
 import { SendTestButton } from "@/components/send-test-button";
@@ -101,8 +107,6 @@ function toLocalInput(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
 // Numeric per-status keys only (excludes `total` and the `undeliverable` array).
 const STAT_KEYS = [
   "pending",
@@ -154,6 +158,52 @@ function SendingBanner({
       <div className="min-w-0">
         <h2 className="font-medium">{title}</h2>
         <p className="text-sm text-muted-foreground">{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
+// The payoff. Sending is the emotional peak of the product; when a campaign
+// reaches "sent" the page shouldn't just turn into a table of numbers. A warm
+// success banner names the win and points the user at the two things they'll
+// want next — engagement (Metrics) and per-recipient troubleshooting (Activity).
+function SentBanner({
+  campaignId,
+  stats,
+  sentAt,
+}: {
+  campaignId: string;
+  stats: CampaignStats;
+  sentAt: string | null;
+}) {
+  const reached = (stats.sent ?? 0) + (stats.delivered ?? 0);
+  return (
+    <div className="overflow-hidden rounded-xl border border-primary/20 bg-primary/5 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-2xl">
+          🎉
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="font-medium">Your campaign is out!</h2>
+          <p className="text-sm text-muted-foreground">
+            {reached > 0
+              ? `Sent to ${reached.toLocaleString()} ${reached === 1 ? "subscriber" : "subscribers"}`
+              : "Your emails are on their way"}
+            {sentAt ? ` · ${formatDateTime(sentAt)}` : ""}.
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+          <Button size="sm" render={<Link href={`/metrics?campaign=${campaignId}`} />}>
+            See opens &amp; clicks
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            render={<Link href={`/activity?campaignId=${campaignId}`} />}
+          >
+            Troubleshoot a recipient
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -376,7 +426,7 @@ export default function CampaignDetailPage() {
     : null;
 
   const statusBadge = (
-    <Badge variant={statusVariant(campaign.status)}>{statusLabel(campaign.status)}</Badge>
+    <CampaignStatusBadge status={campaign.status} scheduledAt={campaign.scheduledAt} />
   );
 
   const actionButtons = (
@@ -447,7 +497,7 @@ export default function CampaignDetailPage() {
     { value: "all", label: "All statuses" },
     ...STAT_KEYS.filter((k) => (stats?.[k] ?? 0) > 0).map((k) => ({
       value: k,
-      label: cap(statusLabel(k)),
+      label: recipientStatusLabel(k),
     })),
   ];
   const recShown = recipients?.length ?? 0;
@@ -470,6 +520,10 @@ export default function CampaignDetailPage() {
           status={(previewSend as Campaign["status"]) ?? campaign.status}
           stats={stats}
         />
+      )}
+
+      {campaign.status === "sent" && stats && stats.total > 0 && (
+        <SentBanner campaignId={id} stats={stats} sentAt={campaign.sentAt} />
       )}
 
       {campaign.status === "scheduled" && (
@@ -502,7 +556,13 @@ export default function CampaignDetailPage() {
 
       {campaign.pausedReason && campaign.status !== "sent" && (
         <Alert variant="destructive">
-          <AlertTitle>{statusLabel(campaign.status)}</AlertTitle>
+          <AlertTitle>
+            {campaign.status === "draft"
+              ? "Your scheduled send didn't go out"
+              : campaign.status === "paused"
+                ? "Sending is paused"
+                : campaignStatusLabel(campaign.status)}
+          </AlertTitle>
           <AlertDescription>{campaign.pausedReason}</AlertDescription>
         </Alert>
       )}
@@ -628,7 +688,7 @@ export default function CampaignDetailPage() {
                 stats[key] ? (
                   <div key={key}>
                     <div className="text-2xl font-semibold">{stats[key]}</div>
-                    <div className="text-xs text-muted-foreground">{key}</div>
+                    <div className="text-xs text-muted-foreground">{recipientStatusLabel(key)}</div>
                   </div>
                 ) : null,
               )}
@@ -760,7 +820,9 @@ export default function CampaignDetailPage() {
                       <TableRow key={r.id}>
                         <TableCell className="font-medium">{r.email}</TableCell>
                         <TableCell>
-                          <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
+                          <Badge variant={statusVariant(r.status)}>
+                            {recipientStatusLabel(r.status)}
+                          </Badge>
                         </TableCell>
                         <TableCell className="max-w-56 truncate text-muted-foreground">
                           {r.error ?? "—"}

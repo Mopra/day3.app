@@ -62,6 +62,13 @@ export async function processImport(
       throw new Error(`CSV has ${parsed.totalRows} rows; the maximum is ${MAX_IMPORT_ROWS}`);
     }
 
+    // Record the denominator up front so the UI can show honest progress
+    // ("N of M") while the chunks run, instead of a fake fixed bar.
+    await db
+      .update(imports)
+      .set({ totalRows: parsed.totalRows, updatedAt: nowIso() })
+      .where(eq(imports.id, importRow.id));
+
     const suppressed = await getSuppressedEmails(
       db,
       importRow.accountId,
@@ -70,21 +77,29 @@ export async function processImport(
 
     // parseSubscriberCsv already canonicalizes r.email; canonicalize here too so
     // the suppression filter never compares a raw against a canonical value.
-    let candidates = parsed.rows.filter((r) => !suppressed.has(canonicalizeEmail(r.email)));
+    const validCount = parsed.rows.length;
+    const afterSuppression = parsed.rows.filter(
+      (r) => !suppressed.has(canonicalizeEmail(r.email)),
+    );
+    const suppressedCount = validCount - afterSuppression.length;
 
     // Free-tier subscriber-cap backstop. The upload route already rejects an
     // import that wouldn't fit, but subscribers can arrive via public forms
     // between upload and processing — so cap inserts to the remaining headroom
-    // here too. Paid tiers are unlimited (cap = null). Over-cap rows fall into
-    // skippedRows below (totalRows - imported).
+    // here too. Paid tiers are unlimited (cap = null).
     const account = await db.query.accounts.findFirst({
       where: eq(accounts.id, importRow.accountId),
     });
     const cap = account ? maxSubscribersForPlan(account.plan) : null;
+    let candidates = afterSuppression;
+    let overCapCount = 0;
     if (cap !== null) {
       const current = await countAccountSubscribers(db, importRow.accountId);
       const headroom = Math.max(0, cap - current);
-      if (candidates.length > headroom) candidates = candidates.slice(0, headroom);
+      if (candidates.length > headroom) {
+        overCapCount = candidates.length - headroom;
+        candidates = candidates.slice(0, headroom);
+      }
     }
 
     const now = nowIso();
@@ -112,7 +127,17 @@ export async function processImport(
         .onConflictDoNothing()
         .returning({ id: subscribers.id });
       imported += result.length;
+      // Progressive count so a large import shows real movement, not a hang.
+      await db
+        .update(imports)
+        .set({ importedRows: imported, updatedAt: nowIso() })
+        .where(eq(imports.id, importRow.id));
     }
+
+    // Duplicates = rows we tried to insert that onConflictDoNothing skipped
+    // (already in this audience). The four reasons sum to skippedRows.
+    const duplicateCount = candidates.length - imported;
+    const skipped = suppressedCount + parsed.invalidRows + overCapCount + duplicateCount;
 
     await db
       .update(imports)
@@ -120,7 +145,11 @@ export async function processImport(
         status: "completed",
         totalRows: parsed.totalRows,
         importedRows: imported,
-        skippedRows: parsed.totalRows - imported,
+        skippedRows: skipped,
+        invalidRows: parsed.invalidRows,
+        suppressedRows: suppressedCount,
+        duplicateRows: duplicateCount,
+        overCapRows: overCapCount,
         error: null,
         updatedAt: nowIso(),
       })
@@ -131,7 +160,14 @@ export async function processImport(
       entityType: "import",
       entityId: importRow.id,
       status: "completed",
-      payload: { totalRows: parsed.totalRows, imported, invalid: parsed.invalidRows },
+      payload: {
+        totalRows: parsed.totalRows,
+        imported,
+        invalid: parsed.invalidRows,
+        suppressed: suppressedCount,
+        duplicate: duplicateCount,
+        overCap: overCapCount,
+      },
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
