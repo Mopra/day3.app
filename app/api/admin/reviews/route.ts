@@ -10,9 +10,12 @@ export const GET = route(async () => {
     .select({
       campaign: campaigns,
       accountName: accounts.name,
+      // `campaigns.audience_id` is written literally — interpolating the Drizzle
+      // column can render it unqualified, which resolves to s.audience_id and
+      // makes the correlation match every subscriber.
       audienceCount: sql<number>`(
-        SELECT count(*) FROM subscribers s
-        WHERE s.audience_id = ${campaigns.audienceId} AND s.status = 'subscribed'
+        SELECT count(*)::int FROM subscribers s
+        WHERE s.audience_id = campaigns.audience_id AND s.status = 'subscribed'
       )`.as("audienceCount"),
     })
     .from(campaigns)

@@ -87,6 +87,11 @@ Key pricing facts:
   usage-based overages); the UI surfaces upgrade prompts as the cap approaches.
 - **Usage resets** at the start of each billing period (driven by the Clerk
   `subscriptionItem.active` webhook; a monthly cron sweep is the fallback).
+- **Above 100k/mo is by arrangement, not self-serve.** The billing page's plan
+  picker ends with a "Need more?" card whose "Contact us" opens an in-app form
+  (relayed to the support inbox via `POST /api/support`, topic `volume`, with a
+  mailto fallback); there is no checkout for a custom tier (operators set one up
+  manually, e.g. via the plan metadata override).
 - **No per-contact / per-subscriber pricing.** Subscriber count does not affect price.
 - **Subscription lifecycle → behavior:**
   - `active` → can send up to the plan's allowance.
@@ -307,7 +312,10 @@ One form primitive, multiple install surfaces, all hosted on **`go.day3.app`**:
 - **Embed (iframe)** — drop-in snippet for website builders (Webflow, WordPress,
   Squarespace, etc.); auto-resizes via `postMessage`.
 - **Popup** — JS widget (`embed.js`) triggered by button click, delay, exit-intent,
-  or scroll depth.
+  or scroll depth. Auto triggers fire **at most once per browser session** — a visitor
+  who dismisses the popup isn't shown it again until their next visit (button clicks
+  always open it). Dismissal is easy by design: close button, Escape, or a click on
+  the blurred backdrop.
 - **Raw HTML** — a plain `<form>` that POSTs directly to Day3 (no JavaScript).
 - **AI prompt** — a one-click copyable prompt bundling the embed/HTML snippets and
   guardrails (don't rename fields, keep the action URL) that a user pastes into their
@@ -321,8 +329,10 @@ Apple-inspired set of controls: page & card **background colors**, **heading** a
 **banner image** uploaded to the asset bucket and shown flush across the top of the
 card. Colors are validated (hex/rgb/named only) and applied as inline styles at render
 time, so the design carries across the hosted page, the iframe embed, and the popup
-widget automatically (the raw-HTML snippet stays "restyle it yourself"). Defaults
-reproduce the prior clean white-card look, so existing forms are unchanged until edited.
+widget automatically (the raw-HTML snippet stays "restyle it yourself"). The default
+look is a calm, Apple-inspired white card — ink heading, quiet grey body text, hairline
+input borders with an accent-tinted focus ring, and a pill-shaped accent button —
+applied to every form that hasn't customized its design.
 **Fields** are fully customizable — email is always collected, and you can add
 any number of extra fields (first/last name, phone, company, anything) with a label,
 type, and required flag; each becomes a personalization tag (e.g. `{{phone}}`) usable
@@ -375,7 +385,11 @@ the same "Saving… / Saved" indicator as the campaign composer.
   (scaled up, neighbors dimmed), and scrolling the row moves the slider in sync. Only
   the focused card exposes the billing CTA, which drives Clerk Billing directly —
   upgrades/switches open Clerk Checkout, "Downgrade to Free" opens Clerk's
-  subscription drawer to cancel (Clerk handles proration).
+  subscription drawer to cancel (Clerk handles proration). Past the 100k tier the
+  carousel ends with a dashed "Need more?" card ("Custom" / 100,000+ emails/mo)
+  whose "Contact us" opens an in-app message form — like the Help widget, it
+  relays to the support inbox with the user as Reply-To — custom volume is
+  arranged manually, not self-serve.
 - Settings: company mailing address (legally required in email footers) and Clerk's
   organization management (team members, org name, logo).
 

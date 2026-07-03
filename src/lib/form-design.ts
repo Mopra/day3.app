@@ -40,15 +40,14 @@ export type FormDesign = {
 export const MAX_FORM_RADIUS = 28;
 
 // The look applied when a form has no saved design (every form created before designs
-// existed, and new forms). These values reproduce the previous hardcoded render
-// exactly — a clean white card on a soft grey page — so adding the feature changes
-// nothing visually until a user opts to tune it.
+// existed, and new forms): a white card on a cool near-white page, ink heading and a
+// quiet grey for supporting text — calm, neutral, and at home embedded in any site.
 export const DEFAULT_FORM_DESIGN: FormDesign = {
-  pageBg: "#f6f7f9",
+  pageBg: "#f5f5f7",
   cardBg: "#ffffff",
-  headingColor: "#111827",
-  textColor: "#4b5563",
-  cornerRadius: 14,
+  headingColor: "#1d1d1f",
+  textColor: "#6e6e73",
+  cornerRadius: 16,
   imageUrl: null,
   imageAlt: "",
 };

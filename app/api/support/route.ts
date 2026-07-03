@@ -5,8 +5,12 @@ import { requireAccount } from "@/api/context";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { emailProviderFromEnv } from "@/email/factory";
 
+// `topic` distinguishes the surfaces that relay through this endpoint: the
+// sidebar Help widget ("help") and the billing page's beyond-100k volume
+// request ("volume"). It only changes the subject line the team sees.
 const SupportSchema = z.object({
   message: z.string().trim().min(1, "Message is required").max(5000),
+  topic: z.enum(["help", "volume"]).default("help"),
 });
 
 function escapeHtml(value: string): string {
@@ -30,7 +34,7 @@ export const POST = route(async (req) => {
   const { account, auth } = await requireAccount();
   await enforceRateLimit("support", account.id);
 
-  const { message } = await parseJson(req, SupportSchema);
+  const { message, topic } = await parseJson(req, SupportSchema);
 
   const clerk = await clerkClient();
   const user = await clerk.users.getUser(auth.userId);
@@ -55,7 +59,10 @@ export const POST = route(async (req) => {
     fromName: "Day3 Help",
     replyTo: userEmail,
     toEmail: SUPPORT_TO,
-    subject: `Help request — ${account.name}`,
+    subject:
+      topic === "volume"
+        ? `High-volume request (100k+) — ${account.name}`
+        : `Help request — ${account.name}`,
     html,
     text,
   });

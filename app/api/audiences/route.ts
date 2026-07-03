@@ -12,9 +12,12 @@ export const GET = route(async () => {
       id: audiences.id,
       name: audiences.name,
       createdAt: audiences.createdAt,
+      // `audiences.id` is written literally: an interpolated Drizzle column
+      // renders UNQUALIFIED in single-table selects, so inside the subquery it
+      // resolves against `s` and the correlation is lost.
       subscriberCount: sql<number>`(
-        SELECT count(*) FROM subscribers s
-        WHERE s.audience_id = ${audiences.id} AND s.status = 'subscribed'
+        SELECT count(*)::int FROM subscribers s
+        WHERE s.audience_id = audiences.id AND s.status = 'subscribed'
       )`.as("subscriberCount"),
     })
     .from(audiences)

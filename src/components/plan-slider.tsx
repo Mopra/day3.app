@@ -7,10 +7,21 @@ import {
   SubscriptionDetailsButton,
   usePlans,
 } from "@clerk/nextjs/experimental";
-import { Check, Minus } from "lucide-react";
+import { Check, CheckIcon, Loader2Icon, Minus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
+import { Textarea } from "@/components/ui/textarea";
+import { useApi, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   FREE_PLAN,
@@ -108,6 +119,122 @@ function PlanCta({
 // reserving half the leftover track width on each side, so card 0 and the last
 // card can both sit dead-center with their neighbors peeking in.
 const CARD_W_REM = 18; // matches w-72
+
+// Past the top of the ladder there is no self-serve tier — orgs that need more
+// than the 100k allowance reach out and we set them up manually. The carousel
+// carries one extra "contact us" card after the last plan; it shares the slider
+// track but has no Clerk plan behind it.
+const CONTACT_INDEX = PLAN_ORDER.length;
+const CONTACT_EMAIL = "connect@day3.app";
+
+// The contact card's CTA: a small in-app form (same shape as the sidebar Help
+// widget) that relays through POST /api/support with topic "volume", so the
+// user writes to us directly instead of bouncing out to their mail client.
+function ContactVolumeDialog() {
+  const api = useApi();
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset everything whenever the dialog closes so a reopen starts fresh.
+  function handleOpenChange(next: boolean) {
+    setOpen(next);
+    if (!next) {
+      setMessage("");
+      setSending(false);
+      setSent(false);
+      setError(null);
+    }
+  }
+
+  async function handleSend() {
+    const trimmed = message.trim();
+    if (!trimmed || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      await api.post("/api/support", { message: trimmed, topic: "volume" });
+      setSent(true);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Couldn't send your message. Please try again.",
+      );
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogTrigger
+        render={<Button variant="default" size="sm" className="w-full" />}
+      >
+        Contact us
+      </DialogTrigger>
+      <DialogContent>
+        {sent ? (
+          <div className="flex flex-col items-center gap-2 py-6 text-center">
+            <span className="flex size-9 items-center justify-center rounded-full bg-muted text-foreground">
+              <CheckIcon className="size-5" />
+            </span>
+            <p className="font-medium">Message sent</p>
+            <p className="text-xs text-muted-foreground">
+              Thanks — we read every message and will get back to you by email.
+            </p>
+          </div>
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle>Sending more than 100k / month?</DialogTitle>
+              <DialogDescription>
+                Tell us roughly how many emails you send and how often — we&apos;ll
+                size a plan for you and reply by email.
+              </DialogDescription>
+            </DialogHeader>
+            <Textarea
+              autoFocus
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  void handleSend();
+                }
+              }}
+              placeholder="e.g. We send ~250,000 emails a month across two weekly newsletters…"
+              rows={5}
+              className="min-h-28 resize-none text-sm"
+            />
+            {error && <p className="text-xs text-destructive">{error}</p>}
+            <DialogFooter className="items-center sm:justify-between">
+              <span className="text-xs text-muted-foreground">
+                Or email{" "}
+                <a
+                  href={`mailto:${CONTACT_EMAIL}`}
+                  className="text-foreground underline underline-offset-2 hover:text-primary"
+                >
+                  {CONTACT_EMAIL}
+                </a>
+              </span>
+              <Button
+                size="sm"
+                onClick={handleSend}
+                disabled={!message.trim() || sending}
+              >
+                {sending && <Loader2Icon className="size-3.5 animate-spin" />}
+                Send
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // The plan picker, as a focus carousel. Every Day3 feature is on every tier, so
 // the only axis that changes is the monthly email allowance — the user slides
@@ -229,8 +356,8 @@ export function PlanSlider({
     [],
   );
 
-  const meta = planMeta(PLAN_ORDER[index]);
-  const lastIndex = PLAN_ORDER.length - 1;
+  const onContact = index === CONTACT_INDEX;
+  const meta = planMeta(PLAN_ORDER[Math.min(index, PLAN_ORDER.length - 1)]);
 
   // Only nudge a specific upgrade once the account is actually running low; an org
   // comfortably within its allowance shouldn't see a pushy "Recommended".
@@ -247,7 +374,14 @@ export function PlanSlider({
               How many emails do you send per month?
             </p>
             <p className="mt-0.5 text-3xl font-semibold tracking-tight tabular-nums">
-              {meta.sendingEnabled ? (
+              {onContact ? (
+                <>
+                  100,000+
+                  <span className="ml-1.5 text-sm font-normal text-muted-foreground">
+                    emails / mo
+                  </span>
+                </>
+              ) : meta.sendingEnabled ? (
                 <>
                   {meta.monthlyEmailLimit.toLocaleString()}
                   <span className="ml-1.5 text-sm font-normal text-muted-foreground">
@@ -260,10 +394,18 @@ export function PlanSlider({
             </p>
           </div>
           <div className="text-right">
-            <p className="text-sm text-muted-foreground">{meta.name} plan</p>
+            <p className="text-sm text-muted-foreground">
+              {onContact ? "Custom plan" : `${meta.name} plan`}
+            </p>
             <p className="text-xl font-semibold tracking-tight">
-              ${meta.monthlyPriceUsd}
-              <span className="text-sm font-normal text-muted-foreground">/mo</span>
+              {onContact ? (
+                "Let's talk"
+              ) : (
+                <>
+                  ${meta.monthlyPriceUsd}
+                  <span className="text-sm font-normal text-muted-foreground">/mo</span>
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -273,13 +415,13 @@ export function PlanSlider({
           value={index}
           onValueChange={(v) => focusTo(Array.isArray(v) ? v[0] : (v as number))}
           min={0}
-          max={lastIndex}
+          max={CONTACT_INDEX}
           step={1}
         />
 
         <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
           <span>0 / mo</span>
-          <span>100k / mo</span>
+          <span>100k+ / mo</span>
         </div>
       </div>
 
@@ -402,6 +544,59 @@ export function PlanSlider({
               </div>
             );
           })}
+
+          {/* Beyond the ladder: no self-serve tier above 100k, so the last card
+              asks the org to get in touch instead of offering a checkout. */}
+          <div
+            ref={(el) => {
+              cardRefs.current[CONTACT_INDEX] = el;
+            }}
+            onClick={() => !onContact && focusTo(CONTACT_INDEX)}
+            style={{ width: `${CARD_W_REM}rem` }}
+            className={cn(
+              "relative flex shrink-0 snap-center flex-col rounded-2xl border border-dashed bg-card p-5 transition-[scale,translate,opacity,box-shadow,border-color] duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform",
+              onContact
+                ? "-translate-y-1 scale-100 border-foreground/30 opacity-100 shadow-xl"
+                : "scale-90 cursor-pointer border-border opacity-45 hover:opacity-70",
+            )}
+          >
+            <div className="text-sm font-medium text-muted-foreground">Need more?</div>
+            <div className="mt-1 flex items-baseline gap-1">
+              <span className="text-3xl font-semibold tracking-tight">Custom</span>
+            </div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              More than 100,000 emails / month
+            </div>
+
+            <ul className="mt-4 space-y-1.5 text-sm">
+              {[
+                "Volume and pricing sized to you",
+                "AI writing assistant",
+                "Unlimited subscribers",
+                "All other features included",
+              ].map((label) => (
+                <li key={label} className="flex items-center gap-2 text-muted-foreground">
+                  <Check className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                  {label}
+                </li>
+              ))}
+            </ul>
+
+            <div className="mt-5 flex-1" />
+            {onContact ? (
+              <ContactVolumeDialog />
+            ) : (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full"
+                tabIndex={-1}
+                onClick={() => focusTo(CONTACT_INDEX)}
+              >
+                Select
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-card to-transparent" />

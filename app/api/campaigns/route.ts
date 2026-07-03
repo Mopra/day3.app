@@ -23,12 +23,15 @@ export const GET = route(async () => {
       scheduledAt: campaigns.scheduledAt,
       sentAt: campaigns.sentAt,
       createdAt: campaigns.createdAt,
+      // Outer columns are written literally: an interpolated Drizzle column
+      // renders UNQUALIFIED in single-table selects, so inside the subquery it
+      // resolves against the subquery's own table and the correlation is lost.
       audienceName: sql<string>`(
-        SELECT name FROM audiences a WHERE a.id = ${campaigns.audienceId}
+        SELECT name FROM audiences a WHERE a.id = campaigns.audience_id
       )`.as("audienceName"),
       sentCount: sql<number>`(
-        SELECT count(*) FROM campaign_recipients r
-        WHERE r.campaign_id = ${campaigns.id} AND r.status IN ('sent', 'delivered')
+        SELECT count(*)::int FROM campaign_recipients r
+        WHERE r.campaign_id = campaigns.id AND r.status IN ('sent', 'delivered')
       )`.as("sentCount"),
     })
     .from(campaigns)
