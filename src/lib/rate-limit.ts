@@ -56,9 +56,12 @@ const DEFAULTS: Record<string, RateLimitRule> = {
   form_confirm: { limit: 60, windowMs: 60_000 },
   // Cloudflare OAuth connect start.
   oauth_connect: { limit: 20, windowMs: 60_000 },
-  // Manual domain re-check: each hit calls SES GetEmailIdentity (and possibly a
-  // DoH lookup). Generous enough for impatient clicking, bounded against abuse.
-  domain_recheck: { limit: 12, windowMs: 60_000 },
+  // Domain re-check: each hit calls SES GetEmailIdentity (and possibly a DoH
+  // lookup). The client's own auto-poll shares this bucket (~5-12/min at the
+  // tightest backoff), so the limit is set well above that headroom — otherwise
+  // a user clicking "Check now" on top of the poll trips a 429 that reads as
+  // breakage during the anxious "is it verified yet?" wait.
+  domain_recheck: { limit: 30, windowMs: 60_000 },
   // AI assist (draft/subjects/preview-text/rewrite): each hit is a paid LLM call
   // via OpenRouter. Generous for normal composing, bounded against cost abuse.
   ai: { limit: 20, windowMs: 60_000 },
@@ -173,10 +176,14 @@ export async function enforceRateLimit(
   name: string,
   key: string,
   store?: RateLimitStore,
+  // Optional caller-supplied message so a specific endpoint can explain the
+  // throttle in its own terms (e.g. the domain re-check, where a 429 during the
+  // anxious "is it verified yet?" wait reads as breakage without context).
+  message = "Too many requests. Please slow down and try again shortly.",
 ): Promise<void> {
   const result = await checkRateLimit(name, key, store);
   if (!result.allowed) {
-    throw new HttpError(429, "Too many requests. Please slow down and try again shortly.", {
+    throw new HttpError(429, message, {
       "Retry-After": String(result.retryAfterSeconds),
     });
   }

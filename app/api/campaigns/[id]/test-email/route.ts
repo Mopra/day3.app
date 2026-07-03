@@ -1,7 +1,9 @@
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findCampaign } from "@/api/finders";
+import { sendingDomains } from "@/db/schema";
 import { signUnsubscribeToken, unsubscribeUrl } from "@/services/unsubscribe";
 import { renderCampaignEmail } from "@/services/render";
 import { emailProviderFromEnv } from "@/email/factory";
@@ -35,6 +37,30 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
 
   const campaign = await findCampaign(db, account.id, id);
   if (!campaign) throw new HttpError(404, "Not found");
+
+  // Friendly pre-gates so a test fails with a clear message here, not as a raw
+  // SES error per address. Lighter than the real send gate — a test needs no
+  // audience or mailing address, just something to render and a verified sender.
+  if (!campaign.subject.trim() || !campaign.htmlBody.trim() || !campaign.fromEmail.trim()) {
+    throw new HttpError(
+      400,
+      "Add a subject, a From address, and some content before sending a test.",
+    );
+  }
+  const domain = await db.query.sendingDomains.findFirst({
+    where: and(
+      eq(sendingDomains.id, campaign.sendingDomainId),
+      eq(sendingDomains.accountId, account.id),
+    ),
+  });
+  const domainVerified =
+    domain && (domain.verificationStatus === "verified" || domain.adminOverrideVerified);
+  if (!domainVerified) {
+    throw new HttpError(
+      400,
+      "Verify your sending domain before sending a test — email can only go out from a verified domain.",
+    );
+  }
 
   const provider = emailProviderFromEnv();
   const secret = requireUnsubscribeSecret();

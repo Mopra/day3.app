@@ -134,6 +134,38 @@ describe("POST /api/campaigns/[id]/test-email", () => {
     expect(res.status).toBe(400);
   });
 
+  it("400s with a friendly message when the sending domain isn't verified", async () => {
+    const audience = await seedAudience(currentDb, currentAccount.id);
+    // Distinct domain name — the account already has the default verified one.
+    const pendingDomain = await seedDomain(currentDb, currentAccount.id, {
+      domain: "pending.test.co",
+      verificationStatus: "pending",
+    });
+    const campaign = await seedCampaign(currentDb, {
+      accountId: currentAccount.id,
+      audienceId: audience.id,
+      sendingDomainId: pendingDomain.id,
+    });
+    const res = await call(campaign.id, { toEmails: ["me@example.com"] });
+    expect(res.status).toBe(400);
+    // Pre-gate rejects before any provider send.
+    expect(sends).toEqual([]);
+  });
+
+  it("400s when the campaign has no content yet", async () => {
+    const audience = await seedAudience(currentDb, currentAccount.id);
+    const domain = await seedDomain(currentDb, currentAccount.id, { domain: "empty.test.co" });
+    const empty = await seedCampaign(currentDb, {
+      accountId: currentAccount.id,
+      audienceId: audience.id,
+      sendingDomainId: domain.id,
+      htmlBody: "",
+    });
+    const res = await call(empty.id, { toEmails: ["me@example.com"] });
+    expect(res.status).toBe(400);
+    expect(sends).toEqual([]);
+  });
+
   it("404s for a campaign owned by another account", async () => {
     const other = await seedAccount(currentDb);
     const otherAudience = await seedAudience(currentDb, other.id);

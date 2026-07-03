@@ -176,8 +176,9 @@ describe("env-configurable rule", () => {
 describe("domain_recheck limit (manual domain re-check)", () => {
   it("allows a burst up to the default then rejects further re-checks in the window", async () => {
     const store = new FakeRedis();
-    // Default is 12/60 — every one of the first 12 must be allowed.
-    for (let i = 0; i < 12; i++) {
+    // Default is 30/60 (headroom for the client's auto-poll plus manual clicks)
+    // — every one of the first 30 must be allowed.
+    for (let i = 0; i < 30; i++) {
       const r = await checkRateLimit("domain_recheck", "acc_1", store);
       expect(r.allowed).toBe(true);
     }

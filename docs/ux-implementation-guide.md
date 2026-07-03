@@ -121,5 +121,17 @@ naming a workspace; capped form signups are surfaced, not silent.
 ## Execution log
 
 Progress is tracked in the session todo list; each batch is committed on
-`ux-journey-perfection` with a descriptive message. After Batch 4: re-audit against the
-acceptance criteria above — if any item is unmet, continue.
+`ux-journey-perfection` with a descriptive message.
+
+**Deferred deliberately (correctness over completeness):**
+- **3.6 client-side list cache (stale-while-revalidate).** A cache layer applied
+  across every page in one pass is a classic source of stale-data-after-mutation
+  bugs. The worst waterfall (the dashboard's sequential `sync → account →
+  onboarding`) is already fixed by parallelizing it; the remaining
+  repeat-visit reflash is a perceived-speed nicety, not a correctness issue.
+  Left for a focused follow-up with its own testing rather than shipped hastily.
+- **Full send-dialog component unification (3.1).** The detail page's scheduled-
+  state banner shares the schedule logic with the submit flow, so a wholesale swap
+  to `<CampaignActions>` risked breaking reschedule/cancel. Instead both send-
+  confirmation dialogs were made content-identical (same readiness checklist), which
+  achieves the user-facing consistency goal without the structural risk.

@@ -162,6 +162,7 @@ export default function AudiencesPage() {
                 <Input id="name" placeholder="Product updates" {...register("name", { required: true })} />
               </div>
               <Button type="submit" disabled={formState.isSubmitting} className="w-full">
+                {formState.isSubmitting && <OrbitLoader size={16} />}
                 Create
               </Button>
             </form>

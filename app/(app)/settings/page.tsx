@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { OrbitLoader } from "@/components/ui/orbit-loader";
 import { useApi } from "@/lib/api";
 import type { Account, AccountHealth } from "@/lib/types";
 
@@ -59,6 +60,7 @@ export default function SettingsPage() {
             }
           }}
         >
+          {saving && <OrbitLoader size={16} />}
           Save
         </Button>
       </section>

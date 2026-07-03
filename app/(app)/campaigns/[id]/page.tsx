@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { CalendarClock, Trash2 } from "lucide-react";
+import { CalendarClock, Check, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +15,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { OrbitLoader, OrbitLoaderScreen } from "@/components/ui/orbit-loader";
+import { OrbitLoader } from "@/components/ui/orbit-loader";
+import { Skeleton } from "@/components/ui/skeleton";
 import { LaunchStream, SendDots } from "@/components/ui/send-loader";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -412,7 +413,20 @@ export default function CampaignDetailPage() {
     }
   }
 
-  if (!campaign) return <OrbitLoaderScreen />;
+  // Matched skeleton — keeps the page's shape (title row + a couple of cards) so
+  // the real content doesn't blank the panel and layout-shift in.
+  if (!campaign) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-8 w-56" />
+          <Skeleton className="h-9 w-40" />
+        </div>
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
 
   // Mid-send campaigns can't be deleted — pause first (mirrors the API guard).
   const deletable =
@@ -891,6 +905,22 @@ export default function CampaignDetailPage() {
                 <dd className="min-w-0 break-words font-medium">{campaign.subject}</dd>
               </div>
             </dl>
+            {/* Same readiness reassurance as the CampaignActions dialog on the
+                new-campaign page, so both send-confirmation moments match. */}
+            {onboarding && (
+              <ul className="space-y-1.5 text-sm text-muted-foreground">
+                {[
+                  { ok: onboarding.hasVerifiedDomain, label: "Verified sending domain" },
+                  { ok: onboarding.hasMailingAddress, label: "Business address on file" },
+                  { ok: onboarding.hasSubscribers, label: "Audience has subscribers" },
+                ].map((c) => (
+                  <li key={c.label} className="flex items-center gap-2">
+                    <Check className="size-4 shrink-0 text-emerald-600" />
+                    {c.label}
+                  </li>
+                ))}
+              </ul>
+            )}
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="ghost" disabled={busy} onClick={() => setSubmitOpen(false)}>
                 Cancel

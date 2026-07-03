@@ -181,6 +181,7 @@ export default function SendersPage() {
         replyTo: s.replyTo ?? "",
         isDefault: true,
       });
+      toast.success(`${s.fromName} is now your default sender`);
       load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't update sender");

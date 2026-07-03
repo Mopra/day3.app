@@ -151,6 +151,19 @@ export default function AudienceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const api = useApi();
   const router = useRouter();
+  // Surface an API error, and when it's the plan/subscriber-limit error, attach a
+  // one-tap "Upgrade" action so the free-cap wall has an escape hatch instead of a
+  // dead-end toast.
+  function toastApiError(err: unknown, fallback: string) {
+    const msg = err instanceof Error ? err.message : fallback;
+    if (/\blimit\b|\bplan\b|\bupgrade\b|\bsubscribers?\b/i.test(msg)) {
+      toast.error(msg, {
+        action: { label: "Upgrade", onClick: () => router.push("/billing") },
+      });
+    } else {
+      toast.error(msg);
+    }
+  }
   const [audience, setAudience] = useState<Audience | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [subscribers, setSubscribers] = useState<Subscriber[] | null>(null);
@@ -305,7 +318,7 @@ export default function AudienceDetailPage() {
       loadSubscribers();
       loadAudience();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed");
+      toastApiError(err, "Failed");
     }
   });
 
@@ -317,7 +330,7 @@ export default function AudienceDetailPage() {
       toast.success("Import started");
       loadImports();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Upload failed");
+      toastApiError(err, "Upload failed");
     }
   }
 
@@ -511,6 +524,7 @@ export default function AudienceDetailPage() {
                   </div>
                   <AttributeRows pairs={addAttrs} onChange={setAddAttrs} />
                   <Button type="submit" disabled={formState.isSubmitting} className="w-full">
+                    {formState.isSubmitting && <OrbitLoader size={16} />}
                     Add
                   </Button>
                 </form>
@@ -691,6 +705,7 @@ export default function AudienceDetailPage() {
                                 onClick={async () => {
                                   try {
                                     await api.post(`/api/subscribers/${s.id}/unsubscribe`);
+                                    toast.success(`${s.email} unsubscribed`);
                                     loadSubscribers();
                                     loadAudience();
                                   } catch (err) {
