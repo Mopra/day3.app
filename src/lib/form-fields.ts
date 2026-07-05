@@ -40,7 +40,10 @@ export function slugifyFieldKey(label: string): string {
     .slice(0, 40);
 }
 
-const KEY_RE = /^[a-z][a-z0-9_]*$/;
+// A valid merge-tag-safe field key. Shared with the audience field registry so
+// the two can never disagree on what a legal key looks like.
+export const FIELD_KEY_RE = /^[a-z][a-z0-9_]*$/;
+const KEY_RE = FIELD_KEY_RE;
 const MAX_FIELDS = 20;
 const MAX_VALUE_LEN = 500;
 const MAX_NAME_LEN = 100;

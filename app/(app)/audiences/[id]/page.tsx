@@ -40,10 +40,12 @@ import {
   RowActions,
 } from "@/components/ui/data-list";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AudienceFieldsTab } from "@/components/audience-fields-tab";
 import { useApi } from "@/lib/api";
 import { SUBSCRIBER_CSV_TEMPLATE } from "@/lib/csv";
 import { formatDateTime, statusVariant } from "@/lib/format";
-import type { Audience, ImportRow, Subscriber } from "@/lib/types";
+import type { Audience, AudienceField, ImportRow, Subscriber } from "@/lib/types";
 
 const STATUS_FILTERS = [
   { value: "all", label: "All statuses" },
@@ -91,12 +93,6 @@ function attrsFromPairs(pairs: Pair[]): Record<string, string> {
     if (k && value.trim()) out[k] = value.trim();
   }
   return out;
-}
-
-// Turn a merge-tag key into a readable column header: "phone_number" → "Phone number".
-function humanizeKey(key: string): string {
-  const s = key.replace(/_/g, " ").trim();
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // Reusable key/value editor for a subscriber's custom fields, used in both the
@@ -167,6 +163,22 @@ export default function AudienceDetailPage() {
   const [audience, setAudience] = useState<Audience | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [subscribers, setSubscribers] = useState<Subscriber[] | null>(null);
+  // Contacts | Fields. Reflected in ?tab= so the fields view is linkable; read
+  // once on mount (this is a client page, so window is only available then).
+  const [tab, setTab] = useState<"contacts" | "fields">("contacts");
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("tab") === "fields") setTab("fields");
+  }, []);
+  function changeTab(next: "contacts" | "fields") {
+    setTab(next);
+    const url = new URL(window.location.href);
+    if (next === "contacts") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", next);
+    window.history.replaceState(null, "", url);
+  }
+  // The audience's custom-field registry — drives the Fields tab and the custom
+  // columns on the contacts table.
+  const [fields, setFields] = useState<AudienceField[] | null>(null);
   const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [imports, setImports] = useState<ImportRow[]>([]);
@@ -246,9 +258,18 @@ export default function AudienceDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  const loadFields = useCallback(() => {
+    api
+      .get<{ fields: AudienceField[] }>(`/api/audiences/${id}/fields`)
+      .then((res) => setFields(res.fields))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
   useEffect(loadAudience, [loadAudience]);
   useEffect(loadSubscribers, [loadSubscribers]);
   useEffect(loadImports, [loadImports]);
+  useEffect(loadFields, [loadFields]);
 
   // Toast when an import finishes — the upload only said "started", so without
   // this the completion is a silent badge flip on the next poll. On first load we
@@ -301,9 +322,11 @@ export default function AudienceDetailPage() {
       loadImports();
       loadSubscribers();
       loadAudience();
+      // A CSV with new columns registers them as fields while it processes.
+      loadFields();
     }, 2000);
     return () => clearInterval(t);
-  }, [hasRunningImport, loadImports, loadSubscribers, loadAudience]);
+  }, [hasRunningImport, loadImports, loadSubscribers, loadAudience, loadFields]);
 
   const onAdd = handleSubmit(async (values) => {
     try {
@@ -317,6 +340,8 @@ export default function AudienceDetailPage() {
       setAddAttrs([]);
       loadSubscribers();
       loadAudience();
+      // A new custom-field key entered here is auto-registered server-side.
+      loadFields();
     } catch (err) {
       toastApiError(err, "Failed");
     }
@@ -409,6 +434,8 @@ export default function AudienceDetailPage() {
       toast.success("Subscriber updated");
       setEditSub(null);
       loadSubscribers();
+      // A new custom-field key entered here is auto-registered server-side.
+      loadFields();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't update subscriber");
     }
@@ -437,16 +464,10 @@ export default function AudienceDetailPage() {
   // per-status breakdown from the audience endpoint.
   const hasSubscribers = Object.values(counts).some((n) => n > 0);
 
-  // Custom-field columns: the union of attribute keys across the loaded rows,
-  // capped so the table stays readable. Every value is still editable in the
-  // per-row edit dialog, so nothing is hidden — this is just the at-a-glance view.
-  const attrColumns = useMemo(() => {
-    const set = new Set<string>();
-    for (const s of subscribers ?? []) {
-      for (const k of Object.keys(s.attributes ?? {})) set.add(k);
-    }
-    return [...set].slice(0, 4);
-  }, [subscribers]);
+  // Custom-field columns come from the audience's field registry (the Fields
+  // tab), capped so the table stays readable. Every value is still editable in
+  // the per-row edit dialog, so nothing is hidden — this is the at-a-glance view.
+  const attrColumns = useMemo(() => (fields ?? []).slice(0, 4), [fields]);
 
   return (
     <div className="space-y-6">
@@ -477,6 +498,7 @@ export default function AudienceDetailPage() {
             {(counts.subscribed ?? 0).toLocaleString()} subscribed
           </p>
         </div>
+        {tab === "contacts" && (
         <div className="flex flex-col items-end gap-1.5">
           <div className="flex gap-2">
             <input
@@ -540,8 +562,23 @@ export default function AudienceDetailPage() {
             <span className="underline underline-offset-2">download a template</span>
           </button>
         </div>
+        )}
       </div>
 
+      {/* Contacts | Fields — one audience workspace, Resend-style. */}
+      <Tabs value={tab} onValueChange={(v) => changeTab(v as "contacts" | "fields")}>
+        <TabsList>
+          <TabsTrigger value="contacts">Contacts</TabsTrigger>
+          <TabsTrigger value="fields">Fields</TabsTrigger>
+        </TabsList>
+      </Tabs>
+
+      {tab === "fields" && (
+        <AudienceFieldsTab audienceId={id} fields={fields} onChanged={loadFields} />
+      )}
+
+      {tab === "contacts" && (
+      <>
       {/* Hidden picker reused for re-uploading a corrected CSV on retry. */}
       <input
         ref={retryRef}
@@ -667,8 +704,8 @@ export default function AudienceDetailPage() {
                   <TableRow>
                     <TableHead>Email</TableHead>
                     <TableHead>Name</TableHead>
-                    {attrColumns.map((k) => (
-                      <TableHead key={k}>{humanizeKey(k)}</TableHead>
+                    {attrColumns.map((f) => (
+                      <TableHead key={f.key}>{f.label}</TableHead>
                     ))}
                     <TableHead>Status</TableHead>
                     <TableHead>Added</TableHead>
@@ -682,9 +719,9 @@ export default function AudienceDetailPage() {
                       <TableCell className="text-muted-foreground">
                         {[s.firstName, s.lastName].filter(Boolean).join(" ") || "—"}
                       </TableCell>
-                      {attrColumns.map((k) => (
-                        <TableCell key={k} className="text-muted-foreground">
-                          {s.attributes?.[k] || "—"}
+                      {attrColumns.map((f) => (
+                        <TableCell key={f.key} className="text-muted-foreground">
+                          {s.attributes?.[f.key] || "—"}
                         </TableCell>
                       ))}
                       <TableCell>
@@ -744,6 +781,8 @@ export default function AudienceDetailPage() {
           )}
         </CardContent>
       </Card>
+      </>
+      )}
 
       {/* Rename audience */}
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>

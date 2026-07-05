@@ -8,6 +8,7 @@ import { newId, nowIso } from "@/lib/ids";
 import { isValidEmail } from "@/lib/csv";
 import { normalizeAttributes } from "@/lib/form-fields";
 import { isEmailSuppressed } from "@/services/suppression";
+import { registerAudienceFields } from "@/services/audience-fields";
 import { subscriberHeadroom, subscriberLimitMessage } from "@/services/subscriber-limit";
 
 const ListSubscribersSchema = z.object({
@@ -70,6 +71,18 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
     throw new HttpError(403, subscriberLimitMessage(account.plan));
   }
 
+  const attrs = normalizeAttributes(attributes);
+  // Any new custom-field key entered here joins the audience's field registry
+  // (idempotent), so it's immediately a merge tag and a table column.
+  if (attrs) {
+    await registerAudienceFields(
+      db,
+      account.id,
+      audience.id,
+      Object.keys(attrs).map((key) => ({ key })),
+    );
+  }
+
   const now = nowIso();
   const inserted = await db
     .insert(subscribers)
@@ -80,7 +93,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
       email,
       firstName: firstName ?? null,
       lastName: lastName ?? null,
-      attributes: normalizeAttributes(attributes),
+      attributes: attrs,
       status: "subscribed",
       source: "manual",
       createdAt: now,

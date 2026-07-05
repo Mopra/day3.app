@@ -37,6 +37,11 @@ export type RenderInput = {
   // tracker. Built per recipient (each token is recipient-specific). The footer
   // unsubscribe link is appended afterwards and is never tracked.
   linkTracking?: Record<string, string> | null;
+  // Audience-level default merge values (audience_fields.fallback), keyed by
+  // field key. Resolution order per token: subscriber value → inline
+  // {{key|fallback}} → this map → empty. Same map for every recipient of a
+  // campaign, so callers load it once per batch.
+  fieldFallbacks?: Record<string, string> | null;
 };
 
 export type RenderedEmail = {
@@ -127,25 +132,36 @@ export function personalizationFieldsUsed(
   }));
 }
 
-function substitute(template: string, vars: Record<string, string>): string {
+function substitute(
+  template: string,
+  vars: Record<string, string>,
+  fieldFallbacks: Record<string, string> = {},
+): string {
   return template.replace(TOKEN_RE, (_, name: string, fallback?: string) => {
     const key = name.toLowerCase();
     // A token is either a known field that's empty, or an unrecognized token
     // (typo, or a custom field this subscriber lacks). Both degrade to the
-    // author-supplied fallback, then to empty — so {{plan|free}} works whether
-    // or not the subscriber carries a `plan` attribute.
+    // author-supplied inline fallback, then to the field's stored fallback
+    // (audience_fields.fallback), then to empty — so {{plan|free}} works whether
+    // or not the subscriber carries a `plan` attribute, and {{plan}} still
+    // renders the field's default when one is configured. The stored fallback is
+    // user data, so it goes through the same escaping as merge values.
     const raw = key in vars ? vars[key] : "";
-    const value = raw !== "" ? raw : (fallback ?? "").trim();
+    const value = raw !== "" ? raw : (fallback ?? "").trim() || (fieldFallbacks[key] ?? "");
     return key === "unsubscribe_url" ? value : escapeHtml(value);
   });
 }
 
 // Like substitute() but for the plain-text body, where HTML escaping is wrong.
-function substituteText(template: string, vars: Record<string, string>): string {
+function substituteText(
+  template: string,
+  vars: Record<string, string>,
+  fieldFallbacks: Record<string, string> = {},
+): string {
   return template.replace(TOKEN_RE, (_, name: string, fallback?: string) => {
     const key = name.toLowerCase();
     const raw = key in vars ? vars[key] : "";
-    return raw !== "" ? raw : (fallback ?? "").trim();
+    return raw !== "" ? raw : (fallback ?? "").trim() || (fieldFallbacks[key] ?? "");
   });
 }
 
@@ -601,13 +617,15 @@ export function renderCampaignEmail(input: RenderInput): RenderedEmail {
   let text = stripUserUnsubscribeText(baseText);
   text += `\n\n--\n${footerIntro}\n${FOOTER_LOCKED_TEXT}`;
 
+  const fieldFallbacks = input.fieldFallbacks ?? {};
+
   return {
     // subject is plain text in the email header, not HTML — do not escape.
-    subject: substituteText(input.campaign.subject, vars),
+    subject: substituteText(input.campaign.subject, vars, fieldFallbacks),
     // html substitution HTML-escapes attacker-controlled merge values (Fix 3),
     // closing the bypass where unsanitized merge vars were injected into the
     // already-sanitized body.
-    html: substitute(html, vars),
-    text: substituteText(text, vars),
+    html: substitute(html, vars, fieldFallbacks),
+    text: substituteText(text, vars, fieldFallbacks),
   };
 }

@@ -1,5 +1,4 @@
 import { notFound } from "next/navigation";
-import { getDb } from "@/db/client";
 import { loadPublicFormBySlugs } from "@/services/public-form";
 import { PublicFormView } from "@/components/public-form-view";
 
@@ -9,8 +8,7 @@ import { PublicFormView } from "@/components/public-form-view";
 //
 // The first dynamic segment is [handle] to match the sibling /f/[handle] route
 // (Next requires a shared name at the same level); here `handle` is the account
-// slug.
-export const dynamic = "force-dynamic";
+// slug. Reading searchParams keeps this dynamic without force-dynamic.
 
 type SearchParams = Promise<{ state?: string; reason?: string; embed?: string }>;
 
@@ -23,7 +21,7 @@ export default async function PrettyFormPage({
 }) {
   const { handle, formSlug } = await params;
   const { state, reason, embed } = await searchParams;
-  const data = await loadPublicFormBySlugs(getDb(), handle, formSlug);
+  const data = await loadPublicFormBySlugs(handle, formSlug);
   if (!data) notFound();
 
   const isResultState = !!state && state !== "default";

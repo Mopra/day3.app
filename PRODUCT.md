@@ -211,7 +211,9 @@ Key pricing facts:
   the audience's own fields alongside the built-ins. Tags can carry a **fallback** for
   when the field is empty (`{{first_name|there}}` → "there", `{{plan|free}}`), so
   personalized copy never degrades to "Hi ,". Inserting "First name" from the toolbar
-  drops in a fallback automatically.
+  drops in a fallback automatically. A custom field can also carry a **stored fallback**
+  (set on the audience's Fields tab) used when the template has no inline one —
+  resolution order: subscriber value → inline fallback → field fallback → empty.
 - **Pre-send personalization check:** before sending, the campaign page warns when
   recipients in the chosen audience are missing a field the email uses (e.g. "312 of
   1,200 recipients have no first name — they'll see 'there'"), so a generic greeting
@@ -303,6 +305,18 @@ themselves, and manual writing continues unaffected.
 - **Custom fields:** beyond email/first/last name, a subscriber can carry any number of
   custom attributes (phone, company, …) collected by signup forms or CSV import. They
   show as columns in the subscriber list and are usable as `{{merge_tags}}` in campaigns.
+- **Fields tab (field registry):** the audience page has two tabs — **Contacts** and
+  **Fields**. Fields is the single catalogue of the audience's custom fields (up to 50):
+  each has a human **name**, an immutable merge-tag **key**, an advisory **type**
+  (text/number/date), and an optional **fallback value** used in campaigns when a contact
+  has no value (a template's inline `{{key|fallback}}` still wins over the field's).
+  Fields are **auto-registered** wherever a new key enters the system — signup-form save,
+  CSV import, manual subscriber add/edit — and can be created, edited, and deleted by
+  hand. Deleting removes the field from menus and columns but keeps stored values by
+  default (it can reappear if new data arrives with that column); an explicit option also
+  strips the values from all contacts. The registry powers the contacts table's custom
+  columns and the composer's merge-tag menu, so all three always agree. Existing
+  audiences are seeded automatically from their forms and subscriber data on first view.
 - **Add subscribers manually**; **edit** a subscriber's email, name, and custom fields, or
   **delete** one outright (distinct from unsubscribe, which keeps the record but stops mailing).
 - Search and filter subscribers by status; unsubscribe individuals.

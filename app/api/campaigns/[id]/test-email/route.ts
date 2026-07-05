@@ -6,6 +6,7 @@ import { findCampaign } from "@/api/finders";
 import { sendingDomains } from "@/db/schema";
 import { signUnsubscribeToken, unsubscribeUrl } from "@/services/unsubscribe";
 import { renderCampaignEmail } from "@/services/render";
+import { getAudienceFieldFallbacks } from "@/services/audience-fields";
 import { emailProviderFromEnv } from "@/email/factory";
 import { requireUnsubscribeSecret } from "@/lib/env";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -64,6 +65,9 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
 
   const provider = emailProviderFromEnv();
   const secret = requireUnsubscribeSecret();
+  // Same audience-level merge defaults a real send applies, so the test renders
+  // exactly what recipients will get.
+  const fieldFallbacks = await getAudienceFieldFallbacks(db, campaign.audienceId);
   const sent: string[] = [];
   const failed: { email: string; error: string }[] = [];
 
@@ -78,6 +82,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
       companyName: account.name,
       companyAddress: account.companyAddress,
       unsubscribeUrl: unsubscribeUrl(process.env.APP_URL ?? "", token),
+      fieldFallbacks,
     });
 
     const result = await provider.send({

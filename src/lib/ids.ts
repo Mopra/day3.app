@@ -8,6 +8,7 @@ export type IdPrefix =
   | "aud"
   | "sub"
   | "frm"
+  | "fld"
   | "imp"
   | "cmp"
   | "img"

@@ -6,6 +6,7 @@ import { logJob } from "../../lib/job-log";
 import { canonicalizeEmail, MAX_IMPORT_ROWS, parseSubscriberCsv } from "../../lib/csv";
 import { maxSubscribersForPlan } from "../../lib/plans-catalog";
 import { getSuppressedEmails } from "../../services/suppression";
+import { registerAudienceFields } from "../../services/audience-fields";
 import { countAccountSubscribers } from "../../services/subscriber-limit";
 import type { ObjectStore } from "../../lib/storage";
 
@@ -68,6 +69,22 @@ export async function processImport(
       .update(imports)
       .set({ totalRows: parsed.totalRows, updatedAt: nowIso() })
       .where(eq(imports.id, importRow.id));
+
+    // Catalogue any new custom columns in the audience's field registry so they
+    // show up as merge tags / table columns immediately — even if every row
+    // below turns out to be a duplicate. Idempotent, so a resumed import is fine.
+    const attrKeys = new Set<string>();
+    for (const row of parsed.rows) {
+      for (const key of Object.keys(row.attributes ?? {})) attrKeys.add(key);
+    }
+    if (attrKeys.size > 0) {
+      await registerAudienceFields(
+        db,
+        importRow.accountId,
+        importRow.audienceId,
+        [...attrKeys].map((key) => ({ key })),
+      );
+    }
 
     const suppressed = await getSuppressedEmails(
       db,

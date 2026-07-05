@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { revalidateTag } from "next/cache";
 import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
@@ -7,9 +8,11 @@ import { forms, sendingDomains } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 import { ensureAccountSlug, uniqueFormSlug } from "@/lib/slug";
 import { buildFormInstall } from "@/services/form-install";
-import { FORM_FIELD_TYPES, normalizeFields } from "@/lib/form-fields";
+import { publicFormTag } from "@/services/public-form";
+import { FORM_FIELD_TYPES, isReservedFieldKey, normalizeFields } from "@/lib/form-fields";
 import { FormDesignSchema, formDesignJson, resolveFormDesign } from "@/lib/form-design";
 import { isThemeColor } from "@/lib/theme";
+import { formFieldTypeToAudienceType, registerAudienceFields } from "@/services/audience-fields";
 
 // Custom field definitions sent by the editor. Lightly validated here, then run
 // through normalizeFields (dedupe keys, drop reserved/malformed) before storing.
@@ -106,6 +109,21 @@ export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { pa
     set.fields = fields;
     // Keep the legacy collectName flag in sync with the canonical field list.
     set.collectName = fields.some((f) => f.key === "first_name");
+    // Catalogue any new custom fields in the audience's field registry so they
+    // are merge tags / table columns immediately (idempotent).
+    const customFields = fields.filter((f) => !isReservedFieldKey(f.key));
+    if (customFields.length > 0) {
+      await registerAudienceFields(
+        db,
+        account.id,
+        set.audienceId ?? form.audienceId,
+        customFields.map((f) => ({
+          key: f.key,
+          label: f.label,
+          type: formFieldTypeToAudienceType(f.type),
+        })),
+      );
+    }
   } else if (input.collectName !== undefined) {
     set.collectName = input.collectName;
   }
@@ -120,6 +138,9 @@ export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { pa
 
   await db.update(forms).set(set).where(and(eq(forms.id, form.id), eq(forms.accountId, account.id)));
 
+  // Purge the cached public render so the owner's edit shows immediately.
+  revalidateTag(publicFormTag(form.id), "max");
+
   const updated = await findForm(db, account.id, form.id);
   return json({ form: updated ? { ...updated, design: resolveFormDesign(updated.design) } : updated });
 });
@@ -130,5 +151,6 @@ export const DELETE = route<{ params: Promise<{ id: string }> }>(async (_req, { 
   const form = await findForm(db, account.id, id);
   if (!form) throw new HttpError(404, "Not found");
   await db.delete(forms).where(and(eq(forms.id, form.id), eq(forms.accountId, account.id)));
+  revalidateTag(publicFormTag(form.id), "max");
   return json({ ok: true });
 });

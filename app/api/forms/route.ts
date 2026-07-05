@@ -6,8 +6,9 @@ import { findAudience } from "@/api/finders";
 import { audiences, forms } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { ensureAccountSlug, uniqueFormSlug } from "@/lib/slug";
-import { FORM_FIELD_TYPES, normalizeFields } from "@/lib/form-fields";
+import { FORM_FIELD_TYPES, isReservedFieldKey, normalizeFields } from "@/lib/form-fields";
 import { resolveFormDesign } from "@/lib/form-design";
+import { formFieldTypeToAudienceType, registerAudienceFields } from "@/services/audience-fields";
 
 // GET /api/forms — list this account's signup forms with their audience name.
 export const GET = route(async () => {
@@ -86,6 +87,22 @@ export const POST = route(async (req) => {
     : input.collectName
       ? normalizeFields([{ key: "first_name", label: "First name", type: "text", required: false }])
       : [];
+
+  // Catalogue the form's custom fields in the audience's field registry so they
+  // are merge tags / table columns from day one (idempotent; reserved keys skip).
+  const customFields = fields.filter((f) => !isReservedFieldKey(f.key));
+  if (customFields.length > 0) {
+    await registerAudienceFields(
+      db,
+      account.id,
+      audience.id,
+      customFields.map((f) => ({
+        key: f.key,
+        label: f.label,
+        type: formFieldTypeToAudienceType(f.type),
+      })),
+    );
+  }
 
   await db.insert(forms).values({
     id,

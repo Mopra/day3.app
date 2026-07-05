@@ -32,6 +32,7 @@ import {
   clickTrackingUrl,
 } from "../../services/open-tracking";
 import { getSuppressedEmails, addSuppression } from "../../services/suppression";
+import { getAudienceFieldFallbacks } from "../../services/audience-fields";
 import { enforceAccountHealth } from "../../services/health";
 import { notifyCampaignPaused, notifyCampaignSent } from "../../services/notifications";
 import { releaseReservation, reserveQuota } from "../../services/quota";
@@ -383,6 +384,10 @@ async function sendToClaimed(
     // DEFAULT_THEME inside renderCampaignEmail).
     const theme = safeParseTheme(campaign.themeJson);
 
+    // Audience-level default merge values (audience_fields.fallback) — the same
+    // map for every recipient, loaded once per batch.
+    const fieldFallbacks = await getAudienceFieldFallbacks(db, campaign.audienceId);
+
     let consecutiveFailed = 0;
     let lastFailError: string | null = null;
     let lastLockRefresh = Date.now();
@@ -481,6 +486,7 @@ async function sendToClaimed(
         unsubscribeUrl: unsubUrl,
         openTrackingUrl: openUrl,
         linkTracking,
+        fieldFallbacks,
       });
 
       handedOff = true;

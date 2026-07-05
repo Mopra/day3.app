@@ -1,5 +1,4 @@
 import { notFound } from "next/navigation";
-import { getDb } from "@/db/client";
 import { loadPublicFormById } from "@/services/public-form";
 import { PublicFormView } from "@/components/public-form-view";
 
@@ -12,7 +11,10 @@ import { PublicFormView } from "@/components/public-form-view";
 // sibling pretty route /f/[handle]/[formSlug] — Next requires the first dynamic
 // segment to share a name across routes at the same level. Here `handle` is the
 // form id.
-export const dynamic = "force-dynamic";
+//
+// Reading searchParams keeps rendering dynamic, but the form data itself comes
+// from the tag-invalidated data cache (loadPublicFormById), so repeat embed
+// opens skip the DB round-trip entirely.
 
 type SearchParams = Promise<{ state?: string; reason?: string; embed?: string }>;
 
@@ -25,7 +27,7 @@ export default async function HostedFormPage({
 }) {
   const { handle } = await params;
   const { state, reason, embed } = await searchParams;
-  const data = await loadPublicFormById(getDb(), handle);
+  const data = await loadPublicFormById(handle);
   if (!data) notFound();
 
   const isResultState = !!state && state !== "default";

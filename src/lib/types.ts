@@ -111,6 +111,19 @@ export type Audience = {
   subscriberCount?: number;
 };
 
+// A custom field in an audience's field registry (the Fields tab). Values live
+// on subscribers (attributes bag); this is the catalogue entry: the {{key}}
+// merge tag, its human label, an advisory type, and an optional default merge
+// value used when a subscriber has no value.
+export type AudienceField = {
+  id: string;
+  key: string;
+  label: string;
+  type: "text" | "number" | "date";
+  fallback: string | null;
+  createdAt: string;
+};
+
 export type Subscriber = {
   id: string;
   email: string;

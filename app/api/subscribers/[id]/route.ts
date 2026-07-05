@@ -6,6 +6,7 @@ import { findSubscriber } from "@/api/finders";
 import { subscribers } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 import { normalizeAttributes } from "@/lib/form-fields";
+import { registerAudienceFields } from "@/services/audience-fields";
 
 // Editing the contact's details. Status is deliberately not editable here —
 // status transitions (unsubscribe, resubscribe) flow through their own routes so
@@ -29,7 +30,19 @@ export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { pa
   if (data.email !== undefined) set.email = data.email;
   if (data.firstName !== undefined) set.firstName = data.firstName || null;
   if (data.lastName !== undefined) set.lastName = data.lastName || null;
-  if (data.attributes !== undefined) set.attributes = normalizeAttributes(data.attributes);
+  if (data.attributes !== undefined) {
+    set.attributes = normalizeAttributes(data.attributes);
+    // Any new custom-field key entered here joins the audience's field registry
+    // (idempotent), so it's immediately a merge tag and a table column.
+    if (set.attributes) {
+      await registerAudienceFields(
+        db,
+        account.id,
+        subscriber.audienceId,
+        Object.keys(set.attributes).map((key) => ({ key })),
+      );
+    }
+  }
 
   try {
     await db.update(subscribers).set(set).where(eq(subscribers.id, subscriber.id));

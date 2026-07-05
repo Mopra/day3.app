@@ -40,14 +40,48 @@
     return origin + "/f/" + encodeURIComponent(id) + "?embed=1";
   }
 
+  // Warm the cross-origin connection to our form host as soon as the widget loads,
+  // so the DNS + TLS handshake isn't paid at popup-open time (it's the single
+  // biggest cause of the "close icon, then a blank pause" the form used to have).
+  var preconnected = false;
+  function preconnect() {
+    if (preconnected || !origin) return;
+    preconnected = true;
+    var rels = ["preconnect", "dns-prefetch"];
+    for (var i = 0; i < rels.length; i++) {
+      var link = document.createElement("link");
+      link.rel = rels[i];
+      link.href = origin;
+      link.crossOrigin = "anonymous";
+      document.head.appendChild(link);
+    }
+  }
+
+  // Prefetch a specific form's HTML document so a popup opens with the document
+  // already in the browser cache. Fired on intent (hover/focus) for click popups
+  // and up front for auto-triggers. Once per id.
+  var preloaded = {};
+  function preloadForm(id) {
+    if (preloaded[id] || !origin) return;
+    preloaded[id] = true;
+    var link = document.createElement("link");
+    link.rel = "prefetch";
+    link.as = "document";
+    link.href = formUrl(id);
+    document.head.appendChild(link);
+  }
+
   // 464 = the form card's 440px max-width plus its document's 12px padding per side,
   // so the card renders at full width instead of being squeezed by the frame.
-  function makeIframe(id) {
+  // eager=true for popups (the frame is visible the instant it's created, so lazy
+  // only adds latency); inline embeds stay lazy since they may be below the fold.
+  function makeIframe(id, eager) {
     var f = document.createElement("iframe");
     f.src = formUrl(id);
     f.setAttribute("data-day3-frame", id);
     f.title = "Newsletter signup";
-    f.loading = "lazy";
+    f.loading = eager ? "eager" : "lazy";
+    if (eager) f.setAttribute("fetchpriority", "high");
     f.style.cssText =
       "border:0;width:100%;max-width:464px;height:520px;overflow:hidden;background:transparent";
     return f;
@@ -138,7 +172,7 @@
       if (e.target === overlay) closePopup();
     });
 
-    var frame = makeIframe(id);
+    var frame = makeIframe(id, true);
     // Never taller than the viewport — the form document scrolls inside instead.
     frame.style.maxHeight = "85vh";
     frame.style.maxHeight = "calc(100dvh - 88px)";
@@ -210,13 +244,26 @@
 
     // popup
     if (clickable) {
+      // Warm the form document on hover/focus/touch — by the time the click
+      // lands the HTML is usually already cached, so the popup opens instantly.
+      var warm = function () {
+        preloadForm(id);
+      };
+      el.addEventListener("mouseenter", warm);
+      el.addEventListener("focusin", warm);
+      el.addEventListener("touchstart", warm, { passive: true });
       el.addEventListener("click", function (e) {
         e.preventDefault();
         openPopup(id);
       });
     }
     var trigger = el.getAttribute("data-day3-trigger");
-    if (trigger) armTrigger(id, trigger);
+    if (trigger) {
+      // An auto-trigger popup is going to open on its own, so prefetch its
+      // document up front rather than waiting for an intent signal.
+      preloadForm(id);
+      armTrigger(id, trigger);
+    }
   }
 
   function scan() {
@@ -224,6 +271,7 @@
     for (var i = 0; i < els.length; i++) {
       if (els[i].tagName !== "IFRAME") initEl(els[i]);
     }
+    if (els.length) preconnect();
   }
 
   if (!document.getElementById("day3-embed-style")) {

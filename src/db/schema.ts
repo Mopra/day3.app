@@ -229,6 +229,41 @@ export const subscribers = pgTable(
   ],
 );
 
+// The per-audience custom-field registry — the single source of truth for which
+// custom fields exist on an audience's subscribers. Field VALUES stay in
+// subscribers.attributes (schemaless jsonb); these rows catalogue the keys so the
+// composer's merge-tag menu, the subscriber table's columns, and the Fields tab
+// all agree. Rows are auto-registered when a new key arrives (form save, CSV
+// import, manual subscriber edit) and managed on the audience's Fields tab.
+export const AUDIENCE_FIELD_TYPES = ["text", "number", "date"] as const;
+export type AudienceFieldType = (typeof AUDIENCE_FIELD_TYPES)[number];
+
+export const audienceFields = pgTable(
+  "audience_fields",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    audienceId: text("audience_id").notNull(),
+    // The stable, merge-tag-safe key ({{key}}) — also the subscribers.attributes
+    // key. Immutable after creation: renaming it would orphan stored values.
+    key: text("key").notNull(),
+    // Human name shown in the UI and the composer's insert menu.
+    label: text("label").notNull(),
+    // Advisory type (drives display/validation hints, not storage — values are
+    // always strings in the attributes bag).
+    type: text("type").$type<AudienceFieldType>().notNull().default("text"),
+    // Default merge value used at render time when a subscriber has no value and
+    // the template supplies no inline {{key|fallback}}.
+    fallback: text("fallback"),
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_audience_fields_audience_key").on(t.audienceId, t.key),
+    index("idx_audience_fields_account_audience").on(t.accountId, t.audienceId),
+  ],
+);
+
 export const FORM_STATUSES = ["active", "disabled"] as const;
 export type FormStatus = (typeof FORM_STATUSES)[number];
 
@@ -608,6 +643,7 @@ export type SendingDomain = typeof sendingDomains.$inferSelect;
 export type Sender = typeof senders.$inferSelect;
 export type DnsIntegration = typeof dnsIntegrations.$inferSelect;
 export type Audience = typeof audiences.$inferSelect;
+export type AudienceField = typeof audienceFields.$inferSelect;
 export type Subscriber = typeof subscribers.$inferSelect;
 export type Form = typeof forms.$inferSelect;
 export type Import = typeof imports.$inferSelect;
