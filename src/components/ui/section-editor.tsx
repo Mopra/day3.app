@@ -1018,6 +1018,12 @@ function ButtonColumn({
   // (serializeButtonCell drops it otherwise). Surface that here so a half-built button
   // never silently vanishes from the preview/email — the builder stays WYSIWYG.
   const willSend = hasLabel && linked;
+  // Show the button's real fill/label colors as soon as EITHER it's live, or the user
+  // has explicitly picked a color — so choosing a fill gives immediate feedback. A
+  // brand-new button that's neither (no chosen color, not yet live) shows a neutral
+  // "draft" chip instead of a loud default fill, so it reads as a placeholder.
+  const showFill =
+    willSend || button.bgColor !== undefined || button.textColor !== undefined;
   const fullWidth = !!button.fullWidth;
   const alignClass =
     align === "left" ? "justify-start" : align === "right" ? "justify-end" : "justify-center";
@@ -1080,12 +1086,17 @@ function ButtonColumn({
           alignment (moot when the button is full-width). */}
       <div className={cn("flex py-1", alignClass)}>
         <label
-          style={{ backgroundColor: bg === "transparent" ? undefined : bg, color: text }}
+          style={showFill ? { backgroundColor: bg === "transparent" ? undefined : bg, color: text } : undefined}
           className={cn(
-            "relative cursor-text rounded-md px-4 py-2 text-sm font-semibold transition-opacity",
+            "relative cursor-text rounded-md px-4 py-2 text-sm font-semibold transition-colors",
             fullWidth ? "grid w-full" : "inline-grid",
-            // Dim a button that won't ship so it visibly reads as not-yet-live.
-            !willSend && "opacity-60",
+            // No chosen color and not yet live → a quiet neutral draft chip, so it reads
+            // as a placeholder rather than a loud finished CTA competing with the app's
+            // own buttons.
+            !showFill && "border border-dashed border-border bg-transparent text-muted-foreground",
+            // Showing its real color but not yet shippable (no link) → keep the color
+            // visible for feedback, just slightly dimmed to still read as not-live.
+            showFill && !willSend && "opacity-70",
           )}
         >
           <span aria-hidden className="invisible col-start-1 row-start-1 whitespace-pre px-px">
@@ -1096,7 +1107,10 @@ function ButtonColumn({
             onChange={(e) => update({ label: e.target.value })}
             placeholder="Button"
             aria-label="Button label"
-            style={{ color: text }}
+            // Only force the button's own label color when the chip shows its real
+            // fill; while it's a neutral draft chip the label inherits the muted color
+            // (a white `text` would be invisible on the transparent placeholder).
+            style={showFill ? { color: text } : undefined}
             className="col-start-1 row-start-1 w-full bg-transparent px-px text-center outline-none placeholder:text-current placeholder:opacity-60"
           />
         </label>

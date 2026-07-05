@@ -172,7 +172,7 @@ export function FloatingStylingPanel({
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
-          className="mr-1 flex h-28 w-7 shrink-0 cursor-grab touch-none items-center justify-center self-center rounded-full border border-border bg-muted text-muted-foreground shadow-md transition-colors hover:bg-accent hover:text-foreground active:cursor-grabbing"
+          className="relative z-10 mr-1 flex h-28 w-7 shrink-0 cursor-grab touch-none items-center justify-center self-center rounded-full border border-border bg-muted text-muted-foreground shadow-[0_10px_30px_-8px_rgba(0,0,0,0.6),0_4px_12px_-4px_rgba(0,0,0,0.45)] transition-colors hover:bg-accent hover:text-foreground active:cursor-grabbing"
         >
           <GripVertical className="size-4" />
         </button>
@@ -181,11 +181,18 @@ export function FloatingStylingPanel({
             the grip. The inner body keeps its full width so its layout never reflows. */}
         <div
           className={cn(
-            "overflow-hidden transition-[width] duration-300 ease-out",
-            open ? "w-72" : "w-0",
+            // Clip the fixed-width card as its width animates, so the panel reveals by
+            // growing inward from the grip. The drop shadow lives HERE on the clip, not
+            // on the card inside it: this element's overflow-hidden would swallow the
+            // card's own shadow, but it never clips its *own* box-shadow. Gated on `open`
+            // so a collapsed (w-0) panel doesn't leave a shadow sliver by the grip.
+            "overflow-hidden rounded-xl transition-[width] duration-300 ease-out",
+            open
+              ? "w-72 shadow-[0_24px_60px_-12px_rgba(0,0,0,0.65),0_8px_24px_-8px_rgba(0,0,0,0.5)]"
+              : "w-0",
           )}
         >
-          <div className="max-h-[80vh] w-72 overflow-y-auto rounded-xl border border-border bg-card p-5 shadow-xl">
+          <div className="max-h-[80vh] w-72 overflow-y-auto rounded-xl border border-border bg-card p-5">
             <StylingPanel value={value} onChange={onChange} />
           </div>
         </div>

@@ -607,9 +607,10 @@ export function starterSections(): CampaignSection[] {
       kind: "button",
       columns: 1,
       content: [""],
-      buttons: [
-        { label: "Get started", href: "", bgColor: DEFAULT_BUTTON_BG, textColor: DEFAULT_BUTTON_TEXT },
-      ],
+      // No bgColor/textColor: the button starts as an untouched draft (neutral chip in
+      // the editor) and takes its real fill the moment the user picks one or it goes
+      // live. Serialize/send still falls back to DEFAULT_BUTTON_BG for a finished button.
+      buttons: [{ label: "Get started", href: "" }],
       align: "center",
     },
   ];
