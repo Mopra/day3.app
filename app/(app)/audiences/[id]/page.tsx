@@ -42,10 +42,20 @@ import {
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AudienceFieldsTab } from "@/components/audience-fields-tab";
+import { AudienceSegmentsTab } from "@/components/audience-segments-tab";
+import { AudienceTopicsTab } from "@/components/audience-topics-tab";
 import { useApi } from "@/lib/api";
 import { SUBSCRIBER_CSV_TEMPLATE } from "@/lib/csv";
 import { formatDateTime, statusVariant } from "@/lib/format";
-import type { Audience, AudienceField, ImportRow, Subscriber } from "@/lib/types";
+import type {
+  Audience,
+  AudienceField,
+  ImportRow,
+  SegmentRow,
+  Subscriber,
+  SubscriberTopic,
+  TopicRow,
+} from "@/lib/types";
 
 const STATUS_FILTERS = [
   { value: "all", label: "All statuses" },
@@ -163,13 +173,15 @@ export default function AudienceDetailPage() {
   const [audience, setAudience] = useState<Audience | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [subscribers, setSubscribers] = useState<Subscriber[] | null>(null);
-  // Contacts | Fields. Reflected in ?tab= so the fields view is linkable; read
-  // once on mount (this is a client page, so window is only available then).
-  const [tab, setTab] = useState<"contacts" | "fields">("contacts");
+  // Contacts | Fields | Segments | Topics. Reflected in ?tab= so each view is
+  // linkable; read once on mount (client page — window exists only then).
+  type TabKey = "contacts" | "fields" | "segments" | "topics";
+  const [tab, setTab] = useState<TabKey>("contacts");
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("tab") === "fields") setTab("fields");
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t === "fields" || t === "segments" || t === "topics") setTab(t);
   }, []);
-  function changeTab(next: "contacts" | "fields") {
+  function changeTab(next: TabKey) {
     setTab(next);
     const url = new URL(window.location.href);
     if (next === "contacts") url.searchParams.delete("tab");
@@ -179,6 +191,14 @@ export default function AudienceDetailPage() {
   // The audience's custom-field registry — drives the Fields tab and the custom
   // columns on the contacts table.
   const [fields, setFields] = useState<AudienceField[] | null>(null);
+  // Saved segments — the Segments tab plus the contacts table's segment filter.
+  const [segments, setSegments] = useState<SegmentRow[] | null>(null);
+  // Which segment the contacts table is narrowed to ("all" = everyone).
+  const [segmentFilter, setSegmentFilter] = useState("all");
+  // Topics — the Topics tab plus the edit dialog's preference checkboxes.
+  const [topics, setTopics] = useState<TopicRow[] | null>(null);
+  // The open edit dialog's topic preferences (null = still loading / no topics).
+  const [editTopics, setEditTopics] = useState<SubscriberTopic[] | null>(null);
   const [total, setTotal] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const [imports, setImports] = useState<ImportRow[]>([]);
@@ -233,9 +253,10 @@ export default function AudienceDetailPage() {
       const params = new URLSearchParams({ limit: String(PAGE), offset: String(offset) });
       if (status !== "all") params.set("status", status);
       if (search) params.set("search", search);
+      if (segmentFilter !== "all") params.set("segment", segmentFilter);
       return `/api/audiences/${id}/subscribers?${params}`;
     },
-    [id, status, search],
+    [id, status, search, segmentFilter],
   );
 
   // (Re)load the first page. Runs on mount and whenever the filters change; also
@@ -266,10 +287,28 @@ export default function AudienceDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  const loadSegments = useCallback(() => {
+    api
+      .get<{ segments: SegmentRow[] }>(`/api/audiences/${id}/segments`)
+      .then((res) => setSegments(res.segments))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  const loadTopics = useCallback(() => {
+    api
+      .get<{ topics: TopicRow[] }>(`/api/audiences/${id}/topics`)
+      .then((res) => setTopics(res.topics))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
   useEffect(loadAudience, [loadAudience]);
   useEffect(loadSubscribers, [loadSubscribers]);
   useEffect(loadImports, [loadImports]);
   useEffect(loadFields, [loadFields]);
+  useEffect(loadSegments, [loadSegments]);
+  useEffect(loadTopics, [loadTopics]);
 
   // Toast when an import finishes — the upload only said "started", so without
   // this the completion is a silent badge flip on the next poll. On first load we
@@ -422,6 +461,14 @@ export default function AudienceDetailPage() {
       lastName: s.lastName ?? "",
     });
     setEditAttrs(pairsFromAttrs(s.attributes));
+    // Topic preferences load async; the section renders once they arrive.
+    setEditTopics(null);
+    if ((topics ?? []).length > 0) {
+      api
+        .get<{ topics: SubscriberTopic[] }>(`/api/subscribers/${s.id}/topics`)
+        .then((res) => setEditTopics(res.topics))
+        .catch(() => setEditTopics(null));
+    }
   }
 
   const onEditSub = editForm.handleSubmit(async (values) => {
@@ -431,11 +478,18 @@ export default function AudienceDetailPage() {
         ...values,
         attributes: attrsFromPairs(editAttrs),
       });
+      if (editTopics && editTopics.length > 0) {
+        await api.patch(`/api/subscribers/${editSub.id}/topics`, {
+          subscriptions: Object.fromEntries(editTopics.map((t) => [t.id, t.subscribed])),
+        });
+      }
       toast.success("Subscriber updated");
       setEditSub(null);
       loadSubscribers();
-      // A new custom-field key entered here is auto-registered server-side.
+      // A new custom-field key entered here is auto-registered server-side;
+      // topic opt-out counts may have shifted too.
       loadFields();
+      loadTopics();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't update subscriber");
     }
@@ -457,7 +511,7 @@ export default function AudienceDetailPage() {
     }
   }
 
-  const filtersActive = !!search || status !== "all";
+  const filtersActive = !!search || status !== "all" || segmentFilter !== "all";
   const shown = subscribers?.length ?? 0;
   const hasMore = shown < total;
   // Whether the audience has anyone to export (any status). `counts` is the
@@ -565,16 +619,31 @@ export default function AudienceDetailPage() {
         )}
       </div>
 
-      {/* Contacts | Fields — one audience workspace, Resend-style. */}
-      <Tabs value={tab} onValueChange={(v) => changeTab(v as "contacts" | "fields")}>
+      {/* Contacts | Fields | Segments | Topics — one audience workspace, Resend-style. */}
+      <Tabs value={tab} onValueChange={(v) => changeTab(v as typeof tab)}>
         <TabsList>
           <TabsTrigger value="contacts">Contacts</TabsTrigger>
           <TabsTrigger value="fields">Fields</TabsTrigger>
+          <TabsTrigger value="segments">Segments</TabsTrigger>
+          <TabsTrigger value="topics">Topics</TabsTrigger>
         </TabsList>
       </Tabs>
 
       {tab === "fields" && (
         <AudienceFieldsTab audienceId={id} fields={fields} onChanged={loadFields} />
+      )}
+
+      {tab === "segments" && (
+        <AudienceSegmentsTab
+          audienceId={id}
+          segments={segments}
+          fields={fields}
+          onChanged={loadSegments}
+        />
+      )}
+
+      {tab === "topics" && (
+        <AudienceTopicsTab audienceId={id} topics={topics} onChanged={loadTopics} />
       )}
 
       {tab === "contacts" && (
@@ -660,6 +729,17 @@ export default function AudienceDetailPage() {
             options={STATUS_FILTERS}
             ariaLabel="Filter by status"
           />
+          {(segments ?? []).length > 0 && (
+            <ListFilter
+              value={segmentFilter}
+              onChange={setSegmentFilter}
+              options={[
+                { value: "all", label: "All contacts" },
+                ...(segments ?? []).map((s) => ({ value: s.id, label: s.name })),
+              ]}
+              ariaLabel="Filter by segment"
+            />
+          )}
           {total > 0 && (
             <ListCount shown={shown} total={total} noun="subscriber" className="ml-auto" />
           )}
@@ -676,6 +756,7 @@ export default function AudienceDetailPage() {
                 onClear={() => {
                   setSearchInput("");
                   setStatus("all");
+                  setSegmentFilter("all");
                 }}
                 message="No subscribers match your search."
               />
@@ -840,6 +921,34 @@ export default function AudienceDetailPage() {
               </div>
             </div>
             <AttributeRows pairs={editAttrs} onChange={setEditAttrs} />
+            {editTopics && editTopics.length > 0 && (
+              <div className="space-y-2">
+                <Label>Topics</Label>
+                <div className="space-y-1.5">
+                  {editTopics.map((t) => (
+                    <label
+                      key={t.id}
+                      className="flex cursor-pointer items-start gap-2 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 size-4 accent-primary"
+                        checked={t.subscribed}
+                        onChange={(e) =>
+                          setEditTopics(
+                            (cur) =>
+                              cur?.map((x) =>
+                                x.id === t.id ? { ...x, subscribed: e.target.checked } : x,
+                              ) ?? cur,
+                          )
+                        }
+                      />
+                      <span>{t.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setEditSub(null)}>
                 Cancel

@@ -264,6 +264,66 @@ export const audienceFields = pgTable(
   ],
 );
 
+// A saved, named filter over an audience's subscribers (Resend/Mailchimp-style
+// dynamic segment). The filter (see lib/segment-filter.ts) is evaluated at query
+// time — browsing the segment and generating a campaign's recipients both apply
+// it live, so membership always reflects current subscriber data; nothing is
+// materialized.
+export const segments = pgTable(
+  "segments",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    audienceId: text("audience_id").notNull(),
+    name: text("name").notNull(),
+    // The validated SegmentFilter as JSON text (match all/any + condition rows).
+    filterJson: text("filter_json").notNull(),
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [index("idx_segments_account_audience").on(t.accountId, t.audienceId)],
+);
+
+// A subscription category contacts can opt in/out of independently of the full
+// unsubscribe ("Product updates", "Promotions", …). Campaigns can be sent under
+// a topic; recipients opted out of it are excluded, and the unsubscribe page
+// offers "just this topic" alongside "everything". defaultSubscribed picks the
+// model: true = opt-out (everyone in unless they leave), false = opt-in.
+export const topics = pgTable(
+  "topics",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    audienceId: text("audience_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    defaultSubscribed: boolean("default_subscribed").notNull().default(true),
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [index("idx_topics_account_audience").on(t.accountId, t.audienceId)],
+);
+
+// A subscriber's explicit deviation from a topic's default: only rows that
+// differ from (or confirm) the default exist — absence of a row means the
+// topic's defaultSubscribed applies.
+export const topicSubscriptions = pgTable(
+  "topic_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    topicId: text("topic_id").notNull(),
+    subscriberId: text("subscriber_id").notNull(),
+    subscribed: boolean("subscribed").notNull(),
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_topic_subscriptions_topic_subscriber").on(t.topicId, t.subscriberId),
+    index("idx_topic_subscriptions_subscriber").on(t.subscriberId),
+  ],
+);
+
 export const FORM_STATUSES = ["active", "disabled"] as const;
 export type FormStatus = (typeof FORM_STATUSES)[number];
 
@@ -393,6 +453,13 @@ export const campaigns = pgTable(
     id: text("id").primaryKey(),
     accountId: text("account_id").notNull(),
     audienceId: text("audience_id").notNull(),
+    // Optional narrowing of the audience: send only to subscribers matching this
+    // saved segment (evaluated live at recipient generation). Null = everyone.
+    segmentId: text("segment_id"),
+    // Optional topic the campaign is sent under: recipients opted out of it are
+    // excluded, and the unsubscribe page offers a per-topic opt-out. Null = no
+    // topic (only the full unsubscribe applies).
+    topicId: text("topic_id"),
     sendingDomainId: text("sending_domain_id").notNull(),
     // The sender picked in the composer. Nullable: provenance only (so a reopened
     // draft re-selects the right option). fromName/fromEmail below remain the
@@ -644,6 +711,9 @@ export type Sender = typeof senders.$inferSelect;
 export type DnsIntegration = typeof dnsIntegrations.$inferSelect;
 export type Audience = typeof audiences.$inferSelect;
 export type AudienceField = typeof audienceFields.$inferSelect;
+export type Segment = typeof segments.$inferSelect;
+export type Topic = typeof topics.$inferSelect;
+export type TopicSubscription = typeof topicSubscriptions.$inferSelect;
 export type Subscriber = typeof subscribers.$inferSelect;
 export type Form = typeof forms.$inferSelect;
 export type Import = typeof imports.$inferSelect;

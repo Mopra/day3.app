@@ -148,6 +148,13 @@
       "when": 1783246651512,
       "tag": "0020_sweet_annihilus",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1783247933949,
+      "tag": "0021_last_susan_delgado",
+      "breakpoints": true
     }
   ]
 }

@@ -4,10 +4,12 @@ import type { CampaignSection } from "./sections";
 import type { CampaignThemeInput } from "./theme";
 import type { FormField } from "./form-fields";
 import type { FormDesign } from "./form-design";
+import type { SegmentFilter } from "./segment-filter";
 
 export type { CampaignSection };
 export type { FormField };
 export type { FormDesign };
+export type { SegmentFilter };
 
 export type Account = {
   id: string;
@@ -111,6 +113,39 @@ export type Audience = {
   subscriberCount?: number;
 };
 
+// A saved dynamic segment (the Segments tab): a named filter over an audience's
+// contacts, evaluated live. `count` is the current number of subscribed contacts
+// matching (null when the stored filter failed to parse).
+export type SegmentRow = {
+  id: string;
+  name: string;
+  filter: SegmentFilter | null;
+  count: number | null;
+  createdAt: string;
+};
+
+// A subscription topic (the Topics tab). defaultSubscribed picks the model:
+// true = opt-out (everyone in unless they leave), false = opt-in. optedOut /
+// optedIn count explicit deviations from that default.
+export type TopicRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  defaultSubscribed: boolean;
+  optedOut: number;
+  optedIn: number;
+  createdAt: string;
+};
+
+// A subscriber's effective topic subscription (edit dialog): their explicit
+// choice, or the topic's default when they never chose.
+export type SubscriberTopic = {
+  id: string;
+  name: string;
+  description: string | null;
+  subscribed: boolean;
+};
+
 // A custom field in an audience's field registry (the Fields tab). Values live
 // on subscribers (attributes bag); this is the catalogue entry: the {{key}}
 // merge tag, its human label, an advisory type, and an optional default merge
@@ -212,6 +247,10 @@ export type Campaign = {
   subject: string;
   previewText: string | null;
   audienceId: string;
+  // Optional audience narrowing (saved segment) and topic — null = everyone /
+  // no topic.
+  segmentId: string | null;
+  topicId: string | null;
   sendingDomainId: string;
   senderId: string | null;
   fromName: string;

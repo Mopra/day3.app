@@ -4,6 +4,7 @@ import { campaignRecipients, campaigns, subscribers } from "../../db/schema";
 import { canonicalizeEmail } from "../../lib/csv";
 import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
+import { campaignRecipientScope } from "../../services/recipient-scope";
 import { getSuppressedEmails } from "../../services/suppression";
 import { laneCountFor, SEND_BATCH_SIZE, type JobQueue } from "../messages";
 
@@ -47,6 +48,31 @@ export async function generateCampaignRecipients(
       ),
     );
 
+  // The campaign's segment/topic narrowing, resolved to SQL conditions. A
+  // dangling reference (deleted after scheduling — the delete routes block this
+  // for in-flight campaigns, so this is a backstop) must never widen the send
+  // to the whole audience: pause the campaign for the user to re-target instead.
+  const scope = await campaignRecipientScope(db, campaign);
+  if (scope.error) {
+    await db
+      .update(campaigns)
+      .set({
+        status: "paused",
+        pausedReason: `${scope.error} — edit the campaign and choose again.`,
+        pausedCode: "user",
+        updatedAt: nowIso(),
+      })
+      .where(eq(campaigns.id, campaign.id));
+    await logJob(db, {
+      jobType: "generate_campaign_recipients",
+      entityType: "campaign",
+      entityId: campaign.id,
+      status: "failed",
+      error: scope.error,
+    });
+    return;
+  }
+
   const audienceMembers = await db
     .select({
       id: subscribers.id,
@@ -58,6 +84,7 @@ export async function generateCampaignRecipients(
         eq(subscribers.accountId, campaign.accountId),
         eq(subscribers.audienceId, campaign.audienceId),
         eq(subscribers.status, "subscribed"),
+        ...scope.conditions,
       ),
     );
 

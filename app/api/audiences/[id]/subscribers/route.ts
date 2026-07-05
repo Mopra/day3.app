@@ -3,10 +3,11 @@ import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
-import { subscribers } from "@/db/schema";
+import { segments, subscribers } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { isValidEmail } from "@/lib/csv";
 import { normalizeAttributes } from "@/lib/form-fields";
+import { safeParseSegmentFilter, segmentFilterCondition } from "@/lib/segment-filter";
 import { isEmailSuppressed } from "@/services/suppression";
 import { registerAudienceFields } from "@/services/audience-fields";
 import { subscriberHeadroom, subscriberLimitMessage } from "@/services/subscriber-limit";
@@ -14,6 +15,9 @@ import { subscriberHeadroom, subscriberLimitMessage } from "@/services/subscribe
 const ListSubscribersSchema = z.object({
   status: z.string().optional(),
   search: z.string().optional(),
+  // Narrow to a saved segment's live matches (any status — the status filter
+  // stacks on top like every other filter here).
+  segment: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -26,11 +30,23 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (req, { para
 
   const query = ListSubscribersSchema.safeParse(Object.fromEntries(req.nextUrl.searchParams));
   if (!query.success) throw new HttpError(400, "Invalid query");
-  const { status, search, limit, offset } = query.data;
+  const { status, search, segment: segmentId, limit, offset } = query.data;
 
   const filters = [eq(subscribers.audienceId, audience.id)];
   if (status) filters.push(eq(subscribers.status, status as never));
   if (search) filters.push(like(subscribers.email, `%${search.toLowerCase()}%`));
+  if (segmentId) {
+    const segment = await db.query.segments.findFirst({
+      where: and(
+        eq(segments.id, segmentId),
+        eq(segments.accountId, account.id),
+        eq(segments.audienceId, audience.id),
+      ),
+    });
+    const filter = segment ? safeParseSegmentFilter(segment.filterJson) : null;
+    if (!filter) throw new HttpError(400, "Segment not found");
+    filters.push(segmentFilterCondition(filter));
+  }
 
   const rows = await db
     .select()

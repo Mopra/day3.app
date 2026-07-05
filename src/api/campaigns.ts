@@ -8,6 +8,8 @@ import {
 } from "../services/render";
 import { SectionsSchema, serializeSections, type CampaignSection } from "../lib/sections";
 import { CampaignThemeSchema, type CampaignThemeInput } from "../lib/theme";
+import { campaignRecipientScope } from "../services/recipient-scope";
+import { segments, topics } from "../db/schema";
 
 export const CampaignFieldsSchema = z.object({
   name: z.string().trim().min(1).max(150),
@@ -51,6 +53,10 @@ export const CampaignDraftSchema = z.object({
   subject: z.string().trim().max(200).optional(),
   previewText: z.string().trim().max(200).optional(),
   audienceId: z.string().max(100).optional(),
+  // Optional narrowing: send only to this saved segment ("" = everyone).
+  segmentId: z.string().max(100).optional(),
+  // Optional topic the campaign is sent under ("" = none).
+  topicId: z.string().max(100).optional(),
   sendingDomainId: z.string().max(100).optional(),
   senderId: z.string().max(100).optional(),
   fromName: z.string().trim().max(100).optional(),
@@ -106,6 +112,24 @@ export async function validateDraftOwnership(
     });
     if (!audience) return "Audience not found";
   }
+  // A chosen segment/topic must belong to the account AND the chosen audience —
+  // a segment saved on audience A must not scope a send to audience B.
+  if (fields.segmentId) {
+    const segment = await db.query.segments.findFirst({
+      where: and(eq(segments.id, fields.segmentId), eq(segments.accountId, accountId)),
+    });
+    if (!segment || (fields.audienceId && segment.audienceId !== fields.audienceId)) {
+      return "Segment not found on this audience";
+    }
+  }
+  if (fields.topicId) {
+    const topic = await db.query.topics.findFirst({
+      where: and(eq(topics.id, fields.topicId), eq(topics.accountId, accountId)),
+    });
+    if (!topic || (fields.audienceId && topic.audienceId !== fields.audienceId)) {
+      return "Topic not found on this audience";
+    }
+  }
   if (fields.sendingDomainId) {
     const domain = await db.query.sendingDomains.findFirst({
       where: and(
@@ -150,7 +174,12 @@ export function campaignContentError(campaign: {
 export async function campaignSendGateError(
   db: Db,
   accountId: string,
-  campaign: { sendingDomainId: string; audienceId: string },
+  campaign: {
+    sendingDomainId: string;
+    audienceId: string;
+    segmentId?: string | null;
+    topicId?: string | null;
+  },
 ): Promise<string | null> {
   // CAN-SPAM (and equivalents) require a valid physical postal address in every
   // marketing email. The footer renders {{company_address}} from the account, so
@@ -173,13 +202,28 @@ export async function campaignSendGateError(
     domain && (domain.verificationStatus === "verified" || domain.adminOverrideVerified);
   if (!domainVerified) return "Sending domain is not verified";
 
+  // Count with the same segment/topic narrowing recipient generation applies,
+  // so "no recipients" is caught here — before review/scheduling — not at send.
+  const scope = await campaignRecipientScope(db, { accountId, ...campaign });
+  if (scope.error) return scope.error;
+
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)`.as("count") })
     .from(subscribers)
     .where(
-      and(eq(subscribers.audienceId, campaign.audienceId), eq(subscribers.status, "subscribed")),
+      and(
+        eq(subscribers.audienceId, campaign.audienceId),
+        eq(subscribers.status, "subscribed"),
+        ...scope.conditions,
+      ),
     );
-  if (Number(count) === 0) return "The audience has no subscribed recipients";
+  if (Number(count) === 0) {
+    return campaign.segmentId
+      ? "No subscribed contacts match the chosen segment"
+      : campaign.topicId
+        ? "Every subscribed contact has opted out of the chosen topic"
+        : "The audience has no subscribed recipients";
+  }
 
   return null;
 }
@@ -207,6 +251,8 @@ export async function campaignPersonalizationGaps(
     previewText: string | null;
     footerText: string | null;
     audienceId: string;
+    segmentId?: string | null;
+    topicId?: string | null;
   },
 ): Promise<PersonalizationGap[]> {
   const used = personalizationFieldsUsed(
@@ -216,6 +262,12 @@ export async function campaignPersonalizationGaps(
     campaign.footerText,
   );
   if (used.length === 0 || !campaign.audienceId) return [];
+
+  // Count over the campaign's actual send scope (segment/topic narrowing), so
+  // "312 of 1,200 have no first name" reflects who will really receive it. A
+  // dangling reference degrades to no warning — the send gate reports it.
+  const scope = await campaignRecipientScope(db, { accountId, ...campaign });
+  if (scope.error) return [];
 
   // One pass over the audience's subscribed members, counting blanks per field
   // with FILTER aggregates. Mirrors the recipient-generation eligibility (status
@@ -233,6 +285,7 @@ export async function campaignPersonalizationGaps(
         eq(subscribers.accountId, accountId),
         eq(subscribers.audienceId, campaign.audienceId),
         eq(subscribers.status, "subscribed"),
+        ...scope.conditions,
       ),
     );
 

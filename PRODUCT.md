@@ -38,10 +38,11 @@ become a marketing suite.
 - **Deliverability and compliance are built in, not add-ons:** verified sending
   domains, double opt-in, one-click unsubscribe, automatic bounce/complaint
   suppression, and account auto-pause on bad reputation.
-- **Deliberately excluded:** marketing automation flows, audience segmentation,
-  A/B testing, and drag-and-drop template builders. Open and click tracking plus a
-  deliverability/reputation/engagement dashboard are included (see §6.10); the rest
-  are out of scope by design.
+- **Deliberately excluded:** marketing automation flows, A/B testing, and
+  drag-and-drop template builders. Open and click tracking plus a
+  deliverability/reputation/engagement dashboard are included (see §6.10), and
+  audiences support **segments** (saved filters) and **topics** (subscription
+  categories) — see §6.3; the rest are out of scope by design.
 
 ## 3. Who it's for
 
@@ -122,6 +123,8 @@ Key pricing facts:
 | **Sender** | A saved **From** identity — a from-name + from-address pair (e.g. `Jane from Acme <jane@news.acme.com>`) on a verified sending domain. Campaigns pick a sender instead of typing the From each time; an account can keep several per domain, with one marked default. |
 | **Campaign** | A single email send to one audience. Lifecycle: `draft` → (optionally `scheduled`) → `pending_review` → `approved` → `generating_recipients` → `sending` → `sent` (or `paused`, `blocked`, `failed`). |
 | **Campaign recipient** | A per-email send record — the source of truth for idempotent, no-duplicate delivery. Tracks delivery status (`pending`, `sending`, `sent`, `delivered`, `bounced`, `complained`, `unsubscribed`, `failed`, `skipped`). |
+| **Segment** | A saved, named filter over an audience's subscribers ("plan is pro"), evaluated live — never materialized. Campaigns can send to a segment instead of the whole audience. |
+| **Topic** | A subscription category on an audience ("Product updates", "Promotions"). Opt-out model (everyone in by default) or opt-in. Campaigns sent under a topic skip contacts who opted out; the unsubscribe page offers a per-topic opt-out. |
 | **Form** | A hosted/embeddable signup form that captures new subscribers into an audience. |
 | **Suppression entry** | A blocklist record (per-account or global) that prevents sending to an address that unsubscribed, bounced, complained, or was manually suppressed. |
 | **Import** | A CSV upload job that adds subscribers to an audience. |
@@ -135,9 +138,15 @@ Key pricing facts:
 - Create a campaign with name, subject, preview text, a **sender** (From), and an HTML
   body. The **name is an editable page title** at the top of the composer (falls back to
   the subject if left blank).
-- **Email-style composer:** the settings (From, Reply-To, To/segment, Subject, Preview)
+- **Email-style composer:** the settings (From, Reply-To, To, Subject, Preview)
   read as the header rows at the top of a real email, with the body flowing directly
   beneath — one continuous message surface.
+- **To targets an audience, optionally narrowed:** when the audience has saved
+  segments, the To row adds a second picker — "Everyone" or a segment (with its live
+  contact count). When the audience has topics, a **Topic** row appears: sending under
+  a topic skips contacts who opted out and lights up the per-topic choice on the
+  unsubscribe page. Both reset when the audience changes; recipient counts, the
+  pre-send personalization check, and the "no recipients" gate all respect them.
 - **From is a sender picker:** the From row is a dropdown of the account's saved senders
   (the default / sole sender auto-selects), not free text. A new sender can be added
   inline without leaving the composer.
@@ -305,8 +314,10 @@ themselves, and manual writing continues unaffected.
 - **Custom fields:** beyond email/first/last name, a subscriber can carry any number of
   custom attributes (phone, company, …) collected by signup forms or CSV import. They
   show as columns in the subscriber list and are usable as `{{merge_tags}}` in campaigns.
-- **Fields tab (field registry):** the audience page has two tabs — **Contacts** and
-  **Fields**. Fields is the single catalogue of the audience's custom fields (up to 50):
+- **Fields tab (field registry):** the audience page has four tabs — **Contacts**,
+  **Fields**, **Segments**, and **Topics** (Resend-style, to make switching from
+  Resend/Mailchimp feel familiar). Fields is the single catalogue of the audience's
+  custom fields (up to 50):
   each has a human **name**, an immutable merge-tag **key**, an advisory **type**
   (text/number/date), and an optional **fallback value** used in campaigns when a contact
   has no value (a template's inline `{{key|fallback}}` still wins over the field's).
@@ -317,9 +328,28 @@ themselves, and manual writing continues unaffected.
   strips the values from all contacts. The registry powers the contacts table's custom
   columns and the composer's merge-tag menu, so all three always agree. Existing
   audiences are seeded automatically from their forms and subscriber data on first view.
-- **Add subscribers manually**; **edit** a subscriber's email, name, and custom fields, or
-  **delete** one outright (distinct from unsubscribe, which keeps the record but stops mailing).
-- Search and filter subscribers by status; unsubscribe individuals.
+- **Segments tab:** saved, named filters over the audience's contacts ("plan is pro",
+  "company has any value"), built from up to 10 conditions matched **all**/**any**.
+  Conditions cover built-in fields (email, first/last name) and every custom field,
+  with operators: is / is not / contains / doesn't contain / has any value / is empty /
+  greater than / less than (numeric). Segments are **dynamic** — evaluated live, never
+  materialized — so membership always reflects current data. The editor shows a live
+  "N contacts match" count; the contacts table can be filtered by segment; the campaign
+  composer's To row targets "Everyone" or a segment (up to 25 per audience). Deleting a
+  segment is blocked while a scheduled/in-flight campaign targets it; drafts fall back
+  to the whole audience.
+- **Topics tab:** subscription categories contacts can leave (or join) without
+  unsubscribing from everything (up to 20 per audience). A topic is **opt-out**
+  (everyone subscribed by default) or **opt-in** (empty until contacts join) — chosen at
+  creation and immutable after. A campaign can be sent **under a topic**: contacts
+  opted out are skipped at recipient generation, and the public unsubscribe page offers
+  "Only stop <topic> emails" alongside the full unsubscribe (one-click header
+  unsubscribe is always the full one, per RFC 8058). Per-contact preferences are
+  editable in the subscriber edit dialog; the tab shows opt-out/opt-in counts.
+- **Add subscribers manually**; **edit** a subscriber's email, name, custom fields, and
+  topic preferences, or **delete** one outright (distinct from unsubscribe, which keeps
+  the record but stops mailing).
+- Search and filter subscribers by status or segment; unsubscribe individuals.
 - Subscriber-status breakdown per audience.
 
 ### 6.4 Signup forms
@@ -383,7 +413,9 @@ the same "Saving… / Saved" indicator as the campaign composer.
 
 ### 6.7 Compliance & reputation
 - **One-click unsubscribe** (RFC 8058 / `List-Unsubscribe`) with HMAC-signed tokens,
-  plus a public unsubscribe page.
+  plus a public unsubscribe page. When the campaign was sent under a **topic**, the
+  page offers "Only stop <topic> emails" alongside the full unsubscribe (the one-click
+  header flow is always the full unsubscribe — mail clients present no choice UI).
 - **Mailing address required to send:** a campaign cannot be submitted or scheduled
   until the account has a company mailing address (it's rendered into every footer
   for CAN-SPAM); the send gate blocks it with an actionable message otherwise.

@@ -57,6 +57,8 @@ export const POST = route(async (req) => {
     id,
     accountId: account.id,
     audienceId: data.audienceId ?? "",
+    segmentId: data.segmentId || null,
+    topicId: data.topicId || null,
     sendingDomainId: data.sendingDomainId ?? "",
     senderId: data.senderId || null,
     name: data.name ?? "",

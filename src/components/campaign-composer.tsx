@@ -67,7 +67,15 @@ import {
   type CampaignSection,
 } from "@/lib/sections";
 import { useAiBudget } from "@/components/ai-budget-context";
-import type { Account, Audience, Campaign, Sender, SendingDomain } from "@/lib/types";
+import type {
+  Account,
+  Audience,
+  Campaign,
+  SegmentRow,
+  Sender,
+  SendingDomain,
+  TopicRow,
+} from "@/lib/types";
 
 // Sentinel value for the trailing "add a sender" item in the From dropdown.
 const ADD_SENDER = "__add_sender__";
@@ -224,7 +232,7 @@ function HeaderRow({
     <div className="flex items-center gap-3">
       <Label
         htmlFor={htmlFor}
-        className="w-20 shrink-0 py-2.5 text-sm font-medium text-muted-foreground"
+        className="w-20 shrink-0 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70"
       >
         {label}
       </Label>
@@ -239,6 +247,10 @@ export type CampaignFormValues = {
   subject: string;
   previewText?: string;
   audienceId: string;
+  // Optional narrowing to a saved segment ("" = everyone) and optional topic
+  // ("" = none). Both belong to the chosen audience and reset when it changes.
+  segmentId?: string;
+  topicId?: string;
   sendingDomainId: string;
   senderId?: string;
   fromName: string;
@@ -364,6 +376,8 @@ export function CampaignComposer({
             subject: initial.subject,
             previewText: initial.previewText ?? "",
             audienceId: initial.audienceId,
+            segmentId: initial.segmentId ?? "",
+            topicId: initial.topicId ?? "",
             sendingDomainId: initial.sendingDomainId,
             senderId: initial.senderId ?? "",
             fromName: initial.fromName,
@@ -380,6 +394,8 @@ export function CampaignComposer({
             subject: "",
             previewText: "",
             audienceId: "",
+            segmentId: "",
+            topicId: "",
             sendingDomainId: "",
             senderId: "",
             fromName: "",
@@ -474,6 +490,8 @@ export function CampaignComposer({
   }
   const senderId = watch("senderId");
   const audienceId = watch("audienceId");
+  const segmentId = watch("segmentId");
+  const topicId = watch("topicId");
   const fromName = watch("fromName");
   const fromEmail = watch("fromEmail");
 
@@ -481,9 +499,15 @@ export function CampaignComposer({
   // forms collect), offered alongside the built-in {{first_name}} etc. in the
   // editor's insert menu.
   const [customMergeTags, setCustomMergeTags] = useState<MergeTag[]>([]);
+  // The chosen audience's saved segments and topics — the To row offers the
+  // segments ("Everyone" vs a narrower slice) and the Topic row the topics.
+  const [segments, setSegments] = useState<SegmentRow[]>([]);
+  const [audienceTopics, setAudienceTopics] = useState<TopicRow[]>([]);
   useEffect(() => {
     if (!audienceId) {
       setCustomMergeTags([]);
+      setSegments([]);
+      setAudienceTopics([]);
       return;
     }
     let live = true;
@@ -495,6 +519,14 @@ export function CampaignComposer({
         }
       })
       .catch(() => live && setCustomMergeTags([]));
+    api
+      .get<{ segments: SegmentRow[] }>(`/api/audiences/${audienceId}/segments`)
+      .then((res) => live && setSegments(res.segments))
+      .catch(() => live && setSegments([]));
+    api
+      .get<{ topics: TopicRow[] }>(`/api/audiences/${audienceId}/topics`)
+      .then((res) => live && setAudienceTopics(res.topics))
+      .catch(() => live && setAudienceTopics([]));
     return () => {
       live = false;
     };
@@ -966,9 +998,11 @@ export function CampaignComposer({
           color, and the surface itself adopts the campaign's content background,
           border, and corner roundness so the live canvas matches the sent email. The
           canvas CSS vars (themeCanvasVars) flow the text/heading/link/image styling
-          into the section editors below — true WYSIWYG. */}
+          into the section editors below — true WYSIWYG. A whisper of shadow grounds
+          the sheet against the dark app without drawing attention; it's builder chrome
+          only and never reaches the sent email. */}
       <div
-        className="rounded-2xl p-6 transition-colors sm:p-10"
+        className="rounded-2xl p-6 shadow-[0_8px_24px_-18px_rgba(0,0,0,0.4)] transition-[background-color] sm:p-10"
         style={{ backgroundColor: theme.pageBg }}
       >
       <div
@@ -1051,13 +1085,21 @@ export function CampaignComposer({
           <Select
             items={audienceItems}
             value={audienceId || null}
-            onValueChange={(v) => v && setValue("audienceId", v)}
+            onValueChange={(v) => {
+              if (!v) return;
+              setValue("audienceId", v);
+              // A segment/topic belongs to its audience — never carry one across.
+              if (v !== audienceId) {
+                setValue("segmentId", "");
+                setValue("topicId", "");
+              }
+            }}
           >
             <SelectTrigger
               aria-label="Audience"
-              className="w-full border-0 bg-transparent px-0 shadow-none hover:bg-transparent focus-visible:ring-0 data-placeholder:text-muted-foreground dark:bg-transparent dark:hover:bg-transparent"
+              className="w-auto max-w-full border-0 bg-transparent px-0 shadow-none hover:bg-transparent focus-visible:ring-0 data-placeholder:text-muted-foreground dark:bg-transparent dark:hover:bg-transparent"
             >
-              <SelectValue placeholder="Select a segment…" />
+              <SelectValue placeholder="Select an audience…" />
             </SelectTrigger>
             <SelectContent>
               {audiences.map((a) => (
@@ -1067,7 +1109,67 @@ export function CampaignComposer({
               ))}
             </SelectContent>
           </Select>
+          {segments.length > 0 && (
+            <>
+              <span className="text-sm text-muted-foreground">·</span>
+              <Select
+                items={{ "": "Everyone", ...Object.fromEntries(segments.map((s) => [s.id, s.name])) }}
+                value={segmentId ?? ""}
+                onValueChange={(v) => setValue("segmentId", (v as string) ?? "")}
+              >
+                <SelectTrigger
+                  aria-label="Segment"
+                  className="w-auto border-0 bg-transparent px-0 shadow-none hover:bg-transparent focus-visible:ring-0 data-placeholder:text-muted-foreground dark:bg-transparent dark:hover:bg-transparent"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">Everyone</SelectItem>
+                  {segments.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name}
+                      {s.count !== null && (
+                        <span className="text-muted-foreground tabular-nums"> · {s.count.toLocaleString()}</span>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          )}
         </HeaderRow>
+
+        {audienceTopics.length > 0 && (
+          <HeaderRow label="Topic">
+            <Select
+              items={{
+                "": "No topic",
+                ...Object.fromEntries(audienceTopics.map((t) => [t.id, t.name])),
+              }}
+              value={topicId ?? ""}
+              onValueChange={(v) => setValue("topicId", (v as string) ?? "")}
+            >
+              <SelectTrigger
+                aria-label="Topic"
+                className="w-auto border-0 bg-transparent px-0 shadow-none hover:bg-transparent focus-visible:ring-0 data-placeholder:text-muted-foreground dark:bg-transparent dark:hover:bg-transparent"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">No topic</SelectItem>
+                {audienceTopics.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="truncate text-xs text-muted-foreground">
+              Contacts opted out of the topic are skipped; the unsubscribe page offers
+              &ldquo;just this topic&rdquo;.
+            </span>
+          </HeaderRow>
+        )}
 
         <HeaderRow
           label="Subject"
@@ -1178,14 +1280,23 @@ export function CampaignComposer({
         {/* Body — a stack of sections (1/2/3 columns each) that can be added,
             removed, and drag-reordered. Each column is the same allowlist-locked
             editor, so the output is always email-safe. */}
+        {/* Hairline between the message "meta" (who it's from, who it's to, subject)
+            and the letter body — the header/body/footer rhythm of a real letter, and
+            it stops the header rows from reading as one long settings form. */}
+        <div className="mt-8 border-t border-border" />
+
         <MergeTagsProvider extra={customMergeTags}>
           <SectionEditor
             value={sections ?? []}
             onChange={applySections}
             onRewrite={aiEnabled && !aiExhausted ? handleRewrite : undefined}
             onUploadImage={handleUploadImage}
-            placeholder="Write your email, or describe it above and let AI draft it…"
-            className="mt-12 py-2"
+            placeholder={
+              aiEnabled
+                ? "Write your email, or describe it above and let AI draft it…"
+                : "Write your email…"
+            }
+            className="mt-8 py-2"
           />
         </MergeTagsProvider>
 

@@ -69,6 +69,8 @@ export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { pa
       subject: data.subject ?? "",
       previewText: data.previewText ?? null,
       audienceId: data.audienceId ?? "",
+      segmentId: data.segmentId || null,
+      topicId: data.topicId || null,
       sendingDomainId: data.sendingDomainId ?? "",
       senderId: data.senderId || null,
       fromName: data.fromName ?? "",
