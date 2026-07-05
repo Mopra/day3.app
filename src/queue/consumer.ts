@@ -3,7 +3,7 @@ import type { EmailProvider } from "../email/provider";
 import type { ObjectStore } from "../lib/storage";
 import { logJob } from "../lib/job-log";
 import { logger, newCorrelationId } from "../lib/logger";
-import type { JobQueue, QueueMessage } from "./messages";
+import { queueMessageSchema, type JobQueue, type QueueMessage } from "./messages";
 import { processImport } from "./handlers/process-import";
 import { reviewCampaign } from "./handlers/review-campaign";
 import { generateCampaignRecipients } from "./handlers/generate-recipients";
@@ -22,6 +22,9 @@ export type QueueDeps = {
   appUrl: string;
   unsubscribeSecret: string;
   aiReviewMode?: string;
+  // Graceful-shutdown signal (worker/index.ts flips it on SIGTERM); long-running
+  // handlers check it between units of work so a deploy interrupts cleanly.
+  shouldAbort?: () => boolean;
 };
 
 // The entity a job acts on, for log correlation. Most messages carry an
@@ -46,6 +49,16 @@ function jobContext(message: QueueMessage): { entityType: string; entityId: stri
 // correlation id. Errors are reported (stack + safe context) and re-thrown so
 // BullMQ still applies its retry/dead-letter policy unchanged.
 export async function handleQueueMessage(message: QueueMessage, deps: QueueDeps): Promise<void> {
+  // job.data crosses a trust boundary (producer version skew, operator replays,
+  // manual Redis injection). A message with a valid type but missing ids would
+  // otherwise be "handled" as a silent skip and vanish — validation makes it
+  // throw, so BullMQ retries it and then dead-letters it where operators look.
+  const parsed = queueMessageSchema.safeParse(message);
+  if (!parsed.success) {
+    throw new Error(
+      `malformed queue message (${(message as { type?: string })?.type ?? "unknown type"}): ${parsed.error.message}`,
+    );
+  }
   const ctx = jobContext(message);
   const log = logger.child({ jobId: newCorrelationId("job"), jobType: message.type, ...ctx });
   const startedAt = Date.now();
@@ -76,6 +89,7 @@ async function dispatchQueueMessage(message: QueueMessage, deps: QueueDeps): Pro
         emailProvider: deps.emailProvider,
         appUrl: deps.appUrl,
         unsubscribeSecret: deps.unsubscribeSecret,
+        shouldAbort: deps.shouldAbort,
       });
     case "send_form_confirmation":
       return sendFormConfirmation(message, {

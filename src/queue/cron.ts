@@ -1,24 +1,35 @@
-import { and, eq, gt, isNotNull, isNull, lte, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, lt, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { accounts, campaignRecipients, campaigns, sendingDomains } from "../db/schema";
+import { accounts, campaignRecipients, campaigns, jobLogs, sendingDomains } from "../db/schema";
 import { campaignContentError, campaignSendGateError } from "../api/campaigns";
 import { nowIso } from "../lib/ids";
 import { DOMAIN_RECHECK_WINDOW_DAYS } from "../lib/domain";
 import { logJob } from "../lib/job-log";
 import { enforceAccountHealth } from "../services/health";
 import { notifyAccount, notifyCampaignSent } from "../services/notifications";
+import { checkSendEligibility } from "../services/plans";
+import { releaseReservation } from "../services/quota";
 import { getDomainIdentity, type DomainIdentityState } from "../services/ses-identity";
-import { SEND_BATCH_SIZE, type JobQueue } from "./messages";
+import { laneCountFor, SEND_BATCH_SIZE, type JobQueue } from "./messages";
 
 const STUCK_LOCK_MINUTES = 15;
 const DOMAIN_RECHECK_MAX = 50; // bound SES calls per sweep
+const SWEEP_PAGE = 100; // campaigns examined per sweep per stage (ordered oldest-first, so nothing starves)
 // DOMAIN_RECHECK_WINDOW_DAYS: stop re-checking domains stale this long. Shared
 // with the setup-guide UI (lib/domain) so both agree on when a domain has gone
 // stale and needs a manual re-check.
 
 // Recipients stuck in "sending" belong to a crashed batch. The email may or
 // may not have left — re-sending could duplicate, so they become "failed",
-// never "pending" again.
+// never "pending" again. Live batches refresh lockedAt mid-batch (see
+// send-batch.ts refreshLocks), so a row this stale really is abandoned.
+//
+// Their quota reservation is released here: a crashed batch never ran its
+// flush, so the reservation for these rows is still held — without this, every
+// crash permanently inflates the account's usage counter by up to a batch. (At
+// most one row per crashed lane may actually have reached the provider — the
+// crash-between-send-and-write window — so this can under-count by ≤1 per
+// crash, a far smaller error than over-counting by ~100.)
 async function failStuckRecipients(db: Db): Promise<number> {
   const cutoff = new Date(Date.now() - STUCK_LOCK_MINUTES * 60 * 1000).toISOString();
   const updated = await db
@@ -31,61 +42,224 @@ async function failStuckRecipients(db: Db): Promise<number> {
     .where(
       and(eq(campaignRecipients.status, "sending"), lt(campaignRecipients.lockedAt, cutoff)),
     )
-    .returning({ id: campaignRecipients.id, campaignId: campaignRecipients.campaignId });
+    .returning({
+      id: campaignRecipients.id,
+      campaignId: campaignRecipients.campaignId,
+      accountId: campaignRecipients.accountId,
+    });
+
+  const byAccount = new Map<string, number>();
+  for (const row of updated) {
+    byAccount.set(row.accountId, (byAccount.get(row.accountId) ?? 0) + 1);
+  }
+  for (const [accountId, count] of byAccount) {
+    await releaseReservation(db, accountId, count);
+  }
   return updated.length;
 }
 
 // Campaigns sitting in "sending" with no pending/in-flight recipients (e.g.
-// after a stuck-lock sweep) are finished; ones with pending rows but no queue
-// message get a nudge.
+// after a stuck-lock sweep) are finished; ones with pending rows but no live
+// batch get re-fanned-out. One poison campaign must not abort the loop for the
+// rest — each iteration is isolated.
 async function reconcileSendingCampaigns(db: Db, jobsQueue: JobQueue): Promise<void> {
   const sending = await db
     .select()
     .from(campaigns)
     .where(eq(campaigns.status, "sending"))
-    .limit(50);
+    .orderBy(asc(campaigns.updatedAt))
+    .limit(SWEEP_PAGE);
 
   for (const campaign of sending) {
-    const [{ pending }] = await db
-      .select({ pending: sql<number>`count(*)`.as("pending") })
-      .from(campaignRecipients)
-      .where(
-        and(
-          eq(campaignRecipients.campaignId, campaign.id),
-          eq(campaignRecipients.status, "pending"),
-        ),
-      );
-    const [{ inFlight }] = await db
-      .select({ inFlight: sql<number>`count(*)`.as("inFlight") })
-      .from(campaignRecipients)
-      .where(
-        and(
-          eq(campaignRecipients.campaignId, campaign.id),
-          eq(campaignRecipients.status, "sending"),
-        ),
-      );
+    try {
+      const [{ pending }] = await db
+        .select({ pending: sql<number>`count(*)`.as("pending") })
+        .from(campaignRecipients)
+        .where(
+          and(
+            eq(campaignRecipients.campaignId, campaign.id),
+            eq(campaignRecipients.status, "pending"),
+          ),
+        );
+      const [{ inFlight }] = await db
+        .select({ inFlight: sql<number>`count(*)`.as("inFlight") })
+        .from(campaignRecipients)
+        .where(
+          and(
+            eq(campaignRecipients.campaignId, campaign.id),
+            eq(campaignRecipients.status, "sending"),
+          ),
+        );
 
-    if (Number(pending) > 0) {
-      await jobsQueue.send({
-        type: "send_campaign_batch",
-        campaignId: campaign.id,
-        accountId: campaign.accountId,
-        batchSize: SEND_BATCH_SIZE,
-      });
-    } else if (Number(inFlight) === 0) {
-      const completed = await db
-        .update(campaigns)
-        .set({ status: "sent", sentAt: nowIso(), updatedAt: nowIso() })
-        .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "sending")))
-        .returning({ id: campaigns.id });
-      await enforceAccountHealth(db, campaign.accountId);
-      // If this reconcile is the one that completed the send (the worker's last
-      // batch didn't), it owns the "campaign sent" notification.
-      if (completed.length > 0) {
-        await notifyCampaignSent(db, campaign);
+      if (Number(pending) > 0) {
+        // Nudge ONLY when nothing is in flight. inFlight > 0 means live lanes
+        // are draining (or a crash under 15 minutes old that failStuckRecipients
+        // clears next sweep) — nudging a healthy campaign would add one
+        // self-chaining lane per sweep and push aggregate throughput past the
+        // SES rate SEND_LANES was tuned for. A genuinely stalled campaign
+        // (dead-lettered lanes, lost follow-up enqueue) has inFlight = 0 and
+        // gets restored to full lane width, not a single limping lane.
+        if (Number(inFlight) === 0) {
+          const lanes = laneCountFor(Number(pending));
+          for (let lane = 0; lane < lanes; lane++) {
+            await jobsQueue.send({
+              type: "send_campaign_batch",
+              campaignId: campaign.id,
+              accountId: campaign.accountId,
+              batchSize: SEND_BATCH_SIZE,
+            });
+          }
+        }
+      } else if (Number(inFlight) === 0) {
+        const completed = await db
+          .update(campaigns)
+          .set({ status: "sent", sentAt: nowIso(), updatedAt: nowIso() })
+          .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "sending")))
+          .returning({ id: campaigns.id });
+        await enforceAccountHealth(db, campaign.accountId);
+        // If this reconcile is the one that completed the send (the worker's last
+        // batch didn't), it owns the "campaign sent" notification.
+        if (completed.length > 0) {
+          await notifyCampaignSent(db, campaign);
+        }
       }
+    } catch (err) {
+      console.error(`[cron] reconcile failed for campaign ${campaign.id}:`, err);
     }
   }
+}
+
+// Auto-resume for pauses the system caused and can safely undo. Only the
+// machine codes rate_limit / daily_limit / quota qualify — user pauses and the
+// codes that need a human (account, config, suspended, error) are never
+// touched. Resume claims the paused→sending transition atomically, then
+// restores full lane width.
+const RESUME_RATE_LIMIT_MS = 10 * 60 * 1000; // throttle: back off one sweep
+const RESUME_DAILY_LIMIT_MS = 2 * 60 * 60 * 1000; // daily quota: try every ~2h until the window rolls
+export async function resumePausedCampaigns(
+  db: Db,
+  jobsQueue: JobQueue,
+  now: Date,
+): Promise<number> {
+  const candidates = await db
+    .select()
+    .from(campaigns)
+    .where(
+      and(
+        eq(campaigns.status, "paused"),
+        inArray(campaigns.pausedCode, ["rate_limit", "daily_limit", "quota"]),
+      ),
+    )
+    .orderBy(asc(campaigns.updatedAt))
+    .limit(SWEEP_PAGE);
+
+  let resumed = 0;
+  for (const campaign of candidates) {
+    try {
+      const pausedAgoMs = now.getTime() - Date.parse(campaign.updatedAt);
+      if (campaign.pausedCode === "rate_limit" && pausedAgoMs < RESUME_RATE_LIMIT_MS) continue;
+      if (campaign.pausedCode === "daily_limit" && pausedAgoMs < RESUME_DAILY_LIMIT_MS) continue;
+
+      const account = await db.query.accounts.findFirst({
+        where: eq(accounts.id, campaign.accountId),
+      });
+      if (!account) continue;
+      // For quota pauses this is the actual resume condition (headroom is back
+      // after a monthly reset or an upgrade); for the others it guards against
+      // resuming into an account that got paused/past-due in the meantime.
+      if (!checkSendEligibility(account).allowed) continue;
+
+      const claimed = await db
+        .update(campaigns)
+        .set({ status: "sending", pausedReason: null, pausedCode: null, updatedAt: nowIso() })
+        .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "paused")))
+        .returning({ id: campaigns.id });
+      if (claimed.length === 0) continue;
+
+      const [{ pending }] = await db
+        .select({ pending: sql<number>`count(*)`.as("pending") })
+        .from(campaignRecipients)
+        .where(
+          and(
+            eq(campaignRecipients.campaignId, campaign.id),
+            eq(campaignRecipients.status, "pending"),
+          ),
+        );
+      // pending = 0 → the reconcile stage completes it to "sent"; no lanes needed.
+      const lanes = Number(pending) > 0 ? laneCountFor(Number(pending)) : 0;
+      for (let lane = 0; lane < lanes; lane++) {
+        await jobsQueue.send({
+          type: "send_campaign_batch",
+          campaignId: campaign.id,
+          accountId: campaign.accountId,
+          batchSize: SEND_BATCH_SIZE,
+        });
+      }
+      resumed += 1;
+    } catch (err) {
+      console.error(`[cron] auto-resume failed for campaign ${campaign.id}:`, err);
+    }
+  }
+  return resumed;
+}
+
+// The intermediate pipeline states (pending_review, approved,
+// generating_recipients) are pure job-driven pass-throughs: if the driving job
+// is lost — enqueue failed after the status flip, job dead-lettered after a
+// minutes-long outage, Redis data loss — the campaign would sit there forever
+// with the user believing it went out, and the submit route 409s a re-submit.
+// Both downstream handlers are idempotent on status and dedupe-safe, so
+// re-enqueueing after a generous staleness window is free.
+const PIPELINE_RESCUE_MS = 30 * 60 * 1000;
+export async function rescueStuckPipelineCampaigns(
+  db: Db,
+  jobsQueue: JobQueue,
+  now: Date,
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - PIPELINE_RESCUE_MS).toISOString();
+  const stuck = await db
+    .select()
+    .from(campaigns)
+    .where(
+      and(
+        inArray(campaigns.status, ["pending_review", "approved", "generating_recipients"]),
+        lt(campaigns.updatedAt, cutoff),
+      ),
+    )
+    .orderBy(asc(campaigns.updatedAt))
+    .limit(SWEEP_PAGE);
+
+  let rescued = 0;
+  for (const campaign of stuck) {
+    try {
+      // Reset the staleness clock first so a queued-but-slow rescue job isn't
+      // re-enqueued by every subsequent sweep while it waits.
+      await db
+        .update(campaigns)
+        .set({ updatedAt: nowIso() })
+        .where(eq(campaigns.id, campaign.id));
+      await jobsQueue.send(
+        campaign.status === "pending_review"
+          ? { type: "review_campaign", campaignId: campaign.id, accountId: campaign.accountId }
+          : {
+              type: "generate_campaign_recipients",
+              campaignId: campaign.id,
+              accountId: campaign.accountId,
+            },
+      );
+      await logJob(db, {
+        jobType: "cron_rescue",
+        entityType: "campaign",
+        entityId: campaign.id,
+        status: "completed",
+        payload: { from: campaign.status },
+      });
+      rescued += 1;
+    } catch (err) {
+      console.error(`[cron] pipeline rescue failed for campaign ${campaign.id}:`, err);
+    }
+  }
+  return rescued;
 }
 
 // Scheduled campaigns whose time has come. Each is handed to the normal send
@@ -94,7 +268,8 @@ async function reconcileSendingCampaigns(db: Db, jobsQueue: JobQueue): Promise<v
 // or the audience emptied since scheduling. If a gate now fails, the campaign is
 // returned to "draft" with a reason rather than silently dropped, so the user
 // can see why it didn't go out. Granularity is the 15-minute sweep, so a send
-// fires within ~15 minutes of its scheduled time.
+// fires within ~15 minutes of its scheduled time. Ordered by scheduledAt so a
+// burst of same-minute schedules releases oldest-first instead of arbitrarily.
 export async function releaseDueCampaigns(
   db: Db,
   jobsQueue: JobQueue,
@@ -106,59 +281,66 @@ export async function releaseDueCampaigns(
     .where(
       and(eq(campaigns.status, "scheduled"), lte(campaigns.scheduledAt, now.toISOString())),
     )
-    .limit(50);
+    .orderBy(asc(campaigns.scheduledAt))
+    .limit(SWEEP_PAGE);
 
   let released = 0;
   for (const campaign of due) {
-    const gateError =
-      campaignContentError(campaign) ??
-      (await campaignSendGateError(db, campaign.accountId, campaign));
-    if (gateError) {
-      const reverted = await db
+    try {
+      const gateError =
+        campaignContentError(campaign) ??
+        (await campaignSendGateError(db, campaign.accountId, campaign));
+      if (gateError) {
+        const reverted = await db
+          .update(campaigns)
+          .set({
+            status: "draft",
+            scheduledAt: null,
+            pausedReason: `Scheduled send didn't start: ${gateError}`,
+            updatedAt: nowIso(),
+          })
+          .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "scheduled")))
+          .returning({ id: campaigns.id });
+        // Tell the user — a scheduled send that silently reverts to draft is the
+        // worst kind of surprise (they think it went out). Best-effort; the DB
+        // change above is the source of truth. Only notify if we actually claimed
+        // the transition (a concurrent sweep may have handled it).
+        if (reverted.length > 0) {
+          const account = await db.query.accounts.findFirst({
+            where: eq(accounts.id, campaign.accountId),
+          });
+          if (account) {
+            await notifyAccount(db, account, {
+              kind: "scheduled_send_failed",
+              title: `Your scheduled send didn't go out: "${campaign.name}"`,
+              body: `We couldn't start the scheduled send because: ${gateError} The campaign is back in your drafts — fix that and send again when you're ready.`,
+              ctaHref: `/campaigns/${campaign.id}`,
+              ctaLabel: "Open the campaign",
+            });
+          }
+        }
+        continue;
+      }
+
+      // Claim the transition atomically so a concurrent sweep can't double-enqueue.
+      const claimed = await db
         .update(campaigns)
-        .set({
-          status: "draft",
-          scheduledAt: null,
-          pausedReason: `Scheduled send didn't start: ${gateError}`,
-          updatedAt: nowIso(),
-        })
+        .set({ status: "pending_review", scheduledAt: null, pausedReason: null, pausedCode: null, updatedAt: nowIso() })
         .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "scheduled")))
         .returning({ id: campaigns.id });
-      // Tell the user — a scheduled send that silently reverts to draft is the
-      // worst kind of surprise (they think it went out). Best-effort; the DB
-      // change above is the source of truth. Only notify if we actually claimed
-      // the transition (a concurrent sweep may have handled it).
-      if (reverted.length > 0) {
-        const account = await db.query.accounts.findFirst({
-          where: eq(accounts.id, campaign.accountId),
-        });
-        if (account) {
-          await notifyAccount(db, account, {
-            kind: "scheduled_send_failed",
-            title: `Your scheduled send didn't go out: "${campaign.name}"`,
-            body: `We couldn't start the scheduled send because: ${gateError} The campaign is back in your drafts — fix that and send again when you're ready.`,
-            ctaHref: `/campaigns/${campaign.id}`,
-            ctaLabel: "Open the campaign",
-          });
-        }
-      }
-      continue;
+      if (claimed.length === 0) continue;
+
+      await jobsQueue.send({
+        type: "review_campaign",
+        campaignId: campaign.id,
+        accountId: campaign.accountId,
+      });
+      released += 1;
+    } catch (err) {
+      // One broken campaign/account row must not block the other due releases;
+      // this one is retried next sweep (still status "scheduled").
+      console.error(`[cron] release failed for campaign ${campaign.id}:`, err);
     }
-
-    // Claim the transition atomically so a concurrent sweep can't double-enqueue.
-    const claimed = await db
-      .update(campaigns)
-      .set({ status: "pending_review", scheduledAt: null, pausedReason: null, updatedAt: nowIso() })
-      .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "scheduled")))
-      .returning({ id: campaigns.id });
-    if (claimed.length === 0) continue;
-
-    await jobsQueue.send({
-      type: "review_campaign",
-      campaignId: campaign.id,
-      accountId: campaign.accountId,
-    });
-    released += 1;
   }
   return released;
 }
@@ -238,10 +420,30 @@ async function dailyHealthChecks(db: Db): Promise<void> {
   }
 }
 
+// The daily branch is gated by a last-run marker (a `cron_daily` job_logs row)
+// instead of a wall-clock window: a fixed 03:00–03:15 window silently skips the
+// whole day whenever the worker happens to be down or the sweep job is delayed
+// past the window — a marker self-heals on the very next sweep.
+const DAILY_EVERY_MS = 20 * 60 * 60 * 1000;
+async function dailyChecksDue(db: Db, now: Date): Promise<boolean> {
+  const [last] = await db
+    .select({ createdAt: jobLogs.createdAt })
+    .from(jobLogs)
+    .where(eq(jobLogs.jobType, "cron_daily"))
+    .orderBy(desc(jobLogs.createdAt))
+    .limit(1);
+  if (!last) return true;
+  return now.getTime() - Date.parse(last.createdAt) > DAILY_EVERY_MS;
+}
+
 // Fallback usage reset. The Clerk `subscriptionItem.active` webhook is the
 // primary period source (it zeroes usage and advances the marker when a new
-// period starts — see applySubscriptionEvent); this monthly cron only catches
-// accounts whose period elapsed without a webhook arriving.
+// period starts — see applySubscriptionEvent); this cron only catches accounts
+// whose period elapsed without a webhook arriving. It runs on EVERY sweep: the
+// WHERE below already makes it a no-op for accounts whose period hasn't ended,
+// and the marker push-forward prevents double resets — gating it to a calendar
+// window (the old behavior: day 1, 03:00–03:15 UTC) meant one missed window
+// blocked a webhook-less account's sending for up to a month.
 //
 // To stay billing-correct it resets ONLY accounts whose current period has
 // already ended (currentPeriodEnd in the past, or null for accounts that never
@@ -273,31 +475,64 @@ export async function resetMonthlyUsage(db: Db, now: Date = new Date()): Promise
 export type CronDeps = { db: Db; queue: JobQueue };
 
 // The 15-minute sweep, formerly the Worker `scheduled` handler. Driven by a
-// BullMQ repeatable job (worker/index.ts) instead of a Cron Trigger; `now` is
-// injected so the daily/monthly branches stay testable.
+// BullMQ repeatable job (worker/index.ts); `now` is injected so the time-based
+// branches stay testable.
+//
+// Stages run isolated: one failing stage (a poison campaign row, a flaky
+// dependency) must not silently disable the rest of the maintenance surface.
+// Errors are collected, logged to job_logs (queryable), and re-thrown at the
+// end so BullMQ still surfaces the failed sweep.
 export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date()): Promise<void> {
   const { db, queue } = deps;
+  const errors: string[] = [];
+  const stage = async <T>(name: string, fn: () => Promise<T>): Promise<T | undefined> => {
+    try {
+      return await fn();
+    } catch (err) {
+      console.error(`[cron] stage ${name} failed:`, err);
+      errors.push(`${name}: ${err instanceof Error ? err.message : String(err)}`);
+      return undefined;
+    }
+  };
 
-  const failed = await failStuckRecipients(db);
-  const released = await releaseDueCampaigns(db, queue, now);
-  await reconcileSendingCampaigns(db, queue);
+  const failed = (await stage("fail_stuck", () => failStuckRecipients(db))) ?? 0;
+  // Reset before resume so a period rollover this sweep un-pauses quota-paused
+  // campaigns in the same run.
+  const usageReset = (await stage("usage_reset", () => resetMonthlyUsage(db, now))) ?? 0;
+  const released = (await stage("release_due", () => releaseDueCampaigns(db, queue, now))) ?? 0;
+  const resumed = (await stage("resume_paused", () => resumePausedCampaigns(db, queue, now))) ?? 0;
+  await stage("reconcile", () => reconcileSendingCampaigns(db, queue));
+  const rescued = (await stage("rescue_pipeline", () => rescueStuckPipelineCampaigns(db, queue, now))) ?? 0;
 
   // SES re-check only when this process has SES configured.
   const region = process.env.AWS_REGION;
   const fetchIdentity = region ? (domain: string) => getDomainIdentity(domain, region) : null;
-  const domainsVerified = await recheckPendingDomains(db, fetchIdentity);
+  const domainsVerified = (await stage("domain_recheck", () => recheckPendingDomains(db, fetchIdentity))) ?? 0;
 
-  const isDaily = now.getUTCHours() === 3 && now.getUTCMinutes() < 15;
-  if (isDaily) {
-    await dailyHealthChecks(db);
-    if (now.getUTCDate() === 1) {
-      await resetMonthlyUsage(db, now);
-    }
-  }
+  const isDaily =
+    (await stage("daily", async () => {
+      if (!(await dailyChecksDue(db, now))) return false;
+      await dailyHealthChecks(db);
+      await logJob(db, { jobType: "cron_daily", status: "completed" });
+      return true;
+    })) ?? false;
 
   await logJob(db, {
     jobType: "cron",
-    status: "completed",
-    payload: { stuckFailed: failed, released, domainsVerified, daily: isDaily },
+    status: errors.length > 0 ? "failed" : "completed",
+    error: errors.length > 0 ? errors.join("; ") : undefined,
+    payload: {
+      stuckFailed: failed,
+      released,
+      resumed,
+      rescued,
+      usageReset,
+      domainsVerified,
+      daily: isDaily,
+    },
   });
+
+  if (errors.length > 0) {
+    throw new Error(`cron sweep stages failed: ${errors.join("; ")}`);
+  }
 }

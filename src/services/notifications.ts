@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   accountUsers,
@@ -171,7 +171,9 @@ export async function notifyAccountThrottled(
 // Notify an account that one of its campaigns finished sending. Called from
 // whichever path completes the send (the last send batch, or the cron reconcile),
 // guarded by the caller so it fires exactly once. Computes the reached count for
-// a concrete headline.
+// a concrete headline — and is honest about recipients that could NOT be sent
+// (failed/skipped, e.g. swept crashed-batch rows): celebrating "delivered to X"
+// while silently omitting a large failure count would misrepresent the send.
 export async function notifyCampaignSent(
   db: Db,
   campaign: { id: string; name: string; accountId: string },
@@ -180,23 +182,56 @@ export async function notifyCampaignSent(
     where: eq(accounts.id, campaign.accountId),
   });
   if (!account) return;
-  const [row] = await db
-    .select({ n: sql<number>`count(*)`.as("n") })
+  const rows = await db
+    .select({
+      status: campaignRecipients.status,
+      n: sql<number>`count(*)`.as("n"),
+    })
     .from(campaignRecipients)
-    .where(
-      and(
-        eq(campaignRecipients.campaignId, campaign.id),
-        inArray(campaignRecipients.status, ["sent", "delivered"]),
-      ),
-    );
-  const reached = Number(row?.n ?? 0);
+    .where(eq(campaignRecipients.campaignId, campaign.id))
+    .groupBy(campaignRecipients.status);
+  const counts = Object.fromEntries(rows.map((r) => [r.status, Number(r.n)]));
+  const reached = (counts.sent ?? 0) + (counts.delivered ?? 0);
+  const missed = (counts.failed ?? 0) + (counts.skipped ?? 0);
+  const missedNote =
+    missed > 0
+      ? ` ${missed.toLocaleString()} ${missed === 1 ? "recipient" : "recipients"} couldn't be sent — see the campaign report for details.`
+      : "";
   await notifyAccount(db, account, {
     kind: "campaign_sent",
     title: `"${campaign.name}" is out 🎉`,
-    body: `Delivered to ${reached.toLocaleString()} ${reached === 1 ? "subscriber" : "subscribers"}. See how it's performing.`,
+    body: `Delivered to ${reached.toLocaleString()} ${reached === 1 ? "subscriber" : "subscribers"}.${missedNote} See how it's performing.`,
     ctaHref: `/campaigns/${campaign.id}`,
     ctaLabel: "View results",
   });
+}
+
+// Notify an account that a campaign paused mid-send. Callers guard on having
+// claimed the sending→paused transition so a pause never notifies twice;
+// throttled per kind as a backstop against pause/auto-resume flapping (e.g. a
+// daily-limit loop) flooding the inbox.
+export async function notifyCampaignPaused(
+  db: Db,
+  campaign: { id: string; name: string; accountId: string },
+  code: string,
+  reason: string,
+): Promise<void> {
+  const account = await db.query.accounts.findFirst({
+    where: eq(accounts.id, campaign.accountId),
+  });
+  if (!account) return;
+  await notifyAccountThrottled(
+    db,
+    account,
+    {
+      kind: "campaign_paused",
+      title: `"${campaign.name}" is paused (${code.replace(/_/g, " ")})`,
+      body: reason,
+      ctaHref: `/campaigns/${campaign.id}`,
+      ctaLabel: "Open the campaign",
+    },
+    6,
+  );
 }
 
 // Reads for the in-app bell. Account-scoped, newest-first.

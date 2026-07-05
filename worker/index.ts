@@ -7,6 +7,7 @@ import IORedis from "ioredis";
 import {
   DEFAULT_JOB_OPTIONS,
   QUEUE_NAME,
+  envInt,
   type JobQueue,
   type QueueMessage,
 } from "../src/queue/messages";
@@ -29,8 +30,9 @@ const SWEEP_SCHEDULER = "cron-15min";
 // Concurrent jobs this worker processes. For a single campaign, effective send
 // parallelism is min(SEND_LANES, WORKER_CONCURRENCY × replicas), so keep this at
 // or above SEND_LANES (default 8) to saturate the lanes. Size DB_POOL_MAX to
-// match (see src/db/client.ts).
-const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY ?? "8");
+// match (see src/db/client.ts). NaN-safe parse: an env typo must fall back to
+// the default, not spin up a NaN-concurrency worker.
+const CONCURRENCY = envInt("WORKER_CONCURRENCY", 8, 1, 64);
 
 function makeConnection(): IORedis {
   const url = process.env.REDIS_URL;
@@ -56,6 +58,12 @@ const jobQueue: JobQueue = {
   },
 };
 
+// Flipped by shutdown() before worker.close(). Long-running handlers (the send
+// batch loop) poll it between recipients and return their unsent remainder to
+// pending, so a routine deploy never leaves claimed rows behind to be swept to
+// "failed" 15 minutes later.
+let draining = false;
+
 const deps: QueueDeps = {
   db: getDb(),
   queue: jobQueue,
@@ -64,6 +72,7 @@ const deps: QueueDeps = {
   appUrl: requireAppUrl(),
   unsubscribeSecret: requireUnsubscribeSecret(),
   aiReviewMode: process.env.AI_REVIEW_MODE,
+  shouldAbort: () => draining,
 };
 
 const workerConnection = makeConnection();
@@ -81,6 +90,11 @@ const worker = new Worker(
   {
     connection: workerConnection as unknown as ConnectionOptions,
     concurrency: CONCURRENCY,
+    // Default is 1: a job whose worker was killed twice in a row (deploy
+    // crash-loop) would be terminally failed as "stalled" without consuming its
+    // retry budget. Redelivery is claim-safe (handlers are idempotent on DB
+    // status), so tolerate a couple of stalls before giving up.
+    maxStalledCount: 3,
   },
 );
 
@@ -92,15 +106,17 @@ worker.on("failed", (job, err) => {
     attemptsMade: job?.attemptsMade,
     error: err?.message ?? String(err),
   });
-  // BullMQ fires "failed" on every attempt. Only the final, retries-exhausted
-  // failure is dead-lettered (mirrored to job_logs) so transient retries don't
-  // spam the table; `attemptsMade` reaches the configured `attempts` cap on the
-  // last try. The sweep job never dead-letters (it has no DB-observable entity).
-  if (
-    job &&
-    job.name !== SWEEP_JOB &&
-    job.attemptsMade >= (job.opts.attempts ?? DEFAULT_JOB_OPTIONS.attempts)
-  ) {
+  // BullMQ fires "failed" on every attempt. Only terminal failures are
+  // dead-lettered (mirrored to job_logs) so transient retries don't spam the
+  // table: either retries are exhausted (`attemptsMade` reaches the `attempts`
+  // cap), or BullMQ gave up on a repeatedly-stalled job — stall failures do NOT
+  // consume the retry budget, so without the explicit check they would vanish
+  // with only a warn log. The sweep job never dead-letters (it has no
+  // DB-observable entity).
+  const exhausted =
+    !!job && job.attemptsMade >= (job.opts.attempts ?? DEFAULT_JOB_OPTIONS.attempts);
+  const stalledOut = /stalled more than/i.test(err?.message ?? "");
+  if (job && job.name !== SWEEP_JOB && (exhausted || stalledOut)) {
     const dlLog = logger.child({ jobName: job.name, jobId: job.id });
     void dlLog
       .reportError("job dead-lettered (retries exhausted)", err, {
@@ -133,8 +149,33 @@ logger.info("cron sweep scheduled", { scheduler: SWEEP_SCHEDULER, pattern: "ever
 // 15-min cron staleness signal. Best-effort — a Redis blip must never crash the
 // worker, and the interval is unref'd so it can't keep the process alive on its
 // own during shutdown.
+//
+// The beat must attest to the CONSUMING side, not just this timer being alive:
+// the classic failure is workerConnection's blocking socket half-opening (NAT
+// idle timeout, Redis failover) so no jobs are fetched while the separate
+// producer connection stays healthy — a heartbeat written unconditionally on
+// queueConnection would report a wedged worker as alive indefinitely. So the
+// beat is skipped unless the Worker is running AND a PING on the worker's own
+// connection answers promptly; skipped beats let the key go stale and the
+// health endpoint fires.
+async function workerAlive(): Promise<boolean> {
+  if (!worker.isRunning()) return false;
+  try {
+    const timeout = new Promise<false>((resolve) => {
+      const t = setTimeout(() => resolve(false), 2000);
+      t.unref();
+    });
+    return await Promise.race([workerConnection.ping().then(() => true), timeout]);
+  } catch {
+    return false;
+  }
+}
 async function beat(): Promise<void> {
   try {
+    if (!(await workerAlive())) {
+      logger.warn("heartbeat skipped: worker connection not responding");
+      return;
+    }
     await writeHeartbeat(queueConnection);
   } catch (err) {
     logger.warn("heartbeat write failed", { error: err instanceof Error ? err.message : String(err) });
@@ -146,14 +187,25 @@ heartbeatTimer.unref();
 
 async function shutdown(signal: string): Promise<void> {
   logger.info("worker shutting down", { signal });
+  // Signal in-flight send batches to stop between recipients and return their
+  // unsent remainder to pending BEFORE closing the worker: worker.close() waits
+  // for active jobs, and supervisors (pm2/systemd/Docker) SIGKILL long before a
+  // full batch of serial sends would finish on its own.
+  draining = true;
   clearInterval(heartbeatTimer);
+  let clean = true;
   try {
     await worker.close();
     await queue.close();
     await queueConnection.quit();
     await workerConnection.quit();
+  } catch (err) {
+    clean = false;
+    logger.error("worker shutdown did not drain cleanly", {
+      error: err instanceof Error ? err.message : String(err),
+    });
   } finally {
-    process.exit(0);
+    process.exit(clean ? 0 : 1);
   }
 }
 process.on("SIGTERM", () => void shutdown("SIGTERM"));

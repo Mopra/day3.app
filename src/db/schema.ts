@@ -335,6 +335,23 @@ export const CAMPAIGN_STATUSES = [
 ] as const;
 export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 
+// Machine-readable pause cause. pausedReason (below) stays the human-facing
+// sentence; this code is what the cron sweep keys auto-resume on — string
+// matching on the reason text would be fragile. Only rate_limit / daily_limit /
+// quota are ever auto-resumed; user / account / config / suspended / error
+// require a human (the user, or an operator for config/suspended).
+export const PAUSED_CODES = [
+  "user", // paused from the UI
+  "quota", // monthly email limit reached (auto-resumes when headroom returns)
+  "rate_limit", // provider throttled (auto-resumes next sweep)
+  "daily_limit", // provider daily quota (auto-resumes after a cool-down)
+  "account", // account ineligible (past-due, risk-paused, sending disabled)
+  "config", // platform-side sending misconfiguration (ops alerted)
+  "suspended", // provider suspended the platform account (ops alerted)
+  "error", // repeated identical send failures tripped the circuit breaker
+] as const;
+export type PausedCode = (typeof PAUSED_CODES)[number];
+
 export const campaigns = pgTable(
   "campaigns",
   {
@@ -385,6 +402,7 @@ export const campaigns = pgTable(
     riskCategoriesJson: text("risk_categories_json"),
 
     pausedReason: text("paused_reason"),
+    pausedCode: text("paused_code").$type<PausedCode>(),
 
     scheduledAt: tstz("scheduled_at"),
     sentAt: tstz("sent_at"),
@@ -546,6 +564,8 @@ export const riskReviews = pgTable("risk_reviews", {
 export const NOTIFICATION_KINDS = [
   "scheduled_send_failed",
   "campaign_sent",
+  "campaign_paused",
+  "campaign_blocked",
   "import_completed",
   "import_failed",
   "subscribers_cap_reached",

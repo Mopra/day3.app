@@ -1,11 +1,11 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { campaignRecipients, campaigns, subscribers } from "../../db/schema";
 import { canonicalizeEmail } from "../../lib/csv";
 import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
 import { getSuppressedEmails } from "../../services/suppression";
-import { SEND_BATCH_SIZE, SEND_LANES, type JobQueue } from "../messages";
+import { laneCountFor, SEND_BATCH_SIZE, type JobQueue } from "../messages";
 
 // Postgres allows up to 65535 bound params per statement; chunk large audiences
 // into comfortably-sized multi-row inserts.
@@ -34,10 +34,18 @@ export async function generateCampaignRecipients(
     return;
   }
 
+  // Status-guarded: a stale duplicate delivery racing a completed run must not
+  // knock a campaign that has already advanced to "sending" back to
+  // "generating_recipients" (that would orphan its live lanes' follow-ups).
   await db
     .update(campaigns)
     .set({ status: "generating_recipients", updatedAt: nowIso() })
-    .where(eq(campaigns.id, campaign.id));
+    .where(
+      and(
+        eq(campaigns.id, campaign.id),
+        inArray(campaigns.status, ["approved", "generating_recipients"]),
+      ),
+    );
 
   const audienceMembers = await db
     .select({
@@ -81,26 +89,34 @@ export async function generateCampaignRecipients(
       .onConflictDoNothing();
   }
 
-  await db
+  // Atomic claim of the generating_recipients → sending transition: only the
+  // run that wins it fans out lanes, so a duplicate delivery (BullMQ is
+  // at-least-once, and a stalled first attempt can still be running) can never
+  // double the lane count and push send parallelism past the tuned SES rate.
+  // If the winner crashes between this flip and the fan-out below, the cron
+  // sweep's reconcile sees pending rows with nothing in flight and restores
+  // full lane width within a sweep.
+  const flipped = await db
     .update(campaigns)
     .set({ status: "sending", updatedAt: nowIso() })
-    .where(eq(campaigns.id, campaign.id));
+    .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "generating_recipients")))
+    .returning({ id: campaigns.id });
 
-  // Fan out independent send lanes so the worker actually sends in parallel.
-  // Each lane is a self-chaining `send_campaign_batch` that claims a disjoint
-  // slice of pending rows (FOR UPDATE SKIP LOCKED), so the lanes never collide
-  // and never double-send. We never enqueue more lanes than there are batches of
-  // work — a small audience still gets exactly one lane, identical to before.
-  // Re-running this handler after a crash safely re-enqueues lanes (they just
-  // find no pending rows, or claim disjoint sets, and stop).
-  const laneCount = Math.max(1, Math.min(SEND_LANES, Math.ceil(eligible.length / SEND_BATCH_SIZE)));
-  for (let lane = 0; lane < laneCount; lane++) {
-    await jobsQueue.send({
-      type: "send_campaign_batch",
-      campaignId: campaign.id,
-      accountId: campaign.accountId,
-      batchSize: SEND_BATCH_SIZE,
-    });
+  if (flipped.length > 0) {
+    // Fan out independent send lanes so the worker actually sends in parallel.
+    // Each lane is a self-chaining `send_campaign_batch` that claims a disjoint
+    // slice of pending rows (FOR UPDATE SKIP LOCKED), so the lanes never collide
+    // and never double-send. We never enqueue more lanes than there are batches
+    // of work — a small audience still gets exactly one lane.
+    const laneCount = laneCountFor(eligible.length);
+    for (let lane = 0; lane < laneCount; lane++) {
+      await jobsQueue.send({
+        type: "send_campaign_batch",
+        campaignId: campaign.id,
+        accountId: campaign.accountId,
+        batchSize: SEND_BATCH_SIZE,
+      });
+    }
   }
 
   await logJob(db, {

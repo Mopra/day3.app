@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-07-03**.
+> Last verified against the codebase: **2026-07-05**.
 
 ---
 
@@ -229,7 +229,11 @@ Key pricing facts:
   min). Reschedule or cancel (back to `draft`) any time before it fires. If a send gate
   (verified domain, non-empty audience) has lapsed by release time, it returns to `draft`
   with a reason instead of sending.
-- **Pause / resume** an in-flight send.
+- **Pause / resume** an in-flight send. System-caused pauses self-heal: a campaign paused
+  by a provider rate limit, the provider's daily quota, or the plan's monthly email limit
+  is auto-resumed by the cron sweep once the constraint clears (user pauses are never
+  auto-resumed). Every mid-send pause also notifies the account admins (in-app + email),
+  and the "campaign sent" notification discloses how many recipients could not be sent.
 - **Duplicate a campaign** from the list's row actions menu — copies the content and
   settings (subject, body, audience, sender, from/reply-to, footer) into a fresh `draft`
   with a "Copy of …" name and a clean slate (no recipients, no risk review, never sent).

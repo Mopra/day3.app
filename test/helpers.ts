@@ -53,12 +53,18 @@ export class FakeStore implements ObjectStore {
   }
 }
 
+let recordingProviderSeq = 0;
+
 export class RecordingProvider implements EmailProvider {
   sent: SendEmailInput[] = [];
   // Per-call overrides: results[i] is returned for call i (otherwise sent ok).
   results = new Map<number, SendEmailResult>();
   throwOnCall: number | null = null;
   private calls = 0;
+  // Message ids are unique across provider instances (like real SES ids) —
+  // email_events dedupes on (providerMessageId, eventType), so two instances
+  // both emitting "m_0" would silently collide.
+  private prefix = `m${recordingProviderSeq++}`;
 
   async send(input: SendEmailInput): Promise<SendEmailResult> {
     const call = this.calls++;
@@ -66,7 +72,13 @@ export class RecordingProvider implements EmailProvider {
       throw new Error("provider exploded");
     }
     this.sent.push(input);
-    return this.results.get(call) ?? { provider: "mock", messageId: `m_${call}`, status: "sent" };
+    return (
+      this.results.get(call) ?? {
+        provider: "mock",
+        messageId: `${this.prefix}_${call}`,
+        status: "sent",
+      }
+    );
   }
 }
 

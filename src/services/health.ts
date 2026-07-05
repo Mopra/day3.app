@@ -119,6 +119,28 @@ export async function enforceAccountHealth(db: Db, accountId: string): Promise<A
           windowDays: HEALTH_WINDOW_DAYS,
         },
       );
+      // Tell the tenant too — they're the only one who can fix their list, and
+      // without this their in-flight campaign just stops with no explanation.
+      // Best-effort and guarded by the exactly-once transition above. Imported
+      // lazily to keep this module free of a static notifications dependency
+      // (notifications imports the email factory).
+      try {
+        const { notifyAccount } = await import("./notifications");
+        const account = await db.query.accounts.findFirst({
+          where: eq(accounts.id, accountId),
+        });
+        if (account) {
+          await notifyAccount(db, account, {
+            kind: "account_paused",
+            title: "Sending is paused for your workspace",
+            body: `${health.reason ?? "Bounce or complaint rates exceeded the safe threshold."} Clean up your audience (remove stale or purchased addresses), then contact support to re-enable sending.`,
+            ctaHref: "/audiences",
+            ctaLabel: "Review your audience",
+          });
+        }
+      } catch (err) {
+        console.error("[health] account-paused notification failed", err);
+      }
     }
   }
   return health;

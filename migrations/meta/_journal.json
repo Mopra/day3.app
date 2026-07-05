@@ -134,6 +134,13 @@
       "when": 1783057123616,
       "tag": "0018_abandoned_ben_grimm",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1783211778047,
+      "tag": "0019_whole_dragon_lord",
+      "breakpoints": true
     }
   ]
 }

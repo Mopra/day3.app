@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { sendCampaignBatch } from "../src/queue/handlers/send-batch";
 import { generateCampaignRecipients } from "../src/queue/handlers/generate-recipients";
-import { campaignRecipients, campaigns, accounts, subscribers } from "../src/db/schema";
+import { campaignRecipients, campaigns, accounts, notifications, subscribers } from "../src/db/schema";
 import { addSuppression } from "../src/services/suppression";
 import { campaignPersonalizationGaps } from "../src/api/campaigns";
 import { newId, nowIso } from "../src/lib/ids";
@@ -19,7 +19,9 @@ import {
   testDb,
 } from "./helpers";
 
-async function setupSendingCampaign(opts: { limit?: number; sentCount?: number } = {}) {
+async function setupSendingCampaign(
+  opts: { limit?: number; sentCount?: number; emails?: string[] } = {},
+) {
   const db = await testDb();
   const account = await seedAccount(db, {
     monthlyEmailLimit: opts.limit ?? 10_000,
@@ -27,7 +29,7 @@ async function setupSendingCampaign(opts: { limit?: number; sentCount?: number }
   });
   const domain = await seedDomain(db, account.id);
   const audience = await seedAudience(db, account.id);
-  await seedSubscribers(db, account.id, audience.id, TEST_EMAILS);
+  await seedSubscribers(db, account.id, audience.id, opts.emails ?? TEST_EMAILS);
   const campaign = await seedCampaign(db, {
     accountId: account.id,
     audienceId: audience.id,
@@ -104,11 +106,11 @@ describe("send_campaign_batch", () => {
     expect(freshAccount?.monthlyEmailSentCount).toBe(5);
   });
 
-  it("does not resend recipients claimed by a crashed batch", async () => {
+  it("recovers a mid-batch crash without ever resending a handed-off email", async () => {
     const { db, account, campaign } = await setupSendingCampaign();
     const queue = new FakeQueue();
     const provider = new RecordingProvider();
-    provider.throwOnCall = 2; // crash mid-batch after 2 successful sends
+    provider.throwOnCall = 2; // provider throws while recipient #3 is in flight
     const message = { campaignId: campaign.id, accountId: account.id, batchSize: 25 };
 
     await expect(sendCampaignBatch(message, deps(db, queue, provider))).rejects.toThrow(
@@ -116,18 +118,34 @@ describe("send_campaign_batch", () => {
     );
     expect(provider.sent).toHaveLength(2);
 
-    // Retry after the crash: the 3 claimed-but-unresolved rows must NOT be
-    // re-claimed (the email may have left the building).
-    const provider2 = new RecordingProvider();
-    await sendCampaignBatch(message, deps(db, queue, provider2));
-    expect(provider2.sent).toHaveLength(0);
-
-    const rows = await db
+    // The recipient whose provider call was in flight is ambiguous — the email
+    // may have left the building — so it must stay claimed ("sending", for the
+    // stuck-lock sweep to fail later), while the untouched remainder returns to
+    // pending. The quota reservation must be reconciled down to actual sends.
+    let rows = await db
       .select()
       .from(campaignRecipients)
       .where(eq(campaignRecipients.campaignId, campaign.id));
     expect(rows.filter((r) => r.status === "sent")).toHaveLength(2);
-    expect(rows.filter((r) => r.status === "sending")).toHaveLength(3);
+    expect(rows.filter((r) => r.status === "sending")).toHaveLength(1);
+    expect(rows.filter((r) => r.status === "pending")).toHaveLength(2);
+    const account1 = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
+    expect(account1?.monthlyEmailSentCount).toBe(2);
+
+    // Retry after the crash: only the returned-to-pending rows are re-claimed;
+    // the ambiguous row is not, and nobody receives the email twice.
+    const provider2 = new RecordingProvider();
+    await sendCampaignBatch(message, deps(db, queue, provider2));
+    expect(provider2.sent).toHaveLength(2);
+    const allSentEmails = [...provider.sent, ...provider2.sent].map((s) => s.toEmail);
+    expect(new Set(allSentEmails).size).toBe(allSentEmails.length);
+
+    rows = await db
+      .select()
+      .from(campaignRecipients)
+      .where(eq(campaignRecipients.campaignId, campaign.id));
+    expect(rows.filter((r) => r.status === "sent")).toHaveLength(4);
+    expect(rows.filter((r) => r.status === "sending")).toHaveLength(1);
   });
 
   it("skips suppressed recipients at send time", async () => {
@@ -204,6 +222,152 @@ describe("send_campaign_batch", () => {
       .where(eq(campaignRecipients.campaignId, campaign.id));
     expect(rows.filter((r) => r.status === "sent")).toHaveLength(2);
     expect(rows.filter((r) => r.status === "pending")).toHaveLength(3);
+
+    // Machine-readable pause cause (the sweep's auto-resume keys on it) and a
+    // user-facing notification — a silent pause is a stalled campaign nobody
+    // knows about.
+    expect(fresh?.pausedCode).toBe("daily_limit");
+    const pauseNotes = await db
+      .select()
+      .from(notifications)
+      .where(
+        and(eq(notifications.accountId, account.id), eq(notifications.kind, "campaign_paused")),
+      );
+    expect(pauseNotes).toHaveLength(1);
+  });
+
+  it("drains a campaign with concurrent lanes: no duplicates, exactly one completion", async () => {
+    const emails = Array.from({ length: 30 }, (_, i) => `lane${i}@example.com`);
+    const { db, account, campaign } = await setupSendingCampaign({ emails });
+    const provider = new RecordingProvider();
+    const message = { campaignId: campaign.id, accountId: account.id, batchSize: 5 };
+
+    // Waves of 4 concurrent lanes racing over the same pending set, like
+    // production workers do. FOR UPDATE SKIP LOCKED must hand each lane a
+    // disjoint slice, and the completion UPDATE's status guard must let exactly
+    // one racer own the "campaign sent" transition.
+    for (let wave = 0; wave < 12; wave++) {
+      await Promise.all(
+        Array.from({ length: 4 }, () =>
+          sendCampaignBatch(message, deps(db, new FakeQueue(), provider)),
+        ),
+      );
+      const remaining = await db
+        .select({ id: campaignRecipients.id })
+        .from(campaignRecipients)
+        .where(
+          and(
+            eq(campaignRecipients.campaignId, campaign.id),
+            eq(campaignRecipients.status, "pending"),
+          ),
+        )
+        .limit(1);
+      if (remaining.length === 0) break;
+    }
+
+    // Every recipient exactly once — the core exactly-once invariant.
+    expect(provider.sent).toHaveLength(30);
+    expect(new Set(provider.sent.map((s) => s.toEmail)).size).toBe(30);
+
+    const fresh = await db.query.campaigns.findFirst({ where: eq(campaigns.id, campaign.id) });
+    expect(fresh?.status).toBe("sent");
+
+    const freshAccount = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
+    expect(freshAccount?.monthlyEmailSentCount).toBe(30);
+
+    const sentNotes = await db
+      .select()
+      .from(notifications)
+      .where(
+        and(eq(notifications.accountId, account.id), eq(notifications.kind, "campaign_sent")),
+      );
+    expect(sentNotes).toHaveLength(1);
+  });
+
+  it("returns the whole remainder (including the in-flight recipient) to pending on a transient error and throws for retry", async () => {
+    const { db, account, campaign } = await setupSendingCampaign();
+    const provider = new RecordingProvider();
+    // 3rd send hits a connection-phase failure — provably never reached SES.
+    provider.results.set(2, {
+      provider: "mock",
+      status: "transient",
+      error: "ENOTFOUND: getaddrinfo ENOTFOUND email.eu-north-1.amazonaws.com",
+    });
+    const message = { campaignId: campaign.id, accountId: account.id, batchSize: 25 };
+
+    await expect(sendCampaignBatch(message, deps(db, new FakeQueue(), provider))).rejects.toThrow(
+      /transient provider error/,
+    );
+
+    // Unlike the crash case, the in-flight recipient is provably unsent — it
+    // goes back to pending too, and nothing is left for the sweep to fail.
+    const rows = await db
+      .select()
+      .from(campaignRecipients)
+      .where(eq(campaignRecipients.campaignId, campaign.id));
+    expect(rows.filter((r) => r.status === "sent")).toHaveLength(2);
+    expect(rows.filter((r) => r.status === "pending")).toHaveLength(3);
+    expect(rows.filter((r) => r.status === "sending")).toHaveLength(0);
+    const account1 = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
+    expect(account1?.monthlyEmailSentCount).toBe(2);
+
+    // The BullMQ retry (same message) finishes the job without duplicates.
+    const provider2 = new RecordingProvider();
+    await sendCampaignBatch(message, deps(db, new FakeQueue(), provider2));
+    expect(provider2.sent).toHaveLength(3);
+    const all = [...provider.sent, ...provider2.sent].map((s) => s.toEmail);
+    expect(new Set(all).size).toBe(5);
+    const fresh = await db.query.campaigns.findFirst({ where: eq(campaigns.id, campaign.id) });
+    expect(fresh?.status).toBe("sent");
+  });
+
+  it("clamps a malformed batchSize instead of pausing the campaign with a false quota message", async () => {
+    const { db, account, campaign } = await setupSendingCampaign();
+    const provider = new RecordingProvider();
+
+    // NaN batchSize (env typo serialized through job data) must fall back to
+    // the default batch size — the old behavior fed NaN into the quota
+    // reservation, which granted 0 and paused the campaign claiming the
+    // monthly limit was reached.
+    await sendCampaignBatch(
+      { campaignId: campaign.id, accountId: account.id, batchSize: Number.NaN },
+      deps(db, new FakeQueue(), provider),
+    );
+
+    expect(provider.sent).toHaveLength(5);
+    const fresh = await db.query.campaigns.findFirst({ where: eq(campaigns.id, campaign.id) });
+    expect(fresh?.status).toBe("sent");
+  });
+
+  it("trips the circuit breaker on repeated identical failures instead of burning the audience", async () => {
+    const emails = Array.from({ length: 15 }, (_, i) => `cb${i}@example.com`);
+    const { db, account, campaign } = await setupSendingCampaign({ emails });
+    const provider = new RecordingProvider();
+    for (let i = 0; i < 15; i++) {
+      provider.results.set(i, {
+        provider: "mock",
+        status: "failed",
+        error: "UnknownError: identical provider failure",
+      });
+    }
+
+    await sendCampaignBatch(
+      { campaignId: campaign.id, accountId: account.id, batchSize: 25 },
+      deps(db, new FakeQueue(), provider),
+    );
+
+    const rows = await db
+      .select()
+      .from(campaignRecipients)
+      .where(eq(campaignRecipients.campaignId, campaign.id));
+    // 10 consecutive identical failures trip the breaker; the remaining 5 stay
+    // recoverable (pending) instead of being ground to terminal failed.
+    expect(rows.filter((r) => r.status === "failed")).toHaveLength(10);
+    expect(rows.filter((r) => r.status === "pending")).toHaveLength(5);
+
+    const fresh = await db.query.campaigns.findFirst({ where: eq(campaigns.id, campaign.id) });
+    expect(fresh?.status).toBe("paused");
+    expect(fresh?.pausedCode).toBe("error");
   });
 
   it("never exceeds the monthly limit when two batches run concurrently", async () => {

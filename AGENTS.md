@@ -50,7 +50,18 @@ serves the UI and the API routes; a separate long-running Node worker
 - Clerk: the React SDK is `@clerk/nextjs`; `@clerk/backend` is used server-side.
   Billing APIs are beta — pin versions.
 - Recipients stuck in `sending` (crashed batch) are swept to `failed` by cron,
-  never back to `pending` — resending could duplicate.
+  never back to `pending` — resending could duplicate. The sweep also releases
+  the swept rows' quota reservation, auto-resumes campaigns paused by machine
+  codes (`rate_limit` / `daily_limit` / `quota` — see `campaigns.paused_code`;
+  user pauses never auto-resume), and re-enqueues the driving job for campaigns
+  stranded in `pending_review` / `approved` / `generating_recipients`.
+- The SES client deliberately runs with `maxAttempts: 1` — SDK-internal retries
+  can silently double-send when a response is lost after SES accepted the
+  message. Retry policy lives in the send-batch handler, where
+  `campaign_recipients.status` keeps it duplicate-safe: only provably-unsent
+  errors (connection-phase network failures, provider-rejected requests) ever
+  return a recipient to `pending`; ambiguous errors (timeouts, 5xx) stay
+  terminal for that recipient.
 - Failed-import recovery: a `status='failed'` import is never auto-retried. A user
   re-uploads a corrected CSV via `POST /api/audiences/[id]/imports/[importId]/retry`,
   which overwrites the stored object, resets the row to `pending`, and re-enqueues

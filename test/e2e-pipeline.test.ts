@@ -487,5 +487,8 @@ describe("end-to-end: webhook ingestion drives status, suppression, and auto-pau
       .from(emailEvents)
       .where(eq(emailEvents.eventType, "complaint"));
     expect(complaintEvents).toHaveLength(2);
-  });
+    // 2,000 real sends through the full pipeline in WASM Postgres: ~9s alone,
+    // but the parallel suite runs many pglite instances at once — give it
+    // headroom so CPU contention can't flake it at the default 30s.
+  }, 120_000);
 });

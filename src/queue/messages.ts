@@ -1,44 +1,55 @@
-export type QueueMessage =
-  | {
-      type: "process_import";
-      importId: string;
-      accountId: string;
-    }
-  | {
-      type: "review_campaign";
-      campaignId: string;
-      accountId: string;
-    }
-  | {
-      type: "generate_campaign_recipients";
-      campaignId: string;
-      accountId: string;
-    }
-  | {
-      type: "send_campaign_batch";
-      campaignId: string;
-      accountId: string;
-      batchSize: number;
-    }
-  | {
-      type: "process_email_event";
-      eventId: string;
-    }
-  | {
-      // Double opt-in confirmation email for a public-form signup. ID-only: the
-      // worker re-reads the subscriber + form + account, signs the confirm token,
-      // and sends via the account's verified sending domain.
-      type: "send_form_confirmation";
-      subscriberId: string;
-      accountId: string;
-    };
+import { z } from "zod";
+
+// Every queue message shape, as a runtime schema. job.data crosses a trust
+// boundary (Redis: producer version skew, operator replays, manual injection),
+// so the consumer validates against this before dispatch — a malformed message
+// must dead-letter loudly, not execute with garbage (e.g. a null batchSize
+// would make reserveQuota grant 0 and pause a healthy campaign with a false
+// "monthly limit reached"). The TS type is inferred from the schema so the two
+// can never drift.
+const id = z.string().min(1);
+export const queueMessageSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("process_import"), importId: id, accountId: id }),
+  z.object({ type: z.literal("review_campaign"), campaignId: id, accountId: id }),
+  z.object({ type: z.literal("generate_campaign_recipients"), campaignId: id, accountId: id }),
+  z.object({
+    type: z.literal("send_campaign_batch"),
+    campaignId: id,
+    accountId: id,
+    batchSize: z.number(),
+  }),
+  z.object({ type: z.literal("process_email_event"), eventId: id }),
+  // Double opt-in confirmation email for a public-form signup. ID-only: the
+  // worker re-reads the subscriber + form + account, signs the confirm token,
+  // and sends via the account's verified sending domain.
+  z.object({ type: z.literal("send_form_confirmation"), subscriberId: id, accountId: id }),
+]);
+export type QueueMessage = z.infer<typeof queueMessageSchema>;
+
+// Integer env knob with a default and hard bounds. Number("1,000") is NaN and
+// Math.max(1, NaN) is NaN — an env typo must fall back to the default, never
+// poison every enqueued message (NaN batchSize serializes to null in job data
+// and breaks reserveQuota's SQL).
+export function envInt(name: string, def: number, min: number, max: number): number {
+  const raw = process.env[name];
+  const n = raw === undefined || raw === "" ? def : Number(raw);
+  if (!Number.isFinite(n)) return def;
+  return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+// Hard ceiling on recipients per batch, enforced both here (producer side) and
+// in the send handler (server side, against stale/hand-crafted messages). The
+// ceiling exists because a batch must comfortably finish inside the cron
+// sweep's stuck-lock window even at worst-case per-send latency — the handler
+// also refreshes locks mid-batch, but the cap keeps batches bounded work.
+export const MAX_SEND_BATCH_SIZE = 500;
 
 // How many recipients one `send_campaign_batch` job claims and sends (serially,
 // in-process) before handing off. Larger batches amortize the per-batch DB
 // round-trips (claim + reconcile) over more emails. Env-tunable.
-export const SEND_BATCH_SIZE = Math.max(1, Number(process.env.SEND_BATCH_SIZE ?? "100"));
+export const SEND_BATCH_SIZE = envInt("SEND_BATCH_SIZE", 100, 1, MAX_SEND_BATCH_SIZE);
 
-// How many independent `send_campaign_batch` jobs (\"lanes\") are fanned out for a
+// How many independent `send_campaign_batch` jobs ("lanes") are fanned out for a
 // single campaign. Each lane is a self-chaining batch that claims a *disjoint*
 // slice of pending recipients via `FOR UPDATE SKIP LOCKED`, so N lanes drain a
 // campaign ~N× faster than the old single self-chaining batch. Effective
@@ -46,8 +57,17 @@ export const SEND_BATCH_SIZE = Math.max(1, Number(process.env.SEND_BATCH_SIZE ??
 // WORKER_CONCURRENCY to at least SEND_LANES to saturate it. Tune both to roughly
 // your approved SES max send rate (a serial lane sustains ~1 send / network RTT;
 // e.g. 8 lanes ≈ 50/s). Lane count is conserved — each batch enqueues at most one
-// follow-up — so this never grows unbounded. The cap below is a safety ceiling.
-export const SEND_LANES = Math.min(64, Math.max(1, Number(process.env.SEND_LANES ?? "8")));
+// follow-up, and the cron sweep only re-fans-out when no batch is in flight —
+// so this never grows unbounded. The cap below is a safety ceiling.
+export const SEND_LANES = envInt("SEND_LANES", 8, 1, 64);
+
+// Lanes to enqueue for `pending` outstanding recipients: enough to saturate
+// SEND_LANES, but never more lanes than there are batches of work. Shared by
+// the initial fan-out (generate-recipients), the cron sweep's stall recovery,
+// and the resume route so all three restore full send width.
+export function laneCountFor(pending: number): number {
+  return Math.max(1, Math.min(SEND_LANES, Math.ceil(pending / SEND_BATCH_SIZE)));
+}
 
 // The single BullMQ queue both tiers share: the web tier (producer) adds jobs,
 // the VPS worker (consumer) processes them. Kept here (no bullmq import) so both

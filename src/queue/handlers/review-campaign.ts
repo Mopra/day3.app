@@ -1,8 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../../db/client";
-import { campaigns, riskReviews, sendingDomains } from "../../db/schema";
+import { accounts, campaigns, riskReviews, sendingDomains } from "../../db/schema";
 import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
+import { notifyAccount } from "../../services/notifications";
 import { reviewCampaignRisk } from "../../services/risk";
 import type { JobQueue } from "../messages";
 
@@ -67,7 +68,7 @@ export async function reviewCampaign(
   // high/blocked block.
   const approved = review.riskLevel === "low" || review.riskLevel === "medium";
 
-  await db
+  const transitioned = await db
     .update(campaigns)
     .set({
       status: approved ? "approved" : "blocked",
@@ -77,7 +78,8 @@ export async function reviewCampaign(
       riskCategoriesJson: JSON.stringify(review.categories),
       updatedAt: nowIso(),
     })
-    .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "pending_review")));
+    .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "pending_review")))
+    .returning({ id: campaigns.id });
 
   if (approved) {
     await jobsQueue.send({
@@ -85,6 +87,29 @@ export async function reviewCampaign(
       campaignId: campaign.id,
       accountId: campaign.accountId,
     });
+  } else if (transitioned.length > 0) {
+    // A blocked campaign never sends — push that to the user instead of letting
+    // them believe it went out (they may have closed the tab, or this may be a
+    // scheduled send releasing while they're away). Guarded on the status
+    // transition so a duplicate delivery can't notify twice; best-effort so a
+    // notification failure never fails the review job after the block is
+    // already recorded.
+    try {
+      const account = await db.query.accounts.findFirst({
+        where: eq(accounts.id, campaign.accountId),
+      });
+      if (account) {
+        await notifyAccount(db, account, {
+          kind: "campaign_blocked",
+          title: `"${campaign.name}" was blocked by the pre-send review`,
+          body: `${review.summary} Duplicate the campaign, apply the guidance, and send the fixed copy.`,
+          ctaHref: `/campaigns/${campaign.id}`,
+          ctaLabel: "See why & fix it",
+        });
+      }
+    } catch (err) {
+      console.error(`[review] blocked-notification failed for ${campaign.id}:`, err);
+    }
   }
 
   await logJob(db, {

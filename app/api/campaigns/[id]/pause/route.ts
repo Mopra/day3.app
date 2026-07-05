@@ -13,9 +13,10 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
   if (campaign.status !== "sending") {
     throw new HttpError(409, "Only a sending campaign can be paused");
   }
+  // pausedCode "user" is the one pause the cron sweep must never auto-resume.
   await db
     .update(campaigns)
-    .set({ status: "paused", pausedReason: "Paused by user.", updatedAt: nowIso() })
+    .set({ status: "paused", pausedReason: "Paused by user.", pausedCode: "user", updatedAt: nowIso() })
     .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "sending")));
   return json({ ok: true });
 });
