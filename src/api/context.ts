@@ -5,19 +5,22 @@ import { getAccountByClerkOrgId, syncCurrentOrganization } from "../services/acc
 import { HttpError } from "./http";
 
 // The auth facts a handler is allowed to trust. `has` carries Clerk's billing /
-// permission check (used for the org plan entitlement).
+// permission check (used for the org plan entitlement); `orgRole` is the active
+// user's role in the active org (e.g. "org:admin"), read from the session JWT so
+// lazy account creation records the right role without a Clerk API round-trip.
 export type AuthState = {
   userId: string;
   orgId: string | null;
+  orgRole: string | null;
   has: (params: { plan: string } | { permission: string }) => boolean;
 };
 
 // Cookie-based Clerk session (clerkMiddleware in proxy.ts populates it). Replaces
 // the Hono `requireAuth` Bearer-token middleware.
 export async function requireAuth(): Promise<AuthState> {
-  const { userId, orgId, has } = await auth();
+  const { userId, orgId, orgRole, has } = await auth();
   if (!userId) throw new HttpError(401, "Unauthorized");
-  return { userId, orgId: orgId ?? null, has: has as AuthState["has"] };
+  return { userId, orgId: orgId ?? null, orgRole: orgRole ?? null, has: has as AuthState["has"] };
 }
 
 export type AccountContext = { db: Db; account: Account; auth: AuthState };

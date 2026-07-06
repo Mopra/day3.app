@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-07-05**.
+> Last verified against the codebase: **2026-07-06**.
 
 ---
 
@@ -442,6 +442,16 @@ the same "Saving… / Saved" indicator as the campaign composer.
   arranged manually, not self-serve.
 - Settings: company mailing address (legally required in email footers) and Clerk's
   organization management (team members, org name, logo).
+- **Deleting an account is real erasure (GDPR right-to-erasure).** Deleting the
+  organization (Clerk's "Delete organization") permanently erases everything it owns —
+  subscribers, campaigns, imports, forms, domains, senders, email events, notifications,
+  and the account itself — plus its uploaded files (import CSVs, images) and its verified
+  SES sending identities. A member deleting their own user is stripped from every org
+  they belonged to; an org left with **no members** is erased in full the same way (a
+  memberless org is unreachable). The one thing that survives by design: **global
+  unsubscribe/complaint suppression records**, so a deleted account can never cause us to
+  re-email someone who opted out (a legal duty that outlives the account). Erasure runs
+  as a background worker job and is irreversible — there is no grace-window undo.
 
 ### 6.9 Admin (staff only)
 - Platform overview: account counts, campaigns by status, recent failed/dead-letter jobs.

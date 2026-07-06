@@ -10,11 +10,12 @@ import {
 } from "../src/services/accounts";
 import { testDb, seedAccount } from "./helpers";
 
-// Minimal Clerk stub covering only what syncCurrentOrganization touches.
+// Minimal Clerk stub covering only what syncCurrentOrganization touches. The
+// current user's role now comes from the session claim (auth.orgRole), so the
+// stub no longer needs getOrganizationMembershipList.
 function fakeClerk(opts: {
   orgName?: string;
   email: string;
-  role: string;
   publicMetadata?: Record<string, unknown>;
 }): ClerkClient {
   const stub = {
@@ -22,10 +23,6 @@ function fakeClerk(opts: {
       getOrganization: async () => ({
         name: opts.orgName ?? "Acme Inc",
         publicMetadata: opts.publicMetadata ?? {},
-      }),
-      getOrganizationMembershipList: async () => ({
-        data: [{ role: opts.role }],
-        totalCount: 1,
       }),
     },
     users: {
@@ -38,18 +35,20 @@ function fakeClerk(opts: {
   return stub as unknown as ClerkClient;
 }
 
-const auth = (orgId: string, userId = "user_1") => ({
+// orgRole mirrors Clerk's session claim (e.g. "org:admin"); undefined → member.
+const auth = (orgId: string, orgRole?: string, userId = "user_1") => ({
   userId,
   orgId,
+  orgRole,
   has: () => false,
 });
 
 describe("syncCurrentOrganization", () => {
   it("creates the account and records the member with the org role", async () => {
     const db = await testDb();
-    const clerk = fakeClerk({ email: "Owner@Acme.com", role: "org:admin" });
+    const clerk = fakeClerk({ email: "Owner@Acme.com" });
 
-    const account = await syncCurrentOrganization(db, clerk, auth("org_new"));
+    const account = await syncCurrentOrganization(db, clerk, auth("org_new", "org:admin"));
 
     expect(account.clerkOrgId).toBe("org_new");
     const members = await db.query.accountUsers.findMany({
@@ -62,7 +61,7 @@ describe("syncCurrentOrganization", () => {
 
   it("two concurrent first loads resolve to one account with no error", async () => {
     const db = await testDb();
-    const clerk = fakeClerk({ email: "a@acme.com", role: "org:member" });
+    const clerk = fakeClerk({ email: "a@acme.com" });
 
     const [a, b] = await Promise.all([
       syncCurrentOrganization(db, clerk, auth("org_race")),
@@ -95,7 +94,7 @@ describe("syncCurrentOrganization", () => {
       sendingEnabled: false,
     });
 
-    const result = await syncCurrentOrganization(db, fakeClerk({ email: "a@acme.com", role: "org:admin" }), {
+    const result = await syncCurrentOrganization(db, fakeClerk({ email: "a@acme.com" }), {
       userId: "user_1",
       orgId: "org_pastdue",
       has: () => true, // active plan entitlement still assigned during dunning
@@ -117,7 +116,6 @@ describe("syncCurrentOrganization", () => {
     // metadata pins it to the 25k tier — the tester override.
     const clerk = fakeClerk({
       email: "tester@acme.com",
-      role: "org:admin",
       publicMetadata: { plan: "25k_plan" },
     });
 
@@ -140,7 +138,7 @@ describe("syncCurrentOrganization", () => {
 
     const result = await syncCurrentOrganization(
       db,
-      fakeClerk({ email: "a@acme.com", role: "org:admin", publicMetadata: { plan: "50k_plan" } }),
+      fakeClerk({ email: "a@acme.com", publicMetadata: { plan: "50k_plan" } }),
       { userId: "user_1", orgId: "org_override_pastdue", has: () => true },
     );
 
@@ -153,7 +151,6 @@ describe("syncCurrentOrganization", () => {
     const db = await testDb();
     const clerk = fakeClerk({
       email: "a@acme.com",
-      role: "org:admin",
       publicMetadata: { plan: "not_a_real_plan" },
     });
 
@@ -168,8 +165,8 @@ describe("syncCurrentOrganization", () => {
 
     const acc = await syncCurrentOrganization(
       db,
-      fakeClerk({ email: "a@acme.com", role: "org:member" }),
-      auth("org_promote"),
+      fakeClerk({ email: "a@acme.com" }),
+      auth("org_promote", "org:member"),
     );
     let members = await db.query.accountUsers.findMany({
       where: (t, { eq: e }) => e(t.accountId, acc.id),
@@ -178,8 +175,8 @@ describe("syncCurrentOrganization", () => {
 
     await syncCurrentOrganization(
       db,
-      fakeClerk({ email: "a@acme.com", role: "org:admin" }),
-      auth("org_promote"),
+      fakeClerk({ email: "a@acme.com" }),
+      auth("org_promote", "org:admin"),
     );
     members = await db.query.accountUsers.findMany({
       where: (t, { eq: e }) => e(t.accountId, acc.id),

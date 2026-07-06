@@ -95,7 +95,13 @@ here — proceed to 1F to flip the provider.
 1. **dashboard.clerk.com** → your app → **Configure → Webhooks → Add Endpoint**.
 2. Endpoint URL: **`https://go.day3.app/api/webhooks/clerk`**.
 3. Subscribe to events: `organization.updated`, `organization.deleted`,
+   `organizationMembership.created`, `organizationMembership.updated`,
+   `organizationMembership.deleted`, `user.deleted`,
    `subscriptionItem.active`, `subscriptionItem.pastDue`, `subscriptionItem.ended`.
+   > `user.deleted` and `organizationMembership.deleted` drive account/data erasure —
+   > a member deleting their user is stripped from every org, and an org left with no
+   > members is purged entirely. Without them, a deleted user's PII lingers and an
+   > abandoned org is never erased.
 4. **Create** → copy the **Signing Secret** (`whsec_…`).
 5. Set `CLERK_WEBHOOK_SIGNING_SECRET` on Vercel → redeploy.
 

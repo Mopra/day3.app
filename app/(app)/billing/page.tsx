@@ -37,16 +37,21 @@ export default function BillingPage() {
     accountRef.current = account;
   }, [account]);
 
-  // On load, sync the session's billing claims into the local row and show it.
-  const sync = useCallback(() => {
+  // On load, read the stored account row (the authoritative, webhook-maintained
+  // source — same read the reconcile poll below uses). We deliberately do NOT
+  // POST /api/account/sync here: that made 2–3 Clerk API round-trips on every
+  // billing-page mount, and re-deriving the plan from the (laggy) session claim
+  // could show a stale tier right after a change. The once-per-session sync in
+  // <AppShell> covers the tester-override / webhook-less fallback.
+  const load = useCallback(() => {
     api
-      .post<{ account: Account }>("/api/account/sync")
+      .get<{ account: Account }>("/api/account")
       .then((res) => setAccount(res.account))
       .catch((err) => toast.error(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(sync, [sync]);
+  useEffect(load, [load]);
 
   // After a plan change, Clerk settles asynchronously: the `subscriptionItem.active`
   // webhook writes the new plan/status to our row, and the session token's plan

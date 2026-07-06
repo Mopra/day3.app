@@ -69,7 +69,37 @@ export async function putCampaignAsset(
   return sb.storage.from(CAMPAIGN_ASSETS_BUCKET).getPublicUrl(key).data.publicUrl;
 }
 
-// Consumer side (worker): the ObjectStore the import handler reads through.
+// Deletes every stored object under a single-level key prefix, paging until the
+// folder is empty. Both of our buckets store an account's objects directly under
+// an account-scoped folder (`imports/<accountId>/<id>.csv`,
+// `<accountId>/<id>.png`) with no deeper nesting, so a single-level sweep is
+// complete. Throws on a Supabase error — the caller (account purge) treats
+// storage teardown as best-effort and swallows it.
+async function removePrefix(sb: SupabaseClient, bucket: string, prefix: string): Promise<void> {
+  for (;;) {
+    const { data, error } = await sb.storage.from(bucket).list(prefix, { limit: 1000 });
+    if (error) throw new Error(`list ${bucket}/${prefix}: ${error.message}`);
+    if (!data || data.length === 0) return;
+    const paths = data.map((obj) => `${prefix}/${obj.name}`);
+    const { error: rmErr } = await sb.storage.from(bucket).remove(paths);
+    if (rmErr) throw new Error(`remove ${bucket}/${prefix}: ${rmErr.message}`);
+    // A short final page means the folder is drained; a full page may have more.
+    if (data.length < 1000) return;
+  }
+}
+
+// Erases every stored object an account owns — its uploaded import CSVs (private
+// `imports` bucket) and its campaign/form image assets (public `campaign-assets`
+// bucket). Both key objects under an account-scoped prefix, so this is two prefix
+// sweeps; no per-row enumeration needed. Best-effort account-purge hygiene.
+export async function purgeAccountStorage(accountId: string): Promise<void> {
+  const sb = getClient();
+  await removePrefix(sb, IMPORTS_BUCKET, `imports/${accountId}`);
+  await removePrefix(sb, CAMPAIGN_ASSETS_BUCKET, accountId);
+}
+
+// Consumer side (worker): the ObjectStore the import handler reads through, plus
+// the account-purge teardown hook.
 export function createSupabaseObjectStore(): ObjectStore {
   const sb = getClient();
   return {
@@ -78,5 +108,6 @@ export function createSupabaseObjectStore(): ObjectStore {
       if (error || !data) return null;
       return { text: () => data.text() };
     },
+    purgeAccount: (accountId: string) => purgeAccountStorage(accountId),
   };
 }

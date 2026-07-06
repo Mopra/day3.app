@@ -104,10 +104,12 @@ export default function PrivacyPage() {
       <h2>6. Data retention</h2>
       <p>
         We retain account and subscriber data for as long as your account is active. Email
-        engagement/event data is retained for <em>12 months</em>,
-        after which it is deleted or aggregated. When you delete a subscriber, or your
-        account, we delete the associated personal data within <em>30 days</em>, except
-        where we must retain it to meet legal obligations.
+        engagement/event data is retained for <em>12 months</em>, after which it is deleted
+        or aggregated. When you delete a subscriber, or your account, we permanently erase
+        the associated personal data — subscribers, campaigns, uploaded files, and account
+        records — promptly, and in any case within <em>30 days</em>. We retain only what we
+        must to meet legal obligations, including a record of email addresses that have
+        unsubscribed or reported a complaint, so that we continue to honor those opt-outs.
       </p>
 
       <h2>7. Your rights</h2>

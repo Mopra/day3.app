@@ -8,4 +8,9 @@ export interface StoredObject {
 
 export interface ObjectStore {
   get(key: string): Promise<StoredObject | null>;
+  // Best-effort deletion of every object an account owns (its uploaded import
+  // CSVs and image assets), used by account purge. Optional so in-memory/test
+  // stores can skip it; the concrete Supabase store sweeps the account-scoped key
+  // prefixes. Called after the DB erasure and must never be relied on for it.
+  purgeAccount?(accountId: string): Promise<void>;
 }

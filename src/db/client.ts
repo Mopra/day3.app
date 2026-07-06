@@ -29,9 +29,30 @@ export function createDb(connectionString: string | undefined = process.env.DATA
   // the heartbeat — size DB_POOL_MAX at/above WORKER_CONCURRENCY. (Stays well
   // under Postgres' default 100-connection cap even with a few worker replicas.)
   const workerPoolMax = Math.max(1, Number(process.env.DB_POOL_MAX ?? "20"));
+
+  // Safety net against a wedged tier. The web pool is tiny (max:1 per serverless
+  // instance), so one stuck query would block every later query on that instance
+  // — including the health probe's `select 1` — until the *caller's* timeout,
+  // which reads as an intermittent, self-healing outage. A server-side
+  // statement_timeout makes a runaway query fail fast (freeing the connection)
+  // instead of hanging. Applied to the web tier only: the long-lived worker runs
+  // legitimately long jobs (imports/sends), so it defaults to no cap. Both are
+  // env-tunable; 0 disables. connect_timeout bounds connection establishment so a
+  // pooler hiccup surfaces promptly rather than hanging ~30s (postgres.js default).
+  const statementTimeoutMs = Number(
+    process.env.DB_STATEMENT_TIMEOUT_MS ?? (txPooler ? "15000" : "0"),
+  );
+  const connectTimeoutS = Number(process.env.DB_CONNECT_TIMEOUT_S ?? "10");
   const client = postgres(connectionString, {
     prepare: txPooler ? false : undefined,
     max: txPooler ? 1 : workerPoolMax,
+    connect_timeout: connectTimeoutS,
+    // Release idle serverless connections back to the Supabase pooler so many
+    // warm-but-idle instances don't sit on pooler slots (worker keeps its pool).
+    ...(txPooler ? { idle_timeout: Number(process.env.DB_IDLE_TIMEOUT_S ?? "20") } : {}),
+    ...(statementTimeoutMs > 0
+      ? { connection: { statement_timeout: statementTimeoutMs } }
+      : {}),
   });
   return drizzle(client, { schema });
 }

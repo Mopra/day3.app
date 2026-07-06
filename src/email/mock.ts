@@ -12,4 +12,8 @@ export class MockEmailProvider implements EmailProvider {
     );
     return { provider: "mock", messageId, status: "sent" };
   }
+
+  async deleteIdentity(identity: string): Promise<void> {
+    console.log(`[mock-email] deleteIdentity identity=${identity}`);
+  }
 }

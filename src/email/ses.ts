@@ -1,4 +1,8 @@
-import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
+import {
+  SESv2Client,
+  SendEmailCommand,
+  DeleteEmailIdentityCommand,
+} from "@aws-sdk/client-sesv2";
 import type { EmailProvider, SendEmailInput, SendEmailResult } from "./provider";
 
 export type SesConfig = {
@@ -59,6 +63,20 @@ export class SesEmailProvider implements EmailProvider {
       return { provider: "ses", messageId: res.MessageId, status: "sent" };
     } catch (err) {
       return mapSesError(err);
+    }
+  }
+
+  // Deletes a verified domain identity on account purge. Idempotent: SES raises
+  // NotFoundException when the identity is already gone, which for a purge is the
+  // success path (a retry, or an identity that was never fully created), so we
+  // swallow it. Any other error propagates to the caller, which treats identity
+  // teardown as best-effort and only logs it.
+  async deleteIdentity(identity: string): Promise<void> {
+    try {
+      await this.client.send(new DeleteEmailIdentityCommand({ EmailIdentity: identity }));
+    } catch (err) {
+      if ((err as { name?: unknown })?.name === "NotFoundException") return;
+      throw err;
     }
   }
 }

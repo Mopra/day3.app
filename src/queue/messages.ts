@@ -23,6 +23,12 @@ export const queueMessageSchema = z.discriminatedUnion("type", [
   // worker re-reads the subscriber + form + account, signs the confirm token,
   // and sends via the account's verified sending domain.
   z.object({ type: z.literal("send_form_confirmation"), subscriberId: id, accountId: id }),
+  // Irreversible erasure of an account and everything it owns — enqueued when a
+  // Clerk org is deleted, or when the last member of an org deletes their user
+  // (see app/api/webhooks/clerk). ID-only; the worker re-reads and hard-deletes
+  // every account-scoped row (see services/account-purge.ts) plus best-effort
+  // external teardown. Idempotent: a retry after a partial run re-purges cleanly.
+  z.object({ type: z.literal("purge_account"), accountId: id }),
 ]);
 export type QueueMessage = z.infer<typeof queueMessageSchema>;
 

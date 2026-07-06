@@ -73,16 +73,18 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setLoadError(false);
-    // Sync resolves the local account, then account + onboarding are fetched in
-    // parallel (they both read the synced row — no need to serialize them).
-    api
-      .post<{ account: Account }>("/api/account/sync")
-      .then(async ({ account }) => {
-        setAccount(account);
-        const [res, ob] = await Promise.all([
-          api.get<{ account: Account; health: AccountHealth }>("/api/account"),
-          api.get<{ onboarding: OnboardingState }>("/api/account/onboarding"),
-        ]);
+    // Read the account + onboarding directly (in parallel). We deliberately do
+    // NOT POST /api/account/sync here: that made 2–3 Clerk API round-trips on
+    // every dashboard mount. Entitlements are kept fresh by the Clerk billing
+    // webhook (applySubscriptionEvent), and the account is created lazily on
+    // first sight inside requireAccount, so GET /api/account reflects truth
+    // without the per-load sync. A once-per-session sync (override + webhook-less
+    // fallback) runs off the critical path in <AppShell>.
+    Promise.all([
+      api.get<{ account: Account; health: AccountHealth }>("/api/account"),
+      api.get<{ onboarding: OnboardingState }>("/api/account/onboarding"),
+    ])
+      .then(([res, ob]) => {
         setAccount(res.account);
         setHealth(res.health);
         setOnboarding(ob.onboarding);

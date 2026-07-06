@@ -5,11 +5,14 @@ import { getDb } from "@/db/client";
 import { accounts } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 import { logger } from "@/lib/logger";
+import { getQueue } from "@/queue/producer";
 import {
   applySubscriptionEvent,
+  getAccountByClerkOrgId,
+  handleUserDeleted,
   reconcileMembershipByOrg,
   removeAllMemberships,
-  removeMembership,
+  removeMembershipAndMaybePurge,
   roleFromClerk,
 } from "@/services/accounts";
 import type { SubscriptionLifecycle } from "@/services/plans";
@@ -50,13 +53,28 @@ export async function POST(req: NextRequest) {
     case "organization.deleted": {
       const orgId = str(data.id);
       if (orgId) {
+        const account = await getAccountByClerkOrgId(db, orgId);
+        // Deactivate immediately — a fast, Redis-free DB write so the account is
+        // inert even if the purge enqueue below is delayed — then drop the local
+        // roster and hand the heavy, irreversible erasure to the worker. The
+        // purge job (purge_account) hard-deletes every account-scoped row plus
+        // best-effort external teardown; it's idempotent, so a redelivered webhook
+        // re-enqueuing it is harmless.
         await db
           .update(accounts)
           .set({ subscriptionStatus: "inactive", sendingEnabled: false, updatedAt: nowIso() })
           .where(eq(accounts.clerkOrgId, orgId));
-        // Drop the local members so a deactivated account has no dangling roster.
         await removeAllMemberships(db, orgId);
+        if (account) await getQueue().send({ type: "purge_account", accountId: account.id });
       }
+      break;
+    }
+    // A user deleted their own Clerk account. Strip their PII from every org they
+    // belonged to; any org left with no members is purged entirely (a memberless
+    // org is unreachable — see handleUserDeleted).
+    case "user.deleted": {
+      const userId = str(data.id);
+      if (userId) await handleUserDeleted(db, getQueue(), userId);
       break;
     }
     // Membership lifecycle: keep account_users in sync with the org roster and
@@ -82,7 +100,9 @@ export async function POST(req: NextRequest) {
       const orgId = str(rec(data.organization).id);
       const userId = str(rec(data.public_user_data).user_id);
       if (orgId && userId) {
-        await removeMembership(db, orgId, userId);
+        // Removing the org's last member purges the whole org (unreachable once
+        // memberless) — see removeMembershipAndMaybePurge.
+        await removeMembershipAndMaybePurge(db, getQueue(), orgId, userId);
       }
       break;
     }

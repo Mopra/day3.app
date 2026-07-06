@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import type { ClerkClient } from "@clerk/backend";
 import type { Db } from "../db/client";
 import { accountUsers, accounts, type Account } from "../db/schema";
+import type { JobQueue } from "../queue/messages";
 import { newId, nowIso } from "../lib/ids";
 import {
   FREE_PLAN,
@@ -70,6 +71,67 @@ export async function removeAllMemberships(db: Db, clerkOrgId: string): Promise<
   await db.delete(accountUsers).where(eq(accountUsers.accountId, account.id));
 }
 
+// Locally-recorded member count for an account. Used to detect a memberless org.
+export async function countAccountMembers(db: Db, accountId: string): Promise<number> {
+  const rows = await db
+    .select({ id: accountUsers.id })
+    .from(accountUsers)
+    .where(eq(accountUsers.accountId, accountId));
+  return rows.length;
+}
+
+// Removes one member and, if it was the org's last, enqueues a full account purge.
+// A memberless org is unreachable — no one can ever sign in to it again — so we
+// treat "last member gone" as a deletion and erase all its data. Shared by the
+// organizationMembership.deleted and user.deleted webhook paths; enqueuing is
+// idempotent (the purge handler no-ops on an already-gone account), so a duplicate
+// or racing event is harmless.
+export async function removeMembershipAndMaybePurge(
+  db: Db,
+  queue: JobQueue,
+  clerkOrgId: string,
+  clerkUserId: string,
+): Promise<void> {
+  const account = await getAccountByClerkOrgId(db, clerkOrgId);
+  if (!account) return;
+  await db
+    .delete(accountUsers)
+    .where(
+      and(eq(accountUsers.accountId, account.id), eq(accountUsers.clerkUserId, clerkUserId)),
+    );
+  if ((await countAccountMembers(db, account.id)) === 0) {
+    await queue.send({ type: "purge_account", accountId: account.id });
+  }
+}
+
+// A Clerk user deleted their own account (user.deleted webhook). Strips their PII
+// (their account_users rows) from every org they belonged to; any org left with no
+// members is purged entirely. We reconcile from our own roster rather than trusting
+// event ordering — Clerk also fires organizationMembership.deleted per org, but this
+// converges regardless of which arrives first (both call the same purge, and the
+// purge is idempotent).
+export async function handleUserDeleted(
+  db: Db,
+  queue: JobQueue,
+  clerkUserId: string,
+): Promise<void> {
+  const memberships = await db
+    .select({ accountId: accountUsers.accountId })
+    .from(accountUsers)
+    .where(eq(accountUsers.clerkUserId, clerkUserId));
+  const accountIds = [...new Set(memberships.map((m) => m.accountId))];
+  for (const accountId of accountIds) {
+    await db
+      .delete(accountUsers)
+      .where(
+        and(eq(accountUsers.accountId, accountId), eq(accountUsers.clerkUserId, clerkUserId)),
+      );
+    if ((await countAccountMembers(db, accountId)) === 0) {
+      await queue.send({ type: "purge_account", accountId });
+    }
+  }
+}
+
 // Reconciles a membership from a webhook payload, resolving the account by org.
 // A missing account is fine: it is created lazily on first dashboard load and
 // will reconcile the member then.
@@ -90,6 +152,10 @@ export async function reconcileMembershipByOrg(
 type AuthLike = {
   userId: string | null;
   orgId?: string | null;
+  // The active session's role for the active org (Clerk's `auth().orgRole`, e.g.
+  // "org:admin"). Read from the session JWT — no Clerk API round-trip — so the
+  // per-member role reconcile below doesn't need getOrganizationMembershipList.
+  orgRole?: string | null;
   has?: (params: { plan: string }) => boolean;
 };
 
@@ -183,19 +249,19 @@ export async function syncCurrentOrganization(
 
   // Record the member locally, reconciling email and the org role on every sync
   // (upsert) so a role change in Clerk is reflected and a concurrent first load
-  // does not throw on the unique (account, user) index.
+  // does not throw on the unique (account, user) index. The role comes from the
+  // session claim (auth.orgRole) rather than a getOrganizationMembershipList API
+  // call — the active session already carries the current user's role for the
+  // active org. Role changes for *other* members are reconciled by the
+  // organizationMembership.* webhook.
   const user = await clerk.users.getUser(auth.userId);
   const email =
     user.emailAddresses.find((e) => e.id === user.primaryEmailAddressId)?.emailAddress ?? "";
-  const membership = await clerk.organizations
-    .getOrganizationMembershipList({ organizationId: auth.orgId, userId: [auth.userId], limit: 1 })
-    .then((res) => res.data[0])
-    .catch(() => undefined);
   await reconcileMembership(db, {
     accountId: account.id,
     clerkUserId: auth.userId,
     email,
-    role: roleFromClerk(membership?.role),
+    role: roleFromClerk(auth.orgRole),
   });
 
   return account;

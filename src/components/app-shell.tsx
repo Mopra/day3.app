@@ -135,24 +135,56 @@ function useReloadOnOrgChange() {
   }, [isLoaded, orgId]);
 }
 
+// Session-scoped caches, module-level so they survive component remounts and
+// client-side navigations within the same page-session. Keyed by orgId; a real
+// org switch does a full window reload (useReloadOnOrgChange), which resets them.
+//   - meCache: /api/account/me runs a Clerk getUser server-side; caching it means
+//     that round-trip happens once per session instead of on every navigation.
+//   - sessionSynced: gates the once-per-session /api/account/sync fallback (and
+//     defuses React StrictMode's double-effect in dev).
+let meCache: { orgId: string; promise: Promise<{ isAdmin: boolean }> } | null = null;
+const sessionSynced = new Set<string>();
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const api = useApi();
   const pathname = usePathname();
+  const { orgId } = useAuth();
   const [isAdmin, setIsAdmin] = useState(false);
   const [plan, setPlan] = useState<string | null>(null);
   useReloadOnOrgChange();
 
   useEffect(() => {
-    api
-      .get<{ isAdmin: boolean }>("/api/account/me")
-      .then((me) => setIsAdmin(me.isAdmin))
-      .catch(() => setIsAdmin(false));
+    if (!orgId) return;
+    // isAdmin (ADMIN_EMAILS membership) is stable within a session — cache the
+    // Clerk getUser behind /api/account/me so it isn't repeated per navigation.
+    if (!meCache || meCache.orgId !== orgId) {
+      meCache = {
+        orgId,
+        promise: api
+          .get<{ isAdmin: boolean }>("/api/account/me")
+          .catch(() => ({ isAdmin: false })),
+      };
+    }
+    void meCache.promise.then((me) => setIsAdmin(!!me.isAdmin));
+
     // Plan pill — orients the user on every screen (Free reads as set-up mode).
+    // A plain DB read (no Clerk call), fetched fresh each navigation so a plan
+    // change on the billing page shows here without a reload.
     api
       .get<{ account: { plan: string } }>("/api/account")
       .then((res) => setPlan(res.account.plan))
       .catch(() => setPlan(null));
-  }, [api]);
+
+    // Once per session, off the critical path: refresh entitlements from the
+    // session billing claims and pick up a tester publicMetadata override /
+    // lazily seed the account where the Clerk webhook isn't delivered. This is
+    // the ONLY place the (Clerk-API-heavy) sync still runs — pages read the
+    // webhook-maintained row via GET /api/account instead.
+    if (!sessionSynced.has(orgId)) {
+      sessionSynced.add(orgId);
+      void api.post("/api/account/sync").catch(() => {});
+    }
+  }, [api, orgId]);
 
   const isActive = (to: string) => pathname === to || pathname.startsWith(`${to}/`);
 

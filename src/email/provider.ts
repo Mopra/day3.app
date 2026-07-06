@@ -33,4 +33,10 @@ export type SendEmailResult = {
 
 export interface EmailProvider {
   send(input: SendEmailInput): Promise<SendEmailResult>;
+  // Releases a verified sending identity (a domain) when its owning account is
+  // purged, so a deleted account stops holding identities in the provider.
+  // Optional — the mock provider no-ops. Implementations MUST be idempotent:
+  // deleting an already-absent identity is a success, not an error (the purge job
+  // may retry). Best-effort at the call site; failures never block the purge.
+  deleteIdentity?(identity: string): Promise<void>;
 }
