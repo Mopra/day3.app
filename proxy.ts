@@ -29,6 +29,8 @@ const isPublicRoute = createRouteMatcher([
   "/f(.*)",
   "/api/health",
   "/api/public(.*)",
+  // Public API (bearer keys, not Clerk sessions) — requireApiKey() is the gate.
+  "/api/v1(.*)",
   "/api/webhooks(.*)",
   // Open-tracking pixel — loaded by the recipient's mail client with no session.
   "/api/track(.*)",

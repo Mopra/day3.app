@@ -692,6 +692,55 @@ export const notifications = pgTable(
   (t) => [index("idx_notifications_account_created").on(t.accountId, t.createdAt)],
 );
 
+// Public-API bearer keys (Authorization: Bearer day3_live_…). Only the SHA-256
+// hash of the full key is stored; `keyPrefix` keeps the first characters for
+// display in the settings UI ("day3_live_x7Kj9m…"). Keys are created/revoked in
+// the web app by org admins only — never via the public API itself, so a leaked
+// key cannot mint quieter replacements. Revocation is a soft delete (revokedAt)
+// so the settings page can show history and `last used` stays auditable.
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    name: text("name").notNull(),
+    keyHash: text("key_hash").notNull(),
+    keyPrefix: text("key_prefix").notNull(),
+    createdBy: text("created_by").notNull(),
+    // Updated at most once per minute on use (write-amplification guard).
+    lastUsedAt: tstz("last_used_at"),
+    revokedAt: tstz("revoked_at"),
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_api_keys_key_hash").on(t.keyHash),
+    index("idx_api_keys_account_id").on(t.accountId),
+  ],
+);
+
+// Idempotency-Key replay store for the public API's POST endpoints. One row per
+// (account, endpoint, key); the original response is replayed on retry within
+// 24h, and a re-use with a different request body is rejected. Rows past the
+// 24h window are treated as absent and lazily deleted on the next lookup — no
+// cron dependency.
+export const idempotencyKeys = pgTable(
+  "idempotency_keys",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    endpoint: text("endpoint").notNull(),
+    key: text("key").notNull(),
+    requestHash: text("request_hash").notNull(),
+    responseStatus: integer("response_status").notNull(),
+    responseBody: text("response_body").notNull(),
+    createdAt: tstz("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_idempotency_account_endpoint_key").on(t.accountId, t.endpoint, t.key),
+  ],
+);
+
 export const jobLogs = pgTable("job_logs", {
   id: text("id").primaryKey(),
   jobType: text("job_type").notNull(),
@@ -723,3 +772,5 @@ export type EmailEvent = typeof emailEvents.$inferSelect;
 export type SuppressionEntry = typeof suppressionEntries.$inferSelect;
 export type RiskReview = typeof riskReviews.$inferSelect;
 export type JobLog = typeof jobLogs.$inferSelect;
+export type ApiKey = typeof apiKeys.$inferSelect;
+export type IdempotencyKey = typeof idempotencyKeys.$inferSelect;

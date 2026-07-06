@@ -1,6 +1,10 @@
 # Day3 Public API — v1 spec (draft)
 
-Status: **draft for review — nothing here is built yet.**
+Status: **implemented** (2026-07-06). Routes live under `app/api/v1/**`, the
+shared layer under `src/api/v1/`, key management at Settings → API keys. Tests:
+`test/api-v1.test.ts`. Known deviations from the draft: contact `created_at`
+backdating (open question 3) is not implemented; suppression GET lists only the
+account's own entries (the single-email check also consults global entries).
 Scope: Audiences and everything inside them (contacts, fields, segments, topics).
 Goal: make migrating an audience from Resend / Mailchimp trivially easy, and give
 developers a Resend-grade DX with the migration gaps fixed (bulk upsert,

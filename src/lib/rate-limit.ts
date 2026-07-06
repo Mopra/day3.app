@@ -68,6 +68,10 @@ const DEFAULTS: Record<string, RateLimitRule> = {
   // In-app Help widget → support inbox (real SES send). Bounds accidental
   // double-submits and abuse; plenty for a genuine help request.
   support: { limit: 5, windowMs: 60_000 },
+  // Public API (bearer-key) requests, keyed by account. ~10 rps sustained;
+  // batch endpoints count as one request, which is what makes bulk migration
+  // cheap against this limit.
+  public_api: { limit: 600, windowMs: 60_000 },
 };
 
 function parseRule(name: string): RateLimitRule {
@@ -93,6 +97,10 @@ export type RateLimitResult = {
   allowed: boolean;
   /** Seconds the caller should wait before retrying (0 when allowed). */
   retryAfterSeconds: number;
+  /** The rule's window ceiling (for RateLimit-Limit response headers). */
+  limit: number;
+  /** Requests left in the current window (0 when denied or failing open). */
+  remaining: number;
 };
 
 // Hard cap on how long the limiter will wait for Redis before giving up and
@@ -151,7 +159,12 @@ export async function checkRateLimit(
       await withTimeout(store.pexpire(redisKey, rule.windowMs));
     }
     if (count <= rule.limit) {
-      return { allowed: true, retryAfterSeconds: 0 };
+      return {
+        allowed: true,
+        retryAfterSeconds: 0,
+        limit: rule.limit,
+        remaining: rule.limit - count,
+      };
     }
     let ttl = await withTimeout(store.pttl(redisKey));
     // pttl: -1 = no expiry set (lost the EXPIRE race), -2 = key gone.
@@ -159,12 +172,17 @@ export async function checkRateLimit(
       await withTimeout(store.pexpire(redisKey, rule.windowMs));
       ttl = rule.windowMs;
     }
-    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(ttl / 1000)) };
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(1, Math.ceil(ttl / 1000)),
+      limit: rule.limit,
+      remaining: 0,
+    };
   } catch (err) {
     // Fail open: a limiter outage (unreachable, or hung past the timeout) must
     // not take down the endpoint, but it must be visible.
     console.error(`[rate-limit] store unreachable for ${redisKey}; failing open`, err);
-    return { allowed: true, retryAfterSeconds: 0 };
+    return { allowed: true, retryAfterSeconds: 0, limit: rule.limit, remaining: 0 };
   }
 }
 

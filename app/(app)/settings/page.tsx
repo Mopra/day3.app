@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { OrbitLoader } from "@/components/ui/orbit-loader";
+import { ApiKeysSection } from "@/components/api-keys-section";
 import { useApi } from "@/lib/api";
 import type { Account, AccountHealth } from "@/lib/types";
 
@@ -64,6 +65,8 @@ export default function SettingsPage() {
           Save
         </Button>
       </section>
+
+      <ApiKeysSection />
 
       <section className="space-y-4">
         <h2 className="text-base font-medium">Organization</h2>

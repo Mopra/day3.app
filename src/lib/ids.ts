@@ -21,7 +21,9 @@ export type IdPrefix =
   | "rsk"
   | "job"
   | "ntf"
-  | "dnsint";
+  | "dnsint"
+  | "key"
+  | "idem";
 
 export function newId(prefix: IdPrefix): string {
   const bytes = new Uint8Array(20);

@@ -522,7 +522,36 @@ link to its results), and **signups turned away at the free-plan subscriber cap*
 (throttled to once a day, with an upgrade link). The service fails open — a
 notification never blocks the flow that triggered it.
 
-### 6.14 Getting around
+### 6.14 Public API (v1) — audiences over HTTPS
+
+A REST API at **`/api/v1`** exposes everything inside Audiences — audiences,
+contacts, custom fields, segments, topics, and the suppression list — so teams can
+manage their lists from code and, above all, **migrate from another provider**
+(Resend, Mailchimp) with a short script. Full reference spec: `docs/api-v1-spec.md`.
+
+- **Auth:** bearer API keys (`day3_live_…`), created and revoked on **Settings →
+  API keys** by org admins. The full key is shown once at creation; only its
+  SHA-256 hash is stored. Keys cannot manage keys (no key endpoints in the public
+  API). Every key belongs to one organization and every request is scoped to it.
+- **Migration-first design:**
+  - **Batch endpoint** — up to 1,000 contacts per call with per-row results,
+    counting as a single rate-limit request.
+  - **Upsert + address-by-email** — contacts are addressable by id *or* email;
+    `?upsert=true` merges instead of conflicting.
+  - **Bring your opt-outs** — contacts can be created with
+    `status: "unsubscribed"`, and the account's **suppression list can be
+    imported** (`POST /v1/suppressions`, explicit reason required, add-only via
+    API; un-suppression stays a deliberate act in the app).
+  - **Custom fields** — free-form `attributes` on contacts auto-register in the
+    audience's field registry, same as CSV import.
+- **Conventions:** JSON + snake_case, cursor pagination, stable machine-readable
+  error codes in one envelope, `Idempotency-Key` replay on POSTs, per-account rate
+  limit (~10 req/s) with standard `RateLimit-*` headers.
+- **Plan rules apply identically:** the free tier's 500-subscriber cap gates API
+  writes too (batches that would cross it are rejected whole, never partially
+  applied).
+
+### 6.15 Getting around
 - A **command palette** (⌘K / Ctrl-K) jumps to any page or the common create actions
   from anywhere.
 - A **plan pill** in the sidebar shows the current tier on every screen; on the free

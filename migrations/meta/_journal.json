@@ -155,6 +155,13 @@
       "when": 1783247933949,
       "tag": "0021_last_susan_delgado",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1783373609640,
+      "tag": "0022_kind_tusk",
+      "breakpoints": true
     }
   ]
 }
