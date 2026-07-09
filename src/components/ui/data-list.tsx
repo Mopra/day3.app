@@ -286,7 +286,11 @@ export function RowActions({
       >
         <MoreHorizontal className="size-4" />
       </MenuTrigger>
-      <MenuContent>{children}</MenuContent>
+      {/* MenuContent portals to <body>, but React synthetic events bubble along
+          the React tree — where this menu is still a child of the navigable row.
+          Without this, a menu-item click (Delete, …) also fires the row's
+          click-to-navigate and we'd navigate instead of running the action. */}
+      <MenuContent onClick={(e) => e.stopPropagation()}>{children}</MenuContent>
     </Menu>
   );
 }
