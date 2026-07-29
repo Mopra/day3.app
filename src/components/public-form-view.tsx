@@ -459,8 +459,10 @@ export function PublicFormView({ form, companyName, state, reason, embed = false
         <BannerImage design={design} />
         {content}
         <p style={{ margin: "20px 0 0", fontSize: 11, letterSpacing: "0.01em", color: "#b4b4b9", textAlign: "center" }}>
+          {/* Marketing site (apex), not the app host — this link is shown to the
+              form's visitors, who are prospects, not signed-in users. */}
           <a
-            href="https://go.day3.app"
+            href="https://day3.app"
             target="_blank"
             rel="noopener noreferrer"
             className="d3f-powered"
