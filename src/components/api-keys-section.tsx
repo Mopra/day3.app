@@ -36,10 +36,14 @@ function formatDate(iso: string | null): string {
   });
 }
 
-// Settings → API keys: mint and revoke bearer keys for the public API
+// The key list on /api-keys: mint and revoke bearer keys for the public API
 // (/api/v1). The full key is shown exactly once at creation — only its hash is
 // stored server-side. Org-admin only (the API returns 403 for members).
-export function ApiKeysSection() {
+//
+// `onKeyCreated` hands the fresh key up to the page so the quickstart below can
+// prefill its `export DAY3_API_KEY=…` line while it is still in memory. It is
+// never persisted anywhere and is gone on reload.
+export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) => void } = {}) {
   const api = useApi();
   const [keys, setKeys] = useState<ApiKeyRow[] | null>(null);
   const [adminOnly, setAdminOnly] = useState(false);
@@ -73,11 +77,10 @@ export function ApiKeysSection() {
     <section className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-base font-medium">API keys</h2>
+          <h2 className="text-base font-medium">Your keys</h2>
           <p className="text-sm text-muted-foreground">
-            Authenticate the public API (<code className="text-xs">/api/v1</code>) — manage
-            audiences, contacts, segments and topics from your own code, or migrate from another
-            provider.
+            A key carries full access to this organization&apos;s audiences. Give each place that
+            uses one its own key, so you can revoke it without breaking the others.
           </p>
         </div>
         {!adminOnly && (
@@ -94,7 +97,11 @@ export function ApiKeysSection() {
       ) : keys === null ? (
         <OrbitLoader size={20} />
       ) : activeKeys.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No API keys yet.</p>
+        <div className="rounded-md border border-dashed px-4 py-6 text-center">
+          <p className="text-sm text-muted-foreground">
+            No keys yet. Create one to start using the API — it takes a few seconds.
+          </p>
+        </div>
       ) : (
         <div className="divide-y rounded-md border">
           {activeKeys.map((k) => (
@@ -194,6 +201,7 @@ export function ApiKeysSection() {
                         name: name.trim(),
                       });
                       setFreshKey(res.key);
+                      onKeyCreated?.(res.key);
                       void reload();
                     } catch (err) {
                       toast.error(err instanceof Error ? err.message : "Failed to create key");

@@ -1,8 +1,18 @@
 # Day3 Public API — v1 spec (draft)
 
 Status: **implemented** (2026-07-06). Routes live under `app/api/v1/**`, the
-shared layer under `src/api/v1/`, key management at Settings → API keys. Tests:
-`test/api-v1.test.ts`. Known deviations from the draft: contact `created_at`
+shared layer under `src/api/v1/`, key management and the user-facing docs on the
+**API keys** page (`app/(app)/api-keys/`, moved out of Settings 2026-07-29 —
+see §4). Tests: `test/api-v1.test.ts`, `test/api-docs.test.ts`.
+**Fixed 2026-07-29:** every timestamp was going out in Postgres' own text
+rendering (`2026-07-29 11:37:42.401+01` — space separator, short offset, server
+session timezone) rather than the ISO-8601 UTC promised in §1. `timestamptz`
+columns are read in Drizzle's `mode: "string"`, so rows carry Postgres'
+formatting straight through. Normalized in `src/api/v1/serialize.ts` (the
+row → public-shape boundary); pagination cursors keep the raw column value.
+Regression-pinned in `test/api-migration-flow.test.ts`.
+
+Known deviations from the draft: contact `created_at`
 backdating (open question 3) is not implemented; suppression GET lists only the
 account's own entries (the single-email check also consults global entries).
 Scope: Audiences and everything inside them (contacts, fields, segments, topics).
@@ -53,9 +63,9 @@ Authorization: Bearer day3_live_x7Kj9mP2...
   once/minute to avoid write amplification), `revoked_at`, `created_at`.
 - **Scopes**: v1 ships a single implicit scope (full audience access). The
   column can be added later; the create endpoint takes no `scopes` param yet.
-- **Management**: keys are created/revoked in the web app (Settings → API keys),
-  admin-role only. No key-management endpoints in the public API itself (a key
-  must not be able to mint keys).
+- **Management**: keys are created/revoked in the web app on the **API keys**
+  page, admin-role only. No key-management endpoints in the public API itself (a
+  key must not be able to mint keys).
 - `test` keys: reserved in the format from day one, not implemented in v1
   (no sandbox mode yet). Rejected with a clear error if used.
 
@@ -493,15 +503,43 @@ suppression export — silently makes the whole audience unmailable). Guardrails
   substantial new service code.
 - Tests: vitest + pglite as usual; key auth gets its own suite (hashing,
   revocation, cross-account 404s).
-- Docs site with runnable curl examples ships with the endpoints — for a
-  migration-focused API the docs *are* the product. Include a "Migrate from
-  Resend" and "Migrate from Mailchimp" guide, each a complete ~30-line script.
+- ~~Docs site~~ — **shipped as the API keys page instead** (2026-07-29). For a
+  migration-focused API the docs *are* the product, but a static docs site is the
+  wrong shape: the assets people need are account-specific. `app/(app)/api-keys/`
+  puts them directly under the key list, built by `src/lib/api-docs.ts` and
+  filled in with the caller's real audience id and base URL:
+  - quickstart (base URL → `export DAY3_API_KEY=…`, prefilled with the key just
+    minted, held in memory only → verification request),
+  - **AI-assistant prompts** — *integrate*, *migrate from another provider*,
+    *keep my users in sync* — each with the complete reference appended, plus the
+    reference alone as Markdown for a repo's `AGENTS.md`/`CLAUDE.md`. This
+    replaces the planned per-provider migration guides: one prompt covers every
+    source, because the assistant reads the user's actual export.
+    **Prompts never embed a live key** — they instruct the assistant to read
+    `DAY3_API_KEY` from the environment, since prompts get pasted into
+    third-party chat tools.
+  - cURL/JS/Python snippets for the five common tasks, and an endpoint map.
+  - a **subscriber-cap warning** on capped plans, from
+    `GET /api/account/subscriber-limit` (its own endpoint, not a field on
+    `/api/account` — the app shell fetches that on every navigation and this
+    needs a `count(*)`). The cap rejects an oversized import *whole* on the
+    first batch, so the page states the exact headroom before anything is
+    copied, and the same figure goes into the prompts' ground rules so the
+    assistant counts source rows up front instead of reacting to a 403.
+  `test/api-docs.test.ts` guards the two invariants: no snippet may carry a live
+  key, and every `route.ts` under `app/api/v1/**` must appear in the reference —
+  so a new endpoint can't ship undocumented.
+  `test/subscriber-limit-route.test.ts` pins the headroom figure to what the
+  write path enforces (all rows, every status, whole account) — a warning that
+  disagreed with enforcement would be worse than none.
 - `PRODUCT.md` gets a Public API section in the same PR that ships this.
 
 ## 5. Open questions
 
-1. **Key management UI placement** — Settings page vs. a dedicated Developers
-   page (which would also house future webhooks + docs links)?
+1. ~~**Key management UI placement**~~ — **resolved: a dedicated page**
+   (2026-07-29). `/api-keys`, its own sidebar item below Billing. Settings keeps
+   a one-line pointer. It outgrew a settings section the moment the docs moved
+   in with it, and it's where webhooks will land when they ship.
 2. ~~**Suppression writes**~~ — **resolved: allowed with guardrails** (required
    explicit `reason`, add-only via API with un-suppression reserved to the app
    UI, before/after counts in the response, `source: "api"` tagging for batch
@@ -509,9 +547,14 @@ suppression export — silently makes the whole audience unmailable). Guardrails
 3. **Historical timestamps** — accept `created_at` on contact create so a
    migrated list keeps original signup dates? Useful (age-based segments),
    slightly weird (API writes history). Leaning yes, capped to past dates.
+   Still open. Note the current behaviour is the bad kind of "no": `created_at`
+   in a payload is **silently stripped** by the Zod schema rather than
+   rejected, so a migration script that tries looks like it worked. The docs
+   now say so explicitly (`src/lib/api-docs.ts`); if this stays unimplemented,
+   consider rejecting the field outright instead.
 4. **Rate-limit tiering** — flat 10 rps for all plans, or scale with plan?
    Flat is simpler and fine until proven otherwise.
 
 ---
 
-*Last updated: 2026-07-06 · Author: draft by Claude for Morten's review*
+*Last updated: 2026-07-29 · Author: draft by Claude for Morten's review*

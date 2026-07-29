@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { OrganizationProfile } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { OrbitLoader } from "@/components/ui/orbit-loader";
-import { ApiKeysSection } from "@/components/api-keys-section";
 import { useApi } from "@/lib/api";
 import type { Account, AccountHealth } from "@/lib/types";
 
@@ -66,7 +66,15 @@ export default function SettingsPage() {
         </Button>
       </section>
 
-      <ApiKeysSection />
+      {/* API keys moved to their own page — they come with the docs that make
+          them usable, which is more than a settings section can carry. */}
+      <section className="space-y-2">
+        <h2 className="text-base font-medium">API keys</h2>
+        <p className="text-sm text-muted-foreground">
+          Keys for the public API now live on their own page, next to the setup guide and code
+          examples. <Link href="/api-keys" className="underline underline-offset-4">Go to API keys</Link>.
+        </p>
+      </section>
 
       <section className="space-y-4">
         <h2 className="text-base font-medium">Organization</h2>

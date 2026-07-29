@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-07-06**.
+> Last verified against the codebase: **2026-07-29**.
 
 ---
 
@@ -34,7 +34,8 @@ become a marketing suite.
 - **Free to build, paid to send.** A free account can set up domains, audiences,
   senders and draft campaigns (up to **500 subscribers**), but **cannot send** —
   sending is what a paid plan unlocks. Paid tiers differ only by monthly email
-  allowance, with the **AI writing assistant** included on the **10k tier and up**.
+  allowance and by the size of their **AI writing assistant** allowance — every
+  paid tier includes the assistant.
 - **Deliverability and compliance are built in, not add-ons:** verified sending
   domains, double opt-in, one-click unsubscribe, automatic bounce/complaint
   suppression, and account auto-pause on bad reputation.
@@ -58,18 +59,34 @@ HubSpot, ConvertKit, etc.
 Billing runs through **Clerk Billing** (Stripe-backed) and is scoped to the
 **organization** (the tenant), not individual users. **Day3 sells sending
 bandwidth:** a paid plan is a monthly email allowance at a price. The free tier is
-set-up-only (no sending); the only feature gated by tier is the **AI assistant**
-(10k and up).
+set-up-only (no sending). **Every paid tier includes the AI assistant**; tiers
+differ in how large an AI allowance they carry.
 
-| Plan | Clerk slug | Emails / month | Subscribers | AI assistant | Price |
-|------|-----------|----------------|-------------|--------------|-------|
-| **Free** | `free_org` | **0 — cannot send** | up to **500** | ❌ | **$0** |
-| **1k** | `1k_plan` | **1,000** | unlimited | ❌ | **$1 / mo** |
-| **5k** | `5k_plan` | **5,000** | unlimited | ❌ | **$3 / mo** |
-| **10k** | `10k_plan` | **10,000** | unlimited | ✅ | **$5 / mo** |
-| **25k** | `25k_plan` | **25,000** | unlimited | ✅ | **$12 / mo** |
-| **50k** | `50k_plan` | **50,000** | unlimited | ✅ | **$24 / mo** |
-| **100k** | `100k_plan` | **100,000** | unlimited | ✅ | **$49 / mo** |
+The AI allowance is denominated in **credits — 1 credit = $0.01 of metered AI
+spend** — and has two buckets: a visible 5-hour rolling window (the meter in the
+sidebar) and a silent monthly backstop. The monthly figure is the worst case an
+org can burn on that tier.
+
+| Plan | Clerk slug | Emails / month | Subscribers | AI assistant (window / month) | Price | $ / 1k |
+|------|-----------|----------------|-------------|-------------------------------|-------|--------|
+| **Free** | `free_org` | **0 — cannot send** | up to **500** | ❌ none | **$0** | — |
+| **1k** | `1k_plan` | **1,000** | unlimited | ✅ 10 / **20** credits | **$1 / mo** | $1.00 |
+| **5k** | `5k_plan` | **5,000** | unlimited | ✅ 15 / **50** credits | **$3 / mo** | $0.60 |
+| **10k** | `10k_plan` | **10,000** | unlimited | ✅ 20 / **100** credits | **$5 / mo** | $0.50 |
+| **25k** | `25k_plan` | **25,000** | unlimited | ✅ 30 / **200** credits | **$8 / mo** | $0.32 |
+| **50k** | `50k_plan` | **50,000** | unlimited | ✅ 30 / **200** credits | **$14 / mo** | $0.28 |
+| **100k** | `100k_plan` | **100,000** | unlimited | ✅ 30 / **200** credits | **$25 / mo** | $0.25 |
+| **250k** | `250k_plan` | **250,000** | unlimited | ✅ 30 / **200** credits | **$60 / mo** | $0.24 |
+| **500k** | `500k_plan` | **500,000** | unlimited | ✅ 30 / **200** credits | **$115 / mo** | $0.23 |
+| **1M** | `1m_plan` | **1,000,000** | unlimited | ✅ 30 / **200** credits | **$220 / mo** | $0.22 |
+
+**Why the ladder is shaped like this.** Delivery is AWS SES at **$0.10 / 1,000**
+and is perfectly linear, so there are no volume economies to pass on — the per-1k
+price flattens toward ~$0.22 rather than falling away. At the cheap end the
+binding cost is not email at all but **payment processing** (Stripe's ~2.9% +
+$0.30, plus Clerk's cut): a $1 charge surrenders roughly a third of its revenue to
+fees, which is why the small tiers sit above the $/1k line and why nothing below
+$1 is viable monthly. The ladder holds roughly **55–70% gross margin** throughout.
 
 Key pricing facts:
 
@@ -79,16 +96,19 @@ Key pricing facts:
 - **The free tier is capped at 500 subscribers** (spam/abuse protection — a
   set-up-only account can't hoard a giant list). Paid tiers are unlimited. The cap
   is enforced on every insert path: manual add, CSV import, and public signup forms.
-- **The AI writing assistant (draft / subjects / preview / rewrite) is gated to the
-  10k tier and up.** Free/1k/5k accounts see an "upgrade to unlock AI" prompt; the
-  AI routes return 403 for those tiers. AI usage on enabled tiers is still bounded
-  by the per-org AI credit budget (rolling window + monthly backstop).
+- **The AI writing assistant (draft / subjects / preview / rewrite) is included on
+  every paid tier**, sized by the plan's credit allowance above. Only free-tier
+  accounts see the "unlock AI" prompt; the AI routes return 403 for the free tier
+  only. When a tier's allowance is spent the assistant disables until the window
+  (or the month) resets — and a tier below the full allowance is told that
+  upgrading buys more. The assistant is the product's differentiator, so a paid
+  account always gets to use it rather than only reading about it.
 - **Each monthly allowance is a hard cap**, enforced atomically at send time so
   concurrent workers can never over-send. Sending hard-stops at the limit (no
   usage-based overages); the UI surfaces upgrade prompts as the cap approaches.
 - **Usage resets** at the start of each billing period (driven by the Clerk
   `subscriptionItem.active` webhook; a monthly cron sweep is the fallback).
-- **Above 100k/mo is by arrangement, not self-serve.** The billing page's plan
+- **Above 1M/mo is by arrangement, not self-serve.** The billing page's plan
   picker ends with a "Need more?" card whose "Contact us" opens an in-app form
   (relayed to the support inbox via `POST /api/support`, topic `volume`, with a
   mailto fallback); there is no checkout for a custom tier (operators set one up
@@ -108,6 +128,28 @@ Key pricing facts:
 > `app/(app)/billing/page.tsx`. The plan keys above ARE the Clerk Billing plan slugs
 > — they must match the plans configured in the Clerk dashboard. If you change
 > pricing, plan slugs, limits, or gating, update this table.
+
+**Slug-mismatch validation.** Because the plan keys *are* the Clerk slugs, a typo
+in the Clerk dashboard (`1M_plan` for `1m_plan`) is invisible to the type system
+and fails silently — the tier stops resolving and the org reads as Free. Three
+guards make that observable:
+
+- **Billing page:** on load it compares Clerk's configured plan slugs against the
+  catalog (`missingClerkPlanSlugs`) and logs an error naming every tier Clerk has
+  no plan for. Those tiers' CTAs are disabled with a hover explanation. This is
+  the proactive check — it fires for an operator before any customer is affected.
+- **Subscription webhook:** an unrecognized-but-present slug is treated as *no
+  usable slug* (`isUnknownPlanSlug`) — the account **keeps its recorded plan**
+  rather than being downgraded to Free — and logs an error. A dashboard typo must
+  never strip sending from a paying org.
+- **Session sync:** if an account recorded on a paid tier resolves to Free from
+  its session billing claims, that is logged as an error. `has()` is a predicate,
+  so a mis-spelled slug simply never matches and cannot be detected directly; this
+  catches the symptom. **Note:** the session sync still applies the downgrade —
+  it only reports it. Making the session refuse to downgrade a paid plan (leaving
+  that solely to the `subscriptionItem.ended` webhook, mirroring how it already
+  refuses to *re-activate* a past_due row) would close the hole rather than
+  observe it, and is worth doing.
 
 ---
 
@@ -297,9 +339,14 @@ themselves, and manual writing continues unaffected.
   (anchored to first use), generous enough for a normal composing session.
 - A **monthly ceiling** per org sits underneath as a silent backstop against
   runaway use; normal users never reach it.
-- There is currently **no way to buy more** — the allowance simply replenishes on
-  reset. Usage is measured from actual model tokens. All limits are
-  configuration-tunable.
+- **Both buckets are sized by the plan** (see §4) and climb with the price: 1k,
+  5k and 10k carry progressively larger starter allowances, and 25k and up carry
+  the full one. The free tier has no allowance at all and is held out of the AI
+  routes entirely.
+- There is currently **no way to buy more** within a tier — the allowance
+  replenishes on reset, and **upgrading is the way to get a bigger one** (the
+  "budget spent" message says so, unless the org is already on the full
+  allowance). Usage is measured from actual model tokens.
 
 ### 6.3 Audiences & subscribers
 - Create, **rename**, and **delete** named audiences. Deleting an audience removes it and
@@ -430,13 +477,14 @@ the same "Saving… / Saved" indicator as the campaign composer.
 ### 6.8 Billing & account settings
 - Billing page: current plan, subscription status, monthly usage, renewal date, and
   a plan picker built as a bandwidth slider over a focus carousel. The user slides
-  along the email-volume ladder ("how many emails per month?", free → 100k); the
+  along the email-volume ladder ("how many emails per month?", free → 1M); the
   matching tier card snaps into focus in a horizontally scrolling row of all tiers
   (scaled up, neighbors dimmed), and scrolling the row moves the slider in sync. Only
   the focused card exposes the billing CTA, which drives Clerk Billing directly —
   upgrades/switches open Clerk Checkout, "Downgrade to Free" opens Clerk's
-  subscription drawer to cancel (Clerk handles proration). Past the 100k tier the
-  carousel ends with a dashed "Need more?" card ("Custom" / 100,000+ emails/mo)
+  subscription drawer to cancel (Clerk handles proration). Past the top tier the
+  carousel ends with a dashed "Need more?" card ("Custom" / 1,000,000+ emails/mo;
+  the numbers derive from the catalog's top plan, not hardcoded copy)
   whose "Contact us" opens an in-app message form — like the Help widget, it
   relays to the support inbox with the user as Reply-To — custom volume is
   arranged manually, not self-serve.
@@ -529,10 +577,30 @@ contacts, custom fields, segments, topics, and the suppression list — so teams
 manage their lists from code and, above all, **migrate from another provider**
 (Resend, Mailchimp) with a short script. Full reference spec: `docs/api-v1-spec.md`.
 
-- **Auth:** bearer API keys (`day3_live_…`), created and revoked on **Settings →
-  API keys** by org admins. The full key is shown once at creation; only its
-  SHA-256 hash is stored. Keys cannot manage keys (no key endpoints in the public
-  API). Every key belongs to one organization and every request is scoped to it.
+- **Auth:** bearer API keys (`day3_live_…`), created and revoked on the **API keys**
+  page (its own item in the sidebar), org admins only. The full key is shown once at
+  creation; only its SHA-256 hash is stored. Keys cannot manage keys (no key
+  endpoints in the public API). Every key belongs to one organization and every
+  request is scoped to it.
+- **The API keys page is also the documentation.** There is no separate docs site;
+  everything needed to use the API sits below the key list, filled in with the
+  account's real audience id:
+  - a **quickstart** (base URL → `export DAY3_API_KEY=…`, prefilled with the key
+    just minted → a verification request),
+  - **copy-paste prompts for an AI coding assistant** — *integrate into my app*,
+    *migrate from another provider*, *keep my users in sync* — each carrying the
+    complete API reference inline, so an assistant writes working code without
+    looking anything up. The reference is also copyable on its own, as Markdown to
+    drop into a repo's `AGENTS.md` / `CLAUDE.md`. Prompts never contain a live key:
+    they instruct the assistant to read `DAY3_API_KEY` from the environment.
+  - **cURL / JavaScript / Python snippets** for the five things people actually do
+    (add a contact, import a list, unsubscribe someone, list contacts, import a
+    suppression list), and a map of every endpoint.
+  - **A subscriber-cap warning shown up front** on a capped (free) plan, stating
+    the exact remaining headroom. An import that would cross the cap is rejected
+    whole, on the first batch, so the page says so before anything is copied —
+    and the same figure is written into the AI prompts, instructing the assistant
+    to count the source rows and stop for an upgrade rather than half-migrate.
 - **Migration-first design:**
   - **Batch endpoint** — up to 1,000 contacts per call with per-row results,
     counting as a single rate-limit request.
@@ -642,7 +710,7 @@ Day3 is split into two cooperating tiers that share one Postgres database:
 
 ## 9. Key user flows
 
-1. **Onboarding:** sign up → create/join an organization → subscribe to the `tiny` plan
+1. **Onboarding:** sign up → create/join an organization → subscribe to a paid plan
    → verify a sending domain → create an audience → create a campaign → send.
 2. **Grow the list:** create a signup form → embed/share it → subscribers confirm
    (double opt-in) → they land in an audience.

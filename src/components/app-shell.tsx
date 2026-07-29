@@ -24,6 +24,7 @@ import { FormInputIcon } from "@/components/ui/animated-icons/form-input";
 import { AtSignIcon } from "@/components/ui/animated-icons/at-sign";
 import { EarthIcon } from "@/components/ui/animated-icons/earth";
 import { CreditCardIcon } from "@/components/ui/animated-icons/credit-card";
+import { KeyRoundIcon } from "@/components/ui/animated-icons/key-round";
 import { SettingsIcon } from "@/components/ui/animated-icons/settings";
 import { ShieldCheckIcon } from "@/components/ui/animated-icons/shield-check";
 
@@ -41,7 +42,7 @@ const NAV: NavEntry[] = [
   // is the campaign's counterpart, so it sits just below), then the rest follows
   // the real first-run setup flow (see OnboardingChecklist): what you send as
   // (Domains → Senders) → grow your audience (Forms) → measure (Metrics) →
-  // account (Billing, Settings).
+  // account (Billing, API keys, Settings).
   { to: "/dashboard", label: "Dashboard", icon: LayoutGridIcon },
   { to: "/campaigns", label: "Campaigns", icon: MailCheckIcon },
   { to: "/audiences", label: "Audiences", icon: UsersIcon },
@@ -51,6 +52,7 @@ const NAV: NavEntry[] = [
   { to: "/metrics", label: "Metrics", icon: ChartColumnIcon },
   { to: "/activity", label: "Activity", icon: ActivityIcon },
   { to: "/billing", label: "Billing", icon: CreditCardIcon },
+  { to: "/api-keys", label: "API keys", icon: KeyRoundIcon },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
@@ -206,6 +208,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 priority
               />
             </Link>
+            {/* Workspace switcher — top of the sidebar, directly under the mark
+                and above the nav: the org scopes everything below it, so it
+                reads as the context for the whole list. px-5 (20px) matches the
+                nav/Help/AI gutter; the switcher's own left padding is zeroed so
+                its avatar sits flush at that gutter rather than a few px right.
+                min-w-0 lets a long org name truncate (ellipsis) instead of
+                pushing the chevron out of the fixed-width sidebar. */}
+            <div className="min-w-0 px-5 pb-3">
+              <OrganizationSwitcher
+                hidePersonal
+                appearance={{
+                  elements: {
+                    organizationSwitcherTrigger: {
+                      paddingLeft: 0,
+                      maxWidth: "100%",
+                      minWidth: 0,
+                    },
+                    organizationPreview: { minWidth: 0 },
+                    organizationPreviewTextContainer: { minWidth: 0 },
+                    organizationPreviewMainIdentifier: {
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    },
+                  },
+                }}
+              />
+            </div>
             <nav className="flex flex-1 flex-col gap-1 px-2">
               {[...NAV, ...adminNav].map((item) => (
                 <NavItem key={item.to} {...item} active={isActive(item.to)} />
@@ -239,38 +269,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             )}
             <SidebarAiBudget />
-            {/* Workspace + account controls, bottom-left of the sidebar — the
-                conventional placement. px-5 (20px) matches the nav/Help/AI gutter;
-                the org switcher's own left padding is zeroed so its avatar sits
-                flush at that gutter rather than a few px to the right. */}
-            <div className="flex items-center justify-between gap-2 px-5 py-3 mb-5">
-              {/* min-w-0 lets the switcher shrink below its content width so a long
-                  org name truncates (ellipsis) instead of pushing the avatar out
-                  of the fixed-width sidebar. */}
-              <div className="min-w-0 flex-1">
-                <OrganizationSwitcher
-                  hidePersonal
-                  appearance={{
-                    elements: {
-                      organizationSwitcherTrigger: {
-                        paddingLeft: 0,
-                        maxWidth: "100%",
-                        minWidth: 0,
-                      },
-                      organizationPreview: { minWidth: 0 },
-                      organizationPreviewTextContainer: { minWidth: 0 },
-                      organizationPreviewMainIdentifier: {
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      },
-                    },
-                  }}
-                />
-              </div>
-              <div className="shrink-0">
-                <UserButton />
-              </div>
+            {/* Account control, bottom-left of the sidebar — the conventional
+                placement for the personal profile/sign-out menu. px-5 (20px)
+                matches the nav/Help/AI gutter, and the trigger's own padding is
+                zeroed so the avatar sits flush at that gutter. */}
+            <div className="flex items-center px-5 py-3 mb-5">
+              <UserButton
+                appearance={{ elements: { userButtonTrigger: { padding: 0 } } }}
+              />
             </div>
           </aside>
           <div className="flex min-w-0 flex-1 flex-col">

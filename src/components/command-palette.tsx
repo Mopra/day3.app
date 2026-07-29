@@ -6,6 +6,7 @@ import {
   Activity,
   BarChart3,
   Globe,
+  KeyRound,
   LayoutGrid,
   Mail,
   Plus,
@@ -43,6 +44,7 @@ const COMMANDS: Command[] = [
   { label: "Activity", icon: Activity, href: "/activity", keywords: "events log troubleshoot" },
   { label: "Dashboard", icon: LayoutGrid, href: "/dashboard", keywords: "home overview" },
   { label: "Billing", icon: BarChart3, href: "/billing", keywords: "plan upgrade subscription" },
+  { label: "API keys", icon: KeyRound, href: "/api-keys", keywords: "api rest developers integrate migrate import token bearer docs" },
   { label: "Settings", icon: Settings, href: "/settings", keywords: "address organization" },
 ];
 
