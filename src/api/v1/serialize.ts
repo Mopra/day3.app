@@ -13,6 +13,25 @@ import { safeParseSegmentFilter, type SegmentFilter } from "../../lib/segment-fi
 // Drizzle rows: every response field below is a deliberate contract. Clients
 // are told to ignore unknown fields, so additions here are non-breaking.
 
+// Timestamp columns are `timestamptz` read in Drizzle's `mode: "string"`, so a
+// row carries Postgres' own rendering — "2026-07-29 11:37:42.401+01": a space
+// separator, a short offset, and whatever timezone the server session happens
+// to be in. The documented contract is ISO-8601 UTC, and strict parsers
+// (Python's pre-3.11 fromisoformat, Go's time.RFC3339) reject the raw form, so
+// normalize here — the single boundary where rows become responses.
+//
+// Cursors deliberately keep the raw column value (see pagination.ts): they are
+// compared against the column, not handed to a client as a timestamp.
+function toIso(value: string | null): string | null {
+  if (!value) return value;
+  let parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    // "…T…+01" for engines stricter than V8 about the Date Time String Format.
+    parsed = new Date(value.replace(" ", "T").replace(/([+-]\d{2})$/, "$1:00"));
+  }
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
+}
+
 export function serializeAudience(
   a: Audience,
   contactCounts?: Record<string, number>,
@@ -29,8 +48,8 @@ export function serializeAudience(
           },
         }
       : {}),
-    created_at: a.createdAt,
-    updated_at: a.updatedAt,
+    created_at: toIso(a.createdAt),
+    updated_at: toIso(a.updatedAt),
   };
 }
 
@@ -48,9 +67,9 @@ export function serializeContact(
     status: s.status,
     source: s.source,
     topics: topics ?? null,
-    unsubscribed_at: s.unsubscribedAt,
-    created_at: s.createdAt,
-    updated_at: s.updatedAt,
+    unsubscribed_at: toIso(s.unsubscribedAt),
+    created_at: toIso(s.createdAt),
+    updated_at: toIso(s.updatedAt),
   };
 }
 
@@ -62,8 +81,8 @@ export function serializeField(f: AudienceField): Record<string, unknown> {
     label: f.label,
     type: f.type,
     fallback: f.fallback,
-    created_at: f.createdAt,
-    updated_at: f.updatedAt,
+    created_at: toIso(f.createdAt),
+    updated_at: toIso(f.updatedAt),
   };
 }
 
@@ -75,8 +94,8 @@ export function serializeSegment(s: Segment): Record<string, unknown> {
     // Stored filters are validated on write, so a parse failure here means a
     // corrupt row; surface it as null rather than guessing.
     filter: safeParseSegmentFilter(s.filterJson) as SegmentFilter | null,
-    created_at: s.createdAt,
-    updated_at: s.updatedAt,
+    created_at: toIso(s.createdAt),
+    updated_at: toIso(s.updatedAt),
   };
 }
 
@@ -87,8 +106,8 @@ export function serializeTopic(t: Topic): Record<string, unknown> {
     name: t.name,
     description: t.description,
     default_subscribed: t.defaultSubscribed,
-    created_at: t.createdAt,
-    updated_at: t.updatedAt,
+    created_at: toIso(t.createdAt),
+    updated_at: toIso(t.updatedAt),
   };
 }
 
@@ -118,6 +137,6 @@ export function serializeSuppression(e: SuppressionEntry): Record<string, unknow
     email: e.email,
     reason: REASON_TO_PUBLIC[e.reason] ?? e.reason,
     source: e.source,
-    created_at: e.createdAt,
+    created_at: toIso(e.createdAt),
   };
 }
