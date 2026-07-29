@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { resetMonthlyUsage } from "../src/queue/cron";
 import { applySubscriptionEvent } from "../src/services/accounts";
@@ -6,6 +6,10 @@ import { accounts } from "../src/db/schema";
 import { testDb, seedAccount } from "./helpers";
 
 const iso = (ms: number) => new Date(ms).toISOString();
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("resetMonthlyUsage (cron fallback)", () => {
   it("zeroes only the account whose period has elapsed", async () => {
@@ -235,5 +239,60 @@ describe("applySubscriptionEvent lifecycle (deterministic + idempotent)", () => 
     expect(row?.plan).toBe("free_org");
     expect(row?.monthlyEmailLimit).toBe(0);
     expect(row?.monthlyEmailSentCount).toBe(7);
+  });
+
+  // The plan keys ARE the Clerk slugs, so a dashboard typo arrives here as an
+  // unrecognized slug. Resolving it to the free tier would strip sending from an
+  // org that is paying us, with nothing reporting why — so it must be treated as
+  // "no usable slug" (keep what we have) and logged, never as a downgrade.
+  it("keeps the recorded plan when Clerk sends a slug the catalog doesn't know", async () => {
+    const db = await testDb();
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const acc = await seedAccount(db, {
+      clerkOrgId: "org_typo",
+      plan: "100k_plan",
+      subscriptionStatus: "active",
+      sendingEnabled: true,
+      monthlyEmailLimit: 100_000,
+      ...period,
+    });
+
+    await applySubscriptionEvent(db, {
+      clerkOrgId: "org_typo",
+      planSlug: "100K_plan", // wrong case in the Clerk dashboard
+      lifecycle: "active",
+      ...period,
+    });
+
+    const row = await db.query.accounts.findFirst({ where: eq(accounts.id, acc.id) });
+    expect(row?.plan).toBe("100k_plan");
+    expect(row?.monthlyEmailLimit).toBe(100_000);
+    expect(row?.sendingEnabled).toBe(true);
+    // And it is loud, because nothing else in the system would notice.
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining("100K_plan"));
+  });
+
+  // An unknown slug must not resurrect a plan on the way out, either.
+  it("still downgrades to free on ended, even with an unknown slug", async () => {
+    const db = await testDb();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const acc = await seedAccount(db, {
+      clerkOrgId: "org_typo_ended",
+      plan: "100k_plan",
+      subscriptionStatus: "active",
+      sendingEnabled: true,
+      ...period,
+    });
+
+    await applySubscriptionEvent(db, {
+      clerkOrgId: "org_typo_ended",
+      planSlug: "100K_plan",
+      lifecycle: "ended",
+      ...period,
+    });
+
+    const row = await db.query.accounts.findFirst({ where: eq(accounts.id, acc.id) });
+    expect(row?.plan).toBe("free_org");
+    expect(row?.sendingEnabled).toBe(false);
   });
 });

@@ -4,9 +4,10 @@ import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { emailProviderFromEnv } from "@/email/factory";
+import { TOP_PLAN, planMeta } from "@/lib/plans-catalog";
 
 // `topic` distinguishes the surfaces that relay through this endpoint: the
-// sidebar Help widget ("help") and the billing page's beyond-100k volume
+// sidebar Help widget ("help") and the billing page's above-the-top-tier volume
 // request ("volume"). It only changes the subject line the team sees.
 const SupportSchema = z.object({
   message: z.string().trim().min(1, "Message is required").max(5000),
@@ -61,7 +62,7 @@ export const POST = route(async (req) => {
     toEmail: SUPPORT_TO,
     subject:
       topic === "volume"
-        ? `High-volume request (100k+) — ${account.name}`
+        ? `High-volume request (${planMeta(TOP_PLAN).name}+) — ${account.name}`
         : `Help request — ${account.name}`,
     html,
     text,

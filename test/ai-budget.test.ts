@@ -7,6 +7,7 @@ import {
   recordAiUsage,
   type AiBudgetStore,
 } from "../src/lib/ai-budget";
+import { aiAllowanceForPlan, type AiAllowance } from "../src/lib/plans-catalog";
 import { HttpError } from "../src/api/http";
 
 // In-memory stand-in for the ioredis slice the budget uses. Implements just
@@ -50,16 +51,18 @@ class BrokenRedis implements AiBudgetStore {
   }
 }
 
-// Pin every knob so the math is exact regardless of the ambient env. Defaults:
-// input $3/Mtok, output $15/Mtok, 1 credit = $0.01.
+// Bucket SIZES come from the plan (see lib/plans-catalog), so the tests pass an
+// explicit allowance rather than pinning env. Only the window length and the
+// token prices are env-tunable, and those stay pinned so the math is exact.
 const ENV_KEYS = [
   "AI_BUDGET_WINDOW_HOURS",
-  "AI_BUDGET_WINDOW_CREDITS",
-  "AI_BUDGET_MONTHLY_CREDITS",
   "AI_PRICE_INPUT_PER_MTOK",
   "AI_PRICE_OUTPUT_PER_MTOK",
 ] as const;
 const saved: Record<string, string | undefined> = {};
+
+// The full (10k-and-up) allowance: $0.30 per window, $2.00 per month.
+const FULL: AiAllowance = { windowCredits: 30, monthlyCredits: 200 };
 
 // A fixed instant so the monthly key/reset are deterministic.
 const NOW = new Date("2026-06-15T12:00:00.000Z");
@@ -67,8 +70,6 @@ const NOW = new Date("2026-06-15T12:00:00.000Z");
 beforeEach(() => {
   for (const k of ENV_KEYS) saved[k] = process.env[k];
   process.env.AI_BUDGET_WINDOW_HOURS = "5";
-  process.env.AI_BUDGET_WINDOW_CREDITS = "30"; // $0.30 = 300_000 µ$
-  process.env.AI_BUDGET_MONTHLY_CREDITS = "200"; // $2.00 = 2_000_000 µ$
   process.env.AI_PRICE_INPUT_PER_MTOK = "3";
   process.env.AI_PRICE_OUTPUT_PER_MTOK = "15";
 });
@@ -102,7 +103,7 @@ describe("cost metering", () => {
 
 describe("readAiBudget", () => {
   it("reports a fresh account as unused and not exhausted", async () => {
-    const snap = await readAiBudget("acc_1", new FakeRedis(), NOW);
+    const snap = await readAiBudget("acc_1", FULL, new FakeRedis(), NOW);
     expect(snap.exhausted).toBe(false);
     expect(snap.percentUsed).toBe(0);
     expect(snap.limitCredits).toBe(30);
@@ -112,8 +113,8 @@ describe("readAiBudget", () => {
   it("tracks partial usage as a percentage of the window", async () => {
     const store = new FakeRedis();
     // $0.15 of a $0.30 window = 50%.
-    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 10_000 }, store, NOW);
-    const snap = await readAiBudget("acc_1", store, NOW);
+    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 10_000 }, FULL, store, NOW);
+    const snap = await readAiBudget("acc_1", FULL, store, NOW);
     expect(snap.percentUsed).toBe(50);
     expect(snap.exhausted).toBe(false);
   });
@@ -121,8 +122,8 @@ describe("readAiBudget", () => {
   it("marks the window exhausted once the budget is reached and reports a reset", async () => {
     const store = new FakeRedis();
     // 20_000 out * 15 = 300_000 µ$ = the full $0.30 window.
-    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 20_000 }, store, NOW);
-    const snap = await readAiBudget("acc_1", store, NOW);
+    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 20_000 }, FULL, store, NOW);
+    const snap = await readAiBudget("acc_1", FULL, store, NOW);
     expect(snap.exhausted).toBe(true);
     expect(snap.reason).toBe("window");
     expect(snap.percentUsed).toBe(100);
@@ -131,29 +132,50 @@ describe("readAiBudget", () => {
 
   it("isolates usage per account", async () => {
     const store = new FakeRedis();
-    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 20_000 }, store, NOW);
-    const other = await readAiBudget("acc_2", store, NOW);
+    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 20_000 }, FULL, store, NOW);
+    const other = await readAiBudget("acc_2", FULL, store, NOW);
     expect(other.exhausted).toBe(false);
     expect(other.percentUsed).toBe(0);
   });
 
   it("fails open (not exhausted) when the store is unreachable", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const snap = await readAiBudget("acc_1", new BrokenRedis(), NOW);
+    const snap = await readAiBudget("acc_1", FULL, new BrokenRedis(), NOW);
     expect(snap.exhausted).toBe(false);
     expect(errSpy).toHaveBeenCalled();
   });
 });
 
+describe("per-plan allowance", () => {
+  // The same spend that leaves a 10k-tier org with headroom exhausts a starter
+  // tier — the starter allowance is real, just smaller.
+  it("sizes the window from the plan, so a starter tier runs out sooner", async () => {
+    const starter = aiAllowanceForPlan("1k_plan");
+    const store = new FakeRedis();
+    // $0.12 of spend: inside the full $0.30 window, past the starter $0.10 one.
+    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 8_000 }, starter, store, NOW);
+
+    expect((await readAiBudget("acc_1", starter, store, NOW)).exhausted).toBe(true);
+    expect((await readAiBudget("acc_1", FULL, store, NOW)).exhausted).toBe(false);
+  });
+
+  it("gives the free tier a zero budget, so nothing is ever allowed", async () => {
+    const free = aiAllowanceForPlan("free_org");
+    const snap = await readAiBudget("acc_1", free, new FakeRedis(), NOW);
+    // A zero window budget can't be "exceeded" by the meter (0 > 0 is false), so
+    // the free tier is held out by planHasAI at the route, not by the budget.
+    expect(snap.limitCredits).toBe(0);
+  });
+});
+
 describe("monthly backstop", () => {
   it("blocks via the monthly ceiling even when the window has headroom", async () => {
-    // Make the window effectively unlimited so the month is the binding limit.
-    process.env.AI_BUDGET_WINDOW_CREDITS = "100000";
-    process.env.AI_BUDGET_MONTHLY_CREDITS = "1"; // $0.01 = 10_000 µ$
+    // Window effectively unlimited so the month is the binding limit.
+    const allowance: AiAllowance = { windowCredits: 100_000, monthlyCredits: 1 };
     const store = new FakeRedis();
     // 1000 out * 15 = 15_000 µ$ > the $0.01 monthly cap.
-    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 1000 }, store, NOW);
-    const snap = await readAiBudget("acc_1", store, NOW);
+    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 1000 }, allowance, store, NOW);
+    const snap = await readAiBudget("acc_1", allowance, store, NOW);
     expect(snap.exhausted).toBe(true);
     expect(snap.reason).toBe("month");
     // Resets at the next month boundary — well over an hour out.
@@ -161,11 +183,10 @@ describe("monthly backstop", () => {
   });
 
   it("does not record or enforce a monthly cap when disabled (0)", async () => {
-    process.env.AI_BUDGET_WINDOW_CREDITS = "100000";
-    process.env.AI_BUDGET_MONTHLY_CREDITS = "0";
+    const allowance: AiAllowance = { windowCredits: 100_000, monthlyCredits: 0 };
     const store = new FakeRedis();
-    await recordAiUsage("acc_1", { inputTokens: 1000, outputTokens: 1000 }, store, NOW);
-    const snap = await readAiBudget("acc_1", store, NOW);
+    await recordAiUsage("acc_1", { inputTokens: 1000, outputTokens: 1000 }, allowance, store, NOW);
+    const snap = await readAiBudget("acc_1", allowance, store, NOW);
     expect(snap.exhausted).toBe(false);
     // No monthly key was written.
     const monthKeys = [...store.vals.keys()].filter((k) => k.startsWith("aibudget:m:"));
@@ -176,9 +197,9 @@ describe("monthly backstop", () => {
 describe("recordAiUsage", () => {
   it("accumulates across calls and seeds the window TTL on first write", async () => {
     const store = new FakeRedis();
-    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 5000 }, store, NOW); // $0.075
-    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 5000 }, store, NOW); // $0.15 total
-    const snap = await readAiBudget("acc_1", store, NOW);
+    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 5000 }, FULL, store, NOW); // $0.075
+    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 5000 }, FULL, store, NOW); // $0.15 total
+    const snap = await readAiBudget("acc_1", FULL, store, NOW);
     expect(snap.percentUsed).toBe(50);
     // TTL was set to the 5h window (in ms).
     expect(store.ttls.get("aibudget:w:acc_1")).toBe(5 * 3_600_000);
@@ -186,14 +207,14 @@ describe("recordAiUsage", () => {
 
   it("is a no-op for zero-cost usage", async () => {
     const store = new FakeRedis();
-    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 0 }, store, NOW);
+    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 0 }, FULL, store, NOW);
     expect(store.vals.size).toBe(0);
   });
 
   it("never throws when the store is unreachable", async () => {
     const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await expect(
-      recordAiUsage("acc_1", { inputTokens: 100, outputTokens: 100 }, new BrokenRedis(), NOW),
+      recordAiUsage("acc_1", { inputTokens: 100, outputTokens: 100 }, FULL, new BrokenRedis(), NOW),
     ).resolves.toBeUndefined();
     expect(errSpy).toHaveBeenCalled();
   });
@@ -202,16 +223,16 @@ describe("recordAiUsage", () => {
 describe("enforceAiBudget", () => {
   it("is a no-op while there is headroom", async () => {
     const store = new FakeRedis();
-    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 5000 }, store, NOW);
-    await expect(enforceAiBudget("acc_1", store, NOW)).resolves.toBeUndefined();
+    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 5000 }, FULL, store, NOW);
+    await expect(enforceAiBudget("acc_1", FULL, store, NOW)).resolves.toBeUndefined();
   });
 
   it("throws HttpError(429) with a Retry-After header once the budget is spent", async () => {
     const store = new FakeRedis();
-    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 20_000 }, store, NOW);
+    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 20_000 }, FULL, store, NOW);
     let thrown: unknown;
     try {
-      await enforceAiBudget("acc_1", store, NOW);
+      await enforceAiBudget("acc_1", FULL, store, NOW);
     } catch (err) {
       thrown = err;
     }
@@ -219,5 +240,25 @@ describe("enforceAiBudget", () => {
     const httpErr = thrown as HttpError;
     expect(httpErr.status).toBe(429);
     expect(Number(httpErr.headers?.["Retry-After"])).toBeGreaterThan(0);
+  });
+
+  it("points a starter tier at an upgrade when its MONTHLY allowance is spent", async () => {
+    const starter = aiAllowanceForPlan("1k_plan");
+    const store = new FakeRedis();
+    // Blow past the starter monthly cap in one go.
+    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 200_000 }, starter, store, NOW);
+    await expect(enforceAiBudget("acc_1", starter, store, NOW)).rejects.toThrow(/upgrade your plan/i);
+  });
+
+  it("does not dangle an upgrade at a tier already on the full allowance", async () => {
+    const store = new FakeRedis();
+    await recordAiUsage("acc_1", { inputTokens: 0, outputTokens: 200_000 }, FULL, store, NOW);
+    let thrown: unknown;
+    try {
+      await enforceAiBudget("acc_1", FULL, store, NOW);
+    } catch (err) {
+      thrown = err;
+    }
+    expect((thrown as HttpError).message).toMatch(/resets at the start of next month\.$/);
   });
 });

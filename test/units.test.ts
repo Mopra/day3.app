@@ -14,17 +14,25 @@ import {
   sanitizeHtml,
 } from "../src/services/render";
 import {
+  MAX_AI_MONTHLY_CREDITS,
+  PLANS,
+  PLAN_ORDER,
+  TOP_PLAN,
+  aiAllowanceForPlan,
   checkSendEligibility,
   entitlementsFor,
   firstAiPlan,
   firstSendingPlan,
+  isUnknownPlanSlug,
   maxSubscribersForPlan,
+  missingClerkPlanSlugs,
   monthlyEmailLimitForPlan,
   nextPlanUp,
   planCanSend,
   planFromEntitlements,
   planFromSlug,
   planHasAI,
+  planMeta,
   recommendedPlanFor,
   subscriptionStatusForLifecycle,
 } from "../src/services/plans";
@@ -590,6 +598,7 @@ describe("plan slug -> entitlement mapping", () => {
     expect(planFromEntitlements(held(["org:5k_plan"]))).toBe("5k_plan");
     // Overlapping grants resolve to the most generous tier.
     expect(planFromEntitlements(held(["org:5k_plan", "org:50k_plan"]))).toBe("50k_plan");
+    expect(planFromEntitlements(held(["org:1m_plan", "org:10k_plan"]))).toBe("1m_plan");
   });
 
   it("centralizes the per-plan monthly email limit (free cannot send)", () => {
@@ -598,6 +607,75 @@ describe("plan slug -> entitlement mapping", () => {
     expect(monthlyEmailLimitForPlan("5k_plan")).toBe(5_000);
     expect(monthlyEmailLimitForPlan("10k_plan")).toBe(10_000);
     expect(monthlyEmailLimitForPlan("100k_plan")).toBe(100_000);
+    expect(monthlyEmailLimitForPlan("250k_plan")).toBe(250_000);
+    expect(monthlyEmailLimitForPlan("500k_plan")).toBe(500_000);
+    expect(monthlyEmailLimitForPlan("1m_plan")).toBe(1_000_000);
+  });
+
+  // The ladder drives recommendedPlanFor, nextPlanUp and the "highest tier wins"
+  // resolution in planFromEntitlements — all of which silently misbehave if a tier
+  // is added out of order or a price/limit is fat-fingered.
+  it("keeps the ladder strictly ascending in both allowance and price", () => {
+    const paid = PLAN_ORDER.filter((p) => p !== "free_org");
+    for (let i = 1; i < paid.length; i++) {
+      const prev = planMeta(paid[i - 1]);
+      const curr = planMeta(paid[i]);
+      expect(curr.monthlyEmailLimit).toBeGreaterThan(prev.monthlyEmailLimit);
+      expect(curr.monthlyPriceUsd).toBeGreaterThan(prev.monthlyPriceUsd);
+    }
+    // Every catalog entry is on the ladder, and vice versa.
+    expect([...PLAN_ORDER].sort()).toEqual(Object.keys(PLANS).sort());
+    expect(TOP_PLAN).toBe(PLAN_ORDER[PLAN_ORDER.length - 1]);
+  });
+
+  // Cost floor is SES at $0.10/1k, so a tier priced under that loses money on
+  // every send. Cheap by design, never below cost.
+  it("prices every paid tier above raw delivery cost", () => {
+    for (const plan of PLAN_ORDER.filter((p) => p !== "free_org")) {
+      const meta = planMeta(plan);
+      const sesCostUsd = (meta.monthlyEmailLimit / 1000) * 0.1;
+      expect(meta.monthlyPriceUsd).toBeGreaterThan(sesCostUsd);
+    }
+  });
+
+  // The AI allowance is metered real spend, so a cheap tier handing out a big
+  // allowance quietly inverts its own margin.
+  it("never lets a cheaper tier carry a larger AI allowance than a dearer one", () => {
+    const paid = PLAN_ORDER.filter((p) => p !== "free_org");
+    for (let i = 1; i < paid.length; i++) {
+      expect(planMeta(paid[i]).aiMonthlyCredits).toBeGreaterThanOrEqual(
+        planMeta(paid[i - 1]).aiMonthlyCredits,
+      );
+      expect(planMeta(paid[i]).aiWindowCredits).toBeGreaterThanOrEqual(
+        planMeta(paid[i - 1]).aiWindowCredits,
+      );
+    }
+  });
+
+  // A Clerk dashboard slug that doesn't match a catalog key fails silently: the
+  // tier stops resolving and the org reads as Free. These two guards are what make
+  // that state observable.
+  it("flags a Clerk slug the catalog doesn't know, but not an absent one", () => {
+    expect(isUnknownPlanSlug("1M_plan")).toBe(true); // wrong case — the classic typo
+    expect(isUnknownPlanSlug("1m-plan")).toBe(true);
+    expect(isUnknownPlanSlug("some_removed_plan")).toBe(true);
+    // Absent/blank means "no subscription", which is a legitimate state.
+    expect(isUnknownPlanSlug(undefined)).toBe(false);
+    expect(isUnknownPlanSlug(null)).toBe(false);
+    expect(isUnknownPlanSlug("")).toBe(false);
+    // Every real key is, of course, known.
+    for (const plan of PLAN_ORDER) expect(isUnknownPlanSlug(plan)).toBe(false);
+  });
+
+  it("reports paid tiers Clerk has no plan for", () => {
+    const allPaid = PLAN_ORDER.filter((p) => p !== "free_org");
+    // Clerk fully configured → nothing missing. free_org is never expected.
+    expect(missingClerkPlanSlugs(allPaid)).toEqual([]);
+    // A typo'd slug in the dashboard shows up as the tier being absent.
+    const typo = allPaid.filter((p) => p !== "1m_plan").concat("1M_plan");
+    expect(missingClerkPlanSlugs(typo)).toEqual(["1m_plan"]);
+    // Nothing configured at all → every paid tier is missing, in ladder order.
+    expect(missingClerkPlanSlugs([])).toEqual(allPaid);
   });
 
   it("gates sending: only paid tiers can send", () => {
@@ -608,13 +686,33 @@ describe("plan slug -> entitlement mapping", () => {
     expect(firstSendingPlan()).toBe("1k_plan");
   });
 
-  it("gates AI: only 10k and up include the assistant", () => {
+  it("gates AI: every paid tier includes the assistant, free does not", () => {
     expect(planHasAI("free_org")).toBe(false);
-    expect(planHasAI("1k_plan")).toBe(false);
-    expect(planHasAI("5k_plan")).toBe(false);
+    expect(planHasAI("1k_plan")).toBe(true);
+    expect(planHasAI("5k_plan")).toBe(true);
     expect(planHasAI("10k_plan")).toBe(true);
     expect(planHasAI("100k_plan")).toBe(true);
-    expect(firstAiPlan()).toBe("10k_plan");
+    expect(planHasAI("bogus")).toBe(false);
+    expect(firstAiPlan()).toBe("1k_plan");
+  });
+
+  it("scales the AI allowance with the tier, and gives free none", () => {
+    expect(aiAllowanceForPlan("free_org")).toEqual({ windowCredits: 0, monthlyCredits: 0 });
+    // The allowance climbs with the price: 1k < 5k < 10k < the full 25k+ one.
+    const starter = aiAllowanceForPlan("1k_plan");
+    const mid = aiAllowanceForPlan("5k_plan");
+    const upper = aiAllowanceForPlan("10k_plan");
+    const full = aiAllowanceForPlan("25k_plan");
+    expect(starter.monthlyCredits).toBeGreaterThan(0);
+    expect(starter.monthlyCredits).toBeLessThan(mid.monthlyCredits);
+    expect(mid.monthlyCredits).toBeLessThan(upper.monthlyCredits);
+    expect(upper.monthlyCredits).toBeLessThan(full.monthlyCredits);
+    expect(full.monthlyCredits).toBe(MAX_AI_MONTHLY_CREDITS);
+    // 25k and every tier above it share the full allowance.
+    expect(aiAllowanceForPlan("100k_plan")).toEqual(full);
+    expect(aiAllowanceForPlan("1m_plan")).toEqual(full);
+    // An unknown/legacy plan degrades to no AI, never to the full allowance.
+    expect(aiAllowanceForPlan("bogus")).toEqual({ windowCredits: 0, monthlyCredits: 0 });
   });
 
   it("caps free-tier subscribers, paid tiers are unlimited", () => {
@@ -629,7 +727,9 @@ describe("plan slug -> entitlement mapping", () => {
     expect(nextPlanUp("free_org")).toBe("1k_plan");
     expect(nextPlanUp("1k_plan")).toBe("5k_plan");
     expect(nextPlanUp("25k_plan")).toBe("50k_plan");
-    expect(nextPlanUp("100k_plan")).toBeNull();
+    expect(nextPlanUp("100k_plan")).toBe("250k_plan");
+    // Only the top of the ladder has nowhere to go (the "contact us" card).
+    expect(nextPlanUp("1m_plan")).toBeNull();
   });
 
   it("recommends the smallest plan that covers an expected volume", () => {
@@ -637,7 +737,10 @@ describe("plan slug -> entitlement mapping", () => {
     expect(recommendedPlanFor(1)).toBe("1k_plan");
     expect(recommendedPlanFor(1_001)).toBe("5k_plan");
     expect(recommendedPlanFor(12_000)).toBe("25k_plan");
-    expect(recommendedPlanFor(10_000_000)).toBe("100k_plan");
+    expect(recommendedPlanFor(120_000)).toBe("250k_plan");
+    // Past the top of the ladder we still return the largest tier (the UI shows
+    // the "contact us" card alongside it).
+    expect(recommendedPlanFor(10_000_000)).toBe("1m_plan");
   });
 
   it("maps each lifecycle to a deterministic subscription status", () => {

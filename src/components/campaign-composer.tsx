@@ -975,15 +975,15 @@ export function CampaignComposer({
             Draft with AI
           </Button>
         )}
-        {/* AI is configured but the org's plan doesn't include it (free/1k/5k):
-            offer the upgrade path instead of the AI button. */}
+        {/* AI is configured but the org's plan doesn't include it (free tier
+            only): offer the upgrade path instead of the AI button. */}
         {aiConfigured && !planAi && (
           <Button
             type="button"
             size="sm"
             variant="outline"
             className="h-6 px-2"
-            title="The AI assistant is available on the 10k plan and up"
+            title="The AI assistant is included on every paid plan"
             render={
               <Link href="/billing">
                 <Sparkles />

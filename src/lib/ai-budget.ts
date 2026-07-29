@@ -1,4 +1,5 @@
 import { HttpError } from "@/api/http";
+import { MAX_AI_MONTHLY_CREDITS, type AiAllowance } from "@/lib/plans-catalog";
 import { getRedisConnection } from "@/queue/producer";
 
 // Per-organization AI usage budget for the campaign-composer AI helpers
@@ -21,6 +22,10 @@ import { getRedisConnection } from "@/queue/producer";
 //       * month   — a silent hard backstop so a runaway org can't exceed the
 //                   per-org monthly ceiling across many windows. Set to 0 to
 //                   disable. Keyed by calendar month so it resets on the 1st.
+//   - The SIZE of both buckets comes from the caller's plan (`AiAllowance` in
+//     lib/plans-catalog), not from env: the allowance is part of what a tier
+//     sells, so it lives next to the price. Only the window *length* and the
+//     token prices stay env-tunable. Callers pass `aiAllowanceForPlan(plan)`.
 //   - Check-before / record-after: we gate on the CURRENT usage before the call
 //     (we can't know the cost until after), then add the real cost. A single
 //     call can therefore overshoot the cap slightly — acceptable for a guard
@@ -77,14 +82,7 @@ function windowMs(): number {
   return Math.round(envNum("AI_BUDGET_WINDOW_HOURS", 5) * 3_600_000);
 }
 function creditsToMicro(credits: number): number {
-  return Math.round(credits * DOLLARS_PER_CREDIT * MICRO_PER_DOLLAR);
-}
-function windowBudgetMicro(): number {
-  return creditsToMicro(envNum("AI_BUDGET_WINDOW_CREDITS", 30));
-}
-// 0 disables the monthly backstop entirely.
-function monthlyBudgetMicro(): number {
-  return creditsToMicro(envNum("AI_BUDGET_MONTHLY_CREDITS", 200));
+  return Math.round(Math.max(0, credits) * DOLLARS_PER_CREDIT * MICRO_PER_DOLLAR);
 }
 
 function microToCredits(micro: number): number {
@@ -158,11 +156,12 @@ const PERMISSIVE: AiBudgetSnapshot = {
  */
 export async function readAiBudget(
   accountId: string,
+  allowance: AiAllowance,
   store: AiBudgetStore = getRedisConnection(),
   now: Date = new Date(),
 ): Promise<AiBudgetSnapshot> {
-  const windowBudget = windowBudgetMicro();
-  const monthlyBudget = monthlyBudgetMicro();
+  const windowBudget = creditsToMicro(allowance.windowCredits);
+  const monthlyBudget = creditsToMicro(allowance.monthlyCredits);
   try {
     const [windowUsed, monthUsed, windowTtlMs] = await Promise.all([
       readMicro(store, windowKey(accountId)),
@@ -209,14 +208,20 @@ export async function readAiBudget(
  */
 export async function enforceAiBudget(
   accountId: string,
+  allowance: AiAllowance,
   store?: AiBudgetStore,
   now: Date = new Date(),
 ): Promise<void> {
-  const snap = await readAiBudget(accountId, store, now);
+  const snap = await readAiBudget(accountId, allowance, store, now);
   if (!snap.exhausted) return;
+  // An org on a starter allowance can buy more AI by upgrading; one already at the
+  // top allowance can only wait, so don't dangle an upgrade it can't make.
+  const canUpgradeAllowance = allowance.monthlyCredits < MAX_AI_MONTHLY_CREDITS;
   const message =
     snap.reason === "month"
-      ? "Your team's monthly AI assist budget is used up. It resets at the start of next month."
+      ? canUpgradeAllowance
+        ? "Your team's monthly AI assist budget is used up. It resets at the start of next month, or upgrade your plan for a larger allowance."
+        : "Your team's monthly AI assist budget is used up. It resets at the start of next month."
       : "Your team's AI assist budget is used up for now. It resets shortly — try again then.";
   throw new HttpError(429, message, { "Retry-After": String(Math.max(1, snap.resetsInSeconds)) });
 }
@@ -229,6 +234,7 @@ export async function enforceAiBudget(
 export async function recordAiUsage(
   accountId: string,
   usage: TokenUsage,
+  allowance: AiAllowance,
   store: AiBudgetStore = getRedisConnection(),
   now: Date = new Date(),
 ): Promise<void> {
@@ -240,7 +246,7 @@ export async function recordAiUsage(
     // First write in a fresh window → start its TTL (the rolling reset clock).
     if (windowTotal === cost) await store.pexpire(wk, windowMs());
 
-    if (monthlyBudgetMicro() > 0) {
+    if (allowance.monthlyCredits > 0) {
       const mk = monthKey(accountId, now);
       const monthTotal = await store.incrby(mk, cost);
       if (monthTotal === cost) await store.pexpire(mk, msUntilNextMonth(now));

@@ -8,6 +8,7 @@ import {
   FREE_PLAN,
   entitlementsFor,
   isPlanKey,
+  isUnknownPlanSlug,
   planFromEntitlements,
   planFromSlug,
   planOverrideFromMetadata,
@@ -239,6 +240,21 @@ export async function syncCurrentOrganization(
     const effectivePlan: PlanKey = keepPastDue
       ? (isPlanKey(account.plan) ? account.plan : FREE_PLAN)
       : plan; // `plan` already prefers the override
+
+    // The session claim resolving to Free for an org we have recorded on a paid
+    // tier is the fingerprint of a Clerk/catalog slug mismatch: `has()` is a
+    // predicate, so a tier whose slug we spell differently simply never matches
+    // and the org reads as unsubscribed. It can also be a genuine cancellation
+    // whose `subscriptionItem.ended` webhook we missed, or a session token that
+    // predates a fresh subscription — all three are worth knowing about, and all
+    // three are invisible without this.
+    if (!overridePlan && !keepPastDue && effectivePlan === FREE_PLAN && isPlanKey(account.plan) && account.plan !== FREE_PLAN) {
+      console.error(
+        `[plans] org ${auth.orgId} is recorded on "${account.plan}" but its session billing ` +
+          `claims resolve to "${FREE_PLAN}" — downgrading. If this org is paying, the Clerk ` +
+          `plan slug does not match the catalog key in src/lib/plans-catalog.ts.`,
+      );
+    }
     const effectiveLifecycle: SubscriptionLifecycle = keepPastDue ? "past_due" : lifecycle;
     await db
       .update(accounts)
@@ -293,11 +309,21 @@ export async function applySubscriptionEvent(
   // so a past_due account still shows the plan it owes for.
   const ended = input.lifecycle === "ended";
   const recordedPlan: PlanKey = isPlanKey(account.plan) ? account.plan : FREE_PLAN;
-  const plan: PlanKey = ended
-    ? FREE_PLAN
-    : input.planSlug
-      ? planFromSlug(input.planSlug)
-      : recordedPlan;
+  // A slug we don't recognize means the Clerk dashboard and the catalog disagree
+  // (a typo'd or renamed plan), NOT that the org stopped paying. Treat it exactly
+  // like an absent slug — keep the recorded plan — because resolving it to Free
+  // here would strip sending from an org that is paying us. Loud, because nothing
+  // else in the system will notice.
+  if (isUnknownPlanSlug(input.planSlug)) {
+    console.error(
+      `[plans] unknown Clerk plan slug "${input.planSlug}" for org ${input.clerkOrgId} — ` +
+        `keeping recorded plan "${recordedPlan}". The slug must match a key in ` +
+        `src/lib/plans-catalog.ts; fix the plan slug in the Clerk dashboard.`,
+    );
+  }
+  const slugPlan: PlanKey | null =
+    input.planSlug && !isUnknownPlanSlug(input.planSlug) ? planFromSlug(input.planSlug) : null;
+  const plan: PlanKey = ended ? FREE_PLAN : (slugPlan ?? recordedPlan);
   // Reverting to the free tier means the account is active again (nothing to pay),
   // not "inactive". Only active/past_due lifecycles pass through unchanged.
   const lifecycle: SubscriptionLifecycle = ended ? "active" : input.lifecycle;

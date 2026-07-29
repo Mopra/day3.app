@@ -25,8 +25,11 @@ import { useApi, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   FREE_PLAN,
+  MAX_AI_MONTHLY_CREDITS,
   PLAN_ORDER,
+  TOP_PLAN,
   isPlanKey,
+  missingClerkPlanSlugs,
   nextPlanUp,
   planMeta,
   type PlanKey,
@@ -42,9 +45,17 @@ function planFeatures(meta: PlanMeta): { ok: boolean; label: string }[] {
     meta.sendingEnabled
       ? { ok: true, label: `Send up to ${meta.monthlyEmailLimit.toLocaleString()}/mo` }
       : { ok: false, label: "Set-up & drafts (no sending)" },
-    meta.aiEnabled
-      ? { ok: true, label: "AI writing assistant" }
-      : { ok: false, label: "AI assistant on 10k & up" },
+    meta.aiWindowCredits > 0
+      ? {
+          ok: true,
+          // Every paid tier includes the assistant; the cheap tiers just get a
+          // smaller monthly allowance, so say which one this tier buys.
+          label:
+            meta.aiMonthlyCredits >= MAX_AI_MONTHLY_CREDITS
+              ? "AI writing assistant (full allowance)"
+              : "AI writing assistant (starter allowance)",
+        }
+      : { ok: false, label: "AI assistant on any paid plan" },
     {
       ok: true,
       label:
@@ -96,9 +107,22 @@ function PlanCta({
     );
   }
 
+  // No org → nothing to bill. No planId → Clerk has no plan matching this tier's
+  // slug, which is a misconfiguration rather than a user problem; say so on hover
+  // instead of presenting an unexplained dead button.
   if (!hasOrg || !planId) {
     return (
-      <Button variant={variant} size="sm" className="w-full" disabled>
+      <Button
+        variant={variant}
+        size="sm"
+        className="w-full"
+        disabled
+        title={
+          hasOrg
+            ? `This plan isn't available for checkout — no Clerk plan matches "${plan}".`
+            : undefined
+        }
+      >
         {label}
       </Button>
     );
@@ -121,11 +145,17 @@ function PlanCta({
 const CARD_W_REM = 18; // matches w-72
 
 // Past the top of the ladder there is no self-serve tier — orgs that need more
-// than the 100k allowance reach out and we set them up manually. The carousel
+// than the top allowance reach out and we set them up manually. The carousel
 // carries one extra "contact us" card after the last plan; it shares the slider
 // track but has no Clerk plan behind it.
 const CONTACT_INDEX = PLAN_ORDER.length;
 const CONTACT_EMAIL = "connect@day3.app";
+
+// The ceiling of the self-serve ladder, for the "need more than this?" copy.
+// Derived from the catalog so it follows the ladder automatically.
+const TOP_META = planMeta(TOP_PLAN);
+const TOP_LABEL = TOP_META.name; // e.g. "1M"
+const TOP_EMAILS = TOP_META.monthlyEmailLimit.toLocaleString(); // e.g. "1,000,000"
 
 // The contact card's CTA: a small in-app form (same shape as the sidebar Help
 // widget) that relays through POST /api/support with topic "volume", so the
@@ -189,7 +219,7 @@ function ContactVolumeDialog() {
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>Sending more than 100k / month?</DialogTitle>
+              <DialogTitle>Sending more than {TOP_LABEL} / month?</DialogTitle>
               <DialogDescription>
                 Tell us roughly how many emails you send and how often — we&apos;ll
                 size a plan for you and reply by email.
@@ -205,7 +235,7 @@ function ContactVolumeDialog() {
                   void handleSend();
                 }
               }}
-              placeholder="e.g. We send ~250,000 emails a month across two weekly newsletters…"
+              placeholder="e.g. We send ~2,000,000 emails a month — mostly product notifications…"
               rows={5}
               className="min-h-28 resize-none text-sm"
             />
@@ -238,7 +268,7 @@ function ContactVolumeDialog() {
 
 // The plan picker, as a focus carousel. Every Day3 feature is on every tier, so
 // the only axis that changes is the monthly email allowance — the user slides
-// along the bandwidth ladder ("how many emails per month?", free → 100k) and the
+// along the bandwidth ladder ("how many emails per month?", free → the top tier) and the
 // matching tier card snaps into focus below, scaled up while its neighbors dim.
 // The slider and the horizontal scroll position are two views of the same focused
 // index: dragging the slider scrolls the track, and scrolling the track moves the
@@ -258,6 +288,25 @@ export function PlanSlider({
   const planIdBySlug = new Map(
     (clerkPlans ?? []).map((p) => [p.slug, p.id] as const),
   );
+
+  // Catalog/Clerk agreement check. A tier Clerk has no plan for renders a dead,
+  // disabled CTA and — worse — resolves to Free for any org that holds it, with
+  // nothing anywhere reporting why. Clerk's slug list is already in hand here, so
+  // this is the cheapest place to catch a dashboard typo: it fires as soon as an
+  // operator opens the billing page, long before a customer hits the broken tier.
+  const clerkSlugs = (clerkPlans ?? []).map((p) => p.slug ?? "");
+  const slugFingerprint = clerkSlugs.join(",");
+  useEffect(() => {
+    if (!clerkPlans) return; // Still loading — absence isn't a mismatch yet.
+    const missing = missingClerkPlanSlugs(slugFingerprint ? slugFingerprint.split(",") : []);
+    if (missing.length > 0) {
+      console.error(
+        `[plans] Clerk has no organization plan for: ${missing.join(", ")}. ` +
+          `Checkout is disabled for those tiers and any org holding one reads as Free. ` +
+          `The Clerk plan slug must exactly match the catalog key in src/lib/plans-catalog.ts.`,
+      );
+    }
+  }, [clerkPlans, slugFingerprint]);
 
   const info = usageInfo(account);
   const currentPlan: PlanKey | null = isPlanKey(account.plan) ? account.plan : null;
@@ -376,7 +425,7 @@ export function PlanSlider({
             <p className="mt-0.5 text-3xl font-semibold tracking-tight tabular-nums">
               {onContact ? (
                 <>
-                  100,000+
+                  {TOP_EMAILS}+
                   <span className="ml-1.5 text-sm font-normal text-muted-foreground">
                     emails / mo
                   </span>
@@ -421,7 +470,7 @@ export function PlanSlider({
 
         <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
           <span>0 / mo</span>
-          <span>100k+ / mo</span>
+          <span>{TOP_LABEL}+ / mo</span>
         </div>
       </div>
 
@@ -545,8 +594,8 @@ export function PlanSlider({
             );
           })}
 
-          {/* Beyond the ladder: no self-serve tier above 100k, so the last card
-              asks the org to get in touch instead of offering a checkout. */}
+          {/* Beyond the ladder: no self-serve tier above the top plan, so the last
+              card asks the org to get in touch instead of offering a checkout. */}
           <div
             ref={(el) => {
               cardRefs.current[CONTACT_INDEX] = el;
@@ -565,7 +614,7 @@ export function PlanSlider({
               <span className="text-3xl font-semibold tracking-tight">Custom</span>
             </div>
             <div className="mt-1 text-sm text-muted-foreground">
-              More than 100,000 emails / month
+              More than {TOP_EMAILS} emails / month
             </div>
 
             <ul className="mt-4 space-y-1.5 text-sm">

@@ -109,16 +109,20 @@ here — proceed to 1F to flip the provider.
 1. Clerk dashboard → **Configure → Billing** → enable (beta; backed by Stripe).
 2. Create one plan **for Organizations** (not users) per paid tier, with slugs that
    **exactly match the plan keys** in `src/lib/plans-catalog.ts`: `1k_plan` ($1),
-   `5k_plan` ($3), `10k_plan` ($5), `25k_plan` ($12), `50k_plan` ($24),
-   `100k_plan` ($49). The Free tier (`free_org`) is the default and needs no paid plan.
+   `5k_plan` ($3), `10k_plan` ($5), `25k_plan` ($8), `50k_plan` ($14),
+   `100k_plan` ($25), `250k_plan` ($60), `500k_plan` ($115), `1m_plan` ($220).
+   The Free tier (`free_org`) is the default and needs no paid plan.
 3. The app resolves the held tier from `has({ plan: "org:<slug>" })` (highest tier
    wins) and sets `monthlyEmailLimit` accordingly. The **Free tier is set-up-only**
    — an org can configure domains/senders/audiences and draft, but **cannot send**
    (and is capped at 500 subscribers) until it subscribes to a paid plan. A lapsed
    subscription gracefully downgrades back to Free rather than locking the account out.
-4. **AI is gated to 10k and up.** If you offer the AI assistant, only the `10k_plan`+
-   tiers expose it; `free_org`/`1k_plan`/`5k_plan` accounts get an upgrade prompt and
-   the AI routes return 403. (AI also needs `OPENROUTER_API_KEY` configured.)
+4. **AI is included on every paid tier.** Only `free_org` accounts get the upgrade
+   prompt and a 403 from the AI routes. The tiers differ in allowance size, not
+   access: `1k_plan`/`5k_plan` carry a smaller credit budget than `10k_plan`+ (see
+   `aiWindowCredits` / `aiMonthlyCredits` in `src/lib/plans-catalog.ts`). No Clerk
+   configuration is involved — the allowance is enforced in-app. (AI also needs
+   `OPENROUTER_API_KEY` configured.)
 
 ### Note on Clerk environments
 **Production is live on the Clerk production instance** (frontend domain

@@ -4,7 +4,7 @@ import { requireAccount } from "@/api/context";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { enforceAiBudget, recordAiUsage } from "@/lib/ai-budget";
 import { aiEnabled, suggestSubjects } from "@/services/ai";
-import { AI_UPGRADE_MESSAGE, planHasAI } from "@/services/plans";
+import { AI_UPGRADE_MESSAGE, aiAllowanceForPlan, planHasAI } from "@/services/plans";
 
 const SubjectSchema = z
   .object({
@@ -21,12 +21,13 @@ export const POST = route(async (req) => {
   const { account } = await requireAccount();
   if (!aiEnabled()) throw new HttpError(503, "AI assistance isn't configured.");
   if (!planHasAI(account.plan)) throw new HttpError(403, AI_UPGRADE_MESSAGE);
+  const allowance = aiAllowanceForPlan(account.plan);
   await enforceRateLimit("ai", account.id);
-  await enforceAiBudget(account.id);
+  await enforceAiBudget(account.id, allowance);
   const input = await parseJson(req, SubjectSchema);
   try {
     const { subjects, usage } = await suggestSubjects({ ...input, companyName: account.name });
-    await recordAiUsage(account.id, usage);
+    await recordAiUsage(account.id, usage, allowance);
     return json({ subjects });
   } catch (err) {
     console.error("[ai/subject] generation failed", err);
