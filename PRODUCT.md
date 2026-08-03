@@ -613,6 +613,17 @@ manage their lists from code and, above all, **migrate from another provider**
     whole, on the first batch, so the page says so before anything is copied —
     and the same figure is written into the AI prompts, instructing the assistant
     to count the source rows and stop for an upgrade rather than half-migrate.
+- **The API panel (`</>`) brings the API to the resource pages.** Next to the page
+  title on Audiences (list and detail), Sending domains (list and detail), and
+  Senders sits a small `</>` button that slides out a panel with everything a
+  developer needs *for the resource in view*: the base URL, API-key status (with a
+  one-click path to create a key when the org has none), **every id on the page as
+  a copyable row** (audience id, segment ids, topic ids, field keys, domain and
+  sender ids), cURL/JS/Python snippets scoped to the open tab (contacts, fields,
+  segments, or topics — prefilled with the real ids), and a copyable **AI context
+  pack** — the ids in view plus the full API reference, ready to paste into an
+  assistant ahead of any request. Domains and senders have no v1 endpoints; their
+  panels say so plainly and show ids for support purposes instead of pretending.
 - **Migration-first design:**
   - **Batch endpoint** — up to 1,000 contacts per call with per-row results,
     counting as a single rate-limit request.

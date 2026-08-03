@@ -47,7 +47,9 @@ import {
   useListController,
 } from "@/components/ui/data-list";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
+import { ApiPanel } from "@/components/api-panel";
 import { useApi } from "@/lib/api";
+import { buildSendersPanelContent } from "@/lib/api-docs";
 import { domainState } from "@/lib/domain";
 import { formatDate } from "@/lib/format";
 import type { Sender, SendingDomain } from "@/lib/types";
@@ -208,7 +210,12 @@ export default function SendersPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Senders</h1>
+        <div className="flex items-center gap-1.5">
+          <h1 className="text-2xl font-semibold tracking-tight">Senders</h1>
+          <ApiPanel
+            build={(origin) => buildSendersPanelContent({ origin, senders: senders ?? [] })}
+          />
+        </div>
         <Button onClick={openAdd}>Add sender</Button>
       </div>
 

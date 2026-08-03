@@ -43,8 +43,10 @@ import {
   rowLinkProps,
   useListController,
 } from "@/components/ui/data-list";
+import { ApiPanel } from "@/components/api-panel";
 import { MenuItem } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
+import { buildDomainsPanelContent } from "@/lib/api-docs";
 import { domainState, recheckWindowExpired } from "@/lib/domain";
 import { formatDate } from "@/lib/format";
 import type { DomainState, SendingDomain } from "@/lib/types";
@@ -213,7 +215,12 @@ export default function DomainsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Sending domains</h1>
+        <div className="flex items-center gap-1.5">
+          <h1 className="text-2xl font-semibold tracking-tight">Sending domains</h1>
+          <ApiPanel
+            build={(origin) => buildDomainsPanelContent({ origin, domains: domains ?? [] })}
+          />
+        </div>
         <Dialog open={open} onOpenChange={openChange}>
           <DialogTrigger render={<Button>Add domain</Button>} />
           <DialogContent>

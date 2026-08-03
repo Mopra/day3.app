@@ -41,10 +41,12 @@ import {
 } from "@/components/ui/data-list";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ApiPanel } from "@/components/api-panel";
 import { AudienceFieldsTab } from "@/components/audience-fields-tab";
 import { AudienceSegmentsTab } from "@/components/audience-segments-tab";
 import { AudienceTopicsTab } from "@/components/audience-topics-tab";
 import { useApi } from "@/lib/api";
+import { buildAudiencePanelContent } from "@/lib/api-docs";
 import { SUBSCRIBER_CSV_TEMPLATE } from "@/lib/csv";
 import { formatDateTime, statusVariant } from "@/lib/format";
 import type {
@@ -530,7 +532,7 @@ export default function AudienceDetailPage() {
           <div className="flex items-center gap-1.5">
             <h1 className="text-2xl font-semibold tracking-tight">{audience?.name ?? "…"}</h1>
             {audience && (
-              <RowActions label="Audience actions">
+              <RowActions label="Audience actions" className="translate-y-[3px]">
                 <MenuItem
                   onClick={() => {
                     setRenameValue(audience.name);
@@ -547,6 +549,19 @@ export default function AudienceDetailPage() {
                 </MenuItem>
               </RowActions>
             )}
+            <ApiPanel
+              build={(origin) =>
+                buildAudiencePanelContent({
+                  origin,
+                  audienceId: id,
+                  audienceName: audience?.name ?? null,
+                  tab,
+                  fields,
+                  segments,
+                  topics,
+                })
+              }
+            />
           </div>
           <p className="text-sm text-muted-foreground tabular-nums">
             {(counts.subscribed ?? 0).toLocaleString()} subscribed

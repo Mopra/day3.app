@@ -11,8 +11,10 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { RowActions } from "@/components/ui/data-list";
 import { MenuItem } from "@/components/ui/menu";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ApiPanel } from "@/components/api-panel";
 import { DomainSetupGuide } from "@/components/domain-setup-guide";
 import { ApiError, useApi } from "@/lib/api";
+import { buildDomainsPanelContent } from "@/lib/api-docs";
 import { domainState } from "@/lib/domain";
 import type { SendingDomain } from "@/lib/types";
 
@@ -86,9 +88,20 @@ export default function DomainDetailPage() {
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <h1 className="text-2xl font-semibold tracking-tight">{domain.domain}</h1>
-                <Badge variant={domainState(domain) === "verified" ? "default" : "secondary"}>
+                <Badge
+                  className="translate-y-[3px]"
+                  variant={domainState(domain) === "verified" ? "default" : "secondary"}
+                >
                   {STATUS_LABEL[domainState(domain)]}
                 </Badge>
+                <ApiPanel
+                  build={(origin) =>
+                    buildDomainsPanelContent({
+                      origin,
+                      domains: [{ id: domain.id, domain: domain.domain }],
+                    })
+                  }
+                />
               </div>
               <p className="text-sm text-muted-foreground">
                 Sending as {domain.fromName} &lt;{domain.fromEmail}&gt;

@@ -4,12 +4,22 @@ import { describe, expect, it } from "vitest";
 import {
   apiBaseUrl,
   buildAgentPrompts,
+  buildAudiencePanelContent,
+  buildAudiencesPanelContent,
+  buildDomainsPanelContent,
+  buildFieldSnippets,
+  buildPanelPrompt,
   buildReferenceMarkdown,
+  buildSegmentSnippets,
+  buildSendersPanelContent,
   buildSnippetTasks,
+  buildTopicSnippets,
   exportKeyLine,
   verifyCurl,
   PLACEHOLDER_AUDIENCE,
   PLACEHOLDER_KEY,
+  PLACEHOLDER_SEGMENT,
+  PLACEHOLDER_TOPIC,
   type ApiDocsContext,
 } from "@/lib/api-docs";
 
@@ -32,6 +42,14 @@ function everySnippet(ctx: ApiDocsContext): string[] {
     ...buildSnippetTasks(ctx).flatMap((t) => [t.curl, t.js, t.python]),
     ...buildAgentPrompts(ctx).map((p) => p.text),
     buildReferenceMarkdown(ctx),
+    // The API panel's content is copied off the page just the same.
+    ...[
+      ...buildFieldSnippets(ctx, ["company"]),
+      ...buildSegmentSnippets(ctx, { id: "seg_x", name: "Pro" }, ["plan"]),
+      ...buildTopicSnippets(ctx, { id: "top_x", name: "News" }),
+      ...buildAudiencesPanelContent({ origin: ctx.origin, audiences: [] }).tasks,
+    ].flatMap((t) => [t.curl, t.js, t.python]),
+    buildPanelPrompt(ctx, { segments: [{ id: "seg_x", name: "Pro" }] }),
   ];
 }
 
@@ -107,6 +125,112 @@ describe("api docs assets", () => {
     for (const prompt of buildAgentPrompts(CTX)) {
       expect(prompt.text).not.toMatch(/caps me at/);
     }
+  });
+});
+
+// ── API panel content ────────────────────────────────────────────────────────
+
+describe("api panel content", () => {
+  const SEGMENTS = [{ id: "seg_abc", name: "Pro users" }];
+  const TOPICS = [{ id: "top_abc", name: "Product news" }];
+  const FIELDS = [{ key: "plan", label: "Plan" }];
+
+  it("scopes snippets to the open audience tab", () => {
+    const base = (tab: "contacts" | "fields" | "segments" | "topics") =>
+      buildAudiencePanelContent({
+        origin: CTX.origin,
+        audienceId: CTX.audienceId,
+        audienceName: CTX.audienceName,
+        tab,
+        fields: FIELDS,
+        segments: SEGMENTS,
+        topics: TOPICS,
+      });
+
+    expect(base("contacts").tasks.map((t) => t.id)).toEqual(["add", "unsubscribe", "list"]);
+    expect(base("fields").tasks[0].curl).toContain('"plan"');
+    expect(base("segments").tasks[0].curl).toContain("seg_abc");
+    expect(base("topics").tasks[0].curl).toContain("top_abc");
+  });
+
+  it("lists every id the page holds, copy-ready", () => {
+    const content = buildAudiencePanelContent({
+      origin: CTX.origin,
+      audienceId: CTX.audienceId,
+      audienceName: CTX.audienceName,
+      fields: FIELDS,
+      segments: SEGMENTS,
+      topics: TOPICS,
+    });
+    const values = content.idGroups.flatMap((g) => g.rows.map((r) => r.value));
+    expect(values).toContain("aud_test123");
+    expect(values).toContain("seg_abc");
+    expect(values).toContain("top_abc");
+    expect(values).toContain("plan"); // field keys, not fld_ ids — the key is what callers use
+  });
+
+  it("falls back to placeholders when a tab has no rows yet", () => {
+    const empty = buildAudiencePanelContent({
+      origin: CTX.origin,
+      audienceId: CTX.audienceId,
+      audienceName: CTX.audienceName,
+      tab: "segments",
+      segments: [],
+    });
+    expect(empty.tasks[0].curl).toContain(PLACEHOLDER_SEGMENT);
+
+    const noTopics = buildAudiencePanelContent({
+      origin: CTX.origin,
+      audienceId: CTX.audienceId,
+      audienceName: CTX.audienceName,
+      tab: "topics",
+    });
+    expect(noTopics.tasks[0].curl).toContain(PLACEHOLDER_TOPIC);
+  });
+
+  it("packs the workspace ids and the full reference into the AI prompt", () => {
+    const prompt = buildPanelPrompt(CTX, {
+      segments: SEGMENTS,
+      topics: TOPICS,
+      fieldKeys: ["plan"],
+    });
+    expect(prompt).toContain("aud_test123");
+    expect(prompt).toContain("seg_abc");
+    expect(prompt).toContain("top_abc");
+    expect(prompt).toContain("`plan`");
+    expect(prompt).toContain(buildReferenceMarkdown(CTX));
+  });
+
+  it("gives the audiences list every audience id and the CRUD snippets", () => {
+    const content = buildAudiencesPanelContent({
+      origin: CTX.origin,
+      audiences: [
+        { id: "aud_one", name: "One" },
+        { id: "aud_two", name: "Two" },
+      ],
+    });
+    expect(content.idGroups[0].rows.map((r) => r.value)).toEqual(["aud_one", "aud_two"]);
+    expect(content.tasks.map((t) => t.id)).toEqual(["list-audiences", "create-audience", "add"]);
+    expect(content.prompt).toContain("aud_two");
+  });
+
+  it("is honest about domains and senders having no v1 endpoints", () => {
+    const domains = buildDomainsPanelContent({
+      origin: CTX.origin,
+      domains: [{ id: "dom_abc", domain: "news.acme.com" }],
+    });
+    expect(domains.tasks).toEqual([]);
+    expect(domains.prompt).toBeNull();
+    expect(domains.note).toMatch(/don't have public API endpoints yet/);
+    expect(domains.idGroups[0].rows[0]).toEqual({ label: "news.acme.com", value: "dom_abc" });
+
+    const senders = buildSendersPanelContent({
+      origin: CTX.origin,
+      senders: [{ id: "snd_abc", fromName: "Acme", fromEmail: "news@acme.com" }],
+    });
+    expect(senders.tasks).toEqual([]);
+    expect(senders.prompt).toBeNull();
+    expect(senders.idGroups[0].rows[0].value).toBe("snd_abc");
   });
 });
 

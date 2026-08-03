@@ -42,8 +42,10 @@ import {
   useListController,
 } from "@/components/ui/data-list";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
+import { ApiPanel } from "@/components/api-panel";
 import { NextSteps } from "@/components/next-steps";
 import { useApi } from "@/lib/api";
+import { buildAudiencesPanelContent } from "@/lib/api-docs";
 import { formatDate } from "@/lib/format";
 import type { Audience, OnboardingState } from "@/lib/types";
 
@@ -149,7 +151,10 @@ export default function AudiencesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Audiences</h1>
+        <div className="flex items-center gap-1.5">
+          <h1 className="text-2xl font-semibold tracking-tight">Audiences</h1>
+          <ApiPanel build={(origin) => buildAudiencesPanelContent({ origin, audiences })} />
+        </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger render={<Button>New audience</Button>} />
           <DialogContent>

@@ -484,6 +484,26 @@ export type AgentPrompt = {
   text: string;
 };
 
+// Rules shared verbatim by every prompt we hand to an AI tool — the agent
+// prompts on /api-keys and the per-resource context pack in the API panel.
+const KEY_AND_CONDUCT_RULES = `- My API key is in the \`DAY3_API_KEY\` environment variable. Read it from there.
+  Never hard-code it, never print it, never commit it, and never put it in a
+  file that isn't gitignored.
+- Use only the endpoints in the reference below. If something I ask for isn't
+  covered, tell me instead of inventing an endpoint.
+- Handle errors by the \`error.code\` field, not by matching on message text.
+- Respect the rate limit (600 requests/minute): on a \`429\`, sleep for the
+  \`Retry-After\` seconds and retry.`;
+
+// A capped account is the one thing that can sink an otherwise-correct
+// migration on the very first batch, so it goes in the ground rules where the
+// assistant reads it before writing anything — not left to a 403.
+function subscriberLimitLine(limit: SubscriberLimit | null | undefined): string {
+  return limit
+    ? `\n- **My plan caps me at ${limit.cap.toLocaleString()} contacts in total, and I already have ${limit.used.toLocaleString()} — so I can add at most ${limit.headroom.toLocaleString()} more.** Count my source rows BEFORE writing anything. If there are more than that, stop and tell me I need to upgrade my Day3 plan first. Do not import a partial list, and do not split the work to get under the cap.`
+    : "";
+}
+
 /**
  * Prompts to hand to an AI coding assistant. Each is self-contained: task,
  * project-specific facts (the real audience id), house rules, and the full
@@ -496,25 +516,10 @@ export function buildAgentPrompts(ctx: ApiDocsContext): AgentPrompt[] {
       ? `- My audience id: I don't have one yet — create one with \`POST /audiences\` first, or ask me for it.`
       : `- My audience id: \`${aud}\`${ctx.audienceName ? ` ("${ctx.audienceName}")` : ""}`;
 
-  // A capped account is the one thing that can sink an otherwise-correct
-  // migration on the very first batch, so it goes in the ground rules where the
-  // assistant reads it before writing anything — not left to a 403.
-  const limit = ctx.subscriberLimit;
-  const limitLine = limit
-    ? `\n- **My plan caps me at ${limit.cap.toLocaleString()} contacts in total, and I already have ${limit.used.toLocaleString()} — so I can add at most ${limit.headroom.toLocaleString()} more.** Count my source rows BEFORE writing anything. If there are more than that, stop and tell me I need to upgrade my Day3 plan first. Do not import a partial list, and do not split the work to get under the cap.`
-    : "";
-
   const shared = `
 Ground rules:
-${audLine}${limitLine}
-- My API key is in the \`DAY3_API_KEY\` environment variable. Read it from there.
-  Never hard-code it, never print it, never commit it, and never put it in a
-  file that isn't gitignored.
-- Use only the endpoints in the reference below. If something I ask for isn't
-  covered, tell me instead of inventing an endpoint.
-- Handle errors by the \`error.code\` field, not by matching on message text.
-- Respect the rate limit (600 requests/minute): on a \`429\`, sleep for the
-  \`Retry-After\` seconds and retry.
+${audLine}${subscriberLimitLine(ctx.subscriberLimit)}
+${KEY_AND_CONDUCT_RULES}
 
 ---
 
@@ -584,4 +589,517 @@ Please:
 ${shared}${buildReferenceMarkdown(ctx)}`,
     },
   ];
+}
+
+// ── The API panel (the </> slide-out on resource pages) ──────────────────────
+//
+// Every resource page carries a small </> button that opens a panel with the
+// ids in view, snippets scoped to that resource, and an AI "context pack".
+// Like everything else in this file: no live key ever appears in this content.
+
+export const PLACEHOLDER_SEGMENT = "seg_YOUR_SEGMENT_ID";
+export const PLACEHOLDER_TOPIC = "top_YOUR_TOPIC_ID";
+
+export type PanelIdRow = { label: string; value: string };
+export type PanelIdGroup = { title: string; rows: PanelIdRow[] };
+
+export type ApiPanelContent = {
+  /** One-liner under the panel title. */
+  blurb: string;
+  /** Copyable id rows, grouped ("Audience", "Segment ids", …). */
+  idGroups: PanelIdGroup[];
+  /** cURL/JS/Python snippets scoped to the resource in view. May be empty. */
+  tasks: SnippetTask[];
+  /**
+   * Self-contained prompt for an AI tool: the real ids in view, the ground
+   * rules, and the full reference. Null when the resource has no v1 endpoints.
+   */
+  prompt: string | null;
+  /** Shown when the resource isn't in the public API yet. */
+  note?: string;
+};
+
+/** Named ids the context-pack prompt can carry beyond the audience itself. */
+type PanelPromptExtras = {
+  audiences?: { id: string; name: string }[] | null;
+  segments?: { id: string; name: string }[] | null;
+  topics?: { id: string; name: string }[] | null;
+  fieldKeys?: string[] | null;
+};
+
+/**
+ * The panel's one AI prompt: unlike the task-shaped prompts on /api-keys, this
+ * carries no task — just the caller's real workspace (every id in view) plus
+ * the reference, so it can be pasted ahead of whatever the user wants to build.
+ */
+export function buildPanelPrompt(ctx: ApiDocsContext, extras: PanelPromptExtras = {}): string {
+  const lines: string[] = [`- Base URL: \`${apiBaseUrl(ctx.origin)}\``];
+
+  if (extras.audiences && extras.audiences.length > 0) {
+    lines.push(`- My audiences:`);
+    for (const a of extras.audiences) lines.push(`  - "${a.name}": \`${a.id}\``);
+  } else if (ctx.audienceId !== PLACEHOLDER_AUDIENCE) {
+    lines.push(
+      `- My audience${ctx.audienceName ? ` "${ctx.audienceName}"` : ""}: \`${ctx.audienceId}\``,
+    );
+  } else {
+    lines.push(`- I have no audience yet — create one with \`POST /audiences\` first, or ask me.`);
+  }
+  if (extras.segments && extras.segments.length > 0) {
+    lines.push(`- Segments in that audience:`);
+    for (const s of extras.segments) lines.push(`  - "${s.name}": \`${s.id}\``);
+  }
+  if (extras.topics && extras.topics.length > 0) {
+    lines.push(`- Topics in that audience:`);
+    for (const t of extras.topics) lines.push(`  - "${t.name}": \`${t.id}\``);
+  }
+  if (extras.fieldKeys && extras.fieldKeys.length > 0) {
+    lines.push(
+      `- Custom field keys (usable in \`attributes\` and segment filters): ${extras.fieldKeys
+        .map((k) => `\`${k}\``)
+        .join(", ")}`,
+    );
+  }
+
+  return `I'm working with the Day3 email API. Below is my real workspace context — use these ids directly instead of asking me for them — then ground rules, then the full API reference.
+
+My workspace:
+${lines.join("\n")}
+
+Ground rules:${subscriberLimitLine(ctx.subscriberLimit)}
+${KEY_AND_CONDUCT_RULES}
+
+---
+
+${buildReferenceMarkdown(ctx)}`;
+}
+
+/** Fields tab: attributes are the feature; declaring a field is the refinement. */
+export function buildFieldSnippets(
+  ctx: ApiDocsContext,
+  fieldKeys?: string[] | null,
+): SnippetTask[] {
+  const base = apiBaseUrl(ctx.origin);
+  const aud = ctx.audienceId;
+  // Use the audience's real keys in the example when it has any.
+  const key = fieldKeys?.[0] ?? "company";
+
+  return [
+    {
+      id: "set-attributes",
+      label: "Set a value",
+      blurb:
+        "Field values live on the contact as `attributes` — a flat string→string map. Updates shallow-merge (absent keys survive, an explicit `null` deletes one), and every key becomes a `{{merge_tag}}` in campaigns.",
+      curl: `curl -X PATCH "${base}/audiences/${aud}/contacts/jane%40acme.com" \\
+  -H "Authorization: Bearer $DAY3_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "attributes": { "${key}": "some value" } }'`,
+      js: `const email = encodeURIComponent("jane@acme.com");
+await fetch(\`${base}/audiences/${aud}/contacts/\${email}\`, {
+  method: "PATCH",
+  headers: {
+    Authorization: \`Bearer \${process.env.DAY3_API_KEY}\`,
+    "Content-Type": "application/json",
+  },
+  // Values must be strings — stringify numbers and booleans first.
+  body: JSON.stringify({ attributes: { "${key}": "some value" } }),
+});`,
+      python: `import os, requests
+from urllib.parse import quote
+
+email = quote("jane@acme.com", safe="")
+requests.patch(
+    f"${base}/audiences/${aud}/contacts/{email}",
+    headers={"Authorization": f"Bearer {os.environ['DAY3_API_KEY']}"},
+    json={"attributes": {"${key}": "some value"}},
+).raise_for_status()`,
+    },
+    {
+      id: "create-field",
+      label: "Declare a field",
+      blurb:
+        "Fields auto-register the first time a contact arrives with a new attribute key — declare one explicitly when you want a label, a type, or a fallback value for its `{{merge_tag}}`.",
+      curl: `curl -X POST "${base}/audiences/${aud}/fields" \\
+  -H "Authorization: Bearer $DAY3_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "key": "plan", "label": "Plan", "type": "text", "fallback": "free" }'`,
+      js: `const res = await fetch("${base}/audiences/${aud}/fields", {
+  method: "POST",
+  headers: {
+    Authorization: \`Bearer \${process.env.DAY3_API_KEY}\`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ key: "plan", label: "Plan", type: "text", fallback: "free" }),
+});
+const field = await res.json(); // field.id is "fld_…" — but the key is what you use`,
+      python: `import os, requests
+
+field = requests.post(
+    "${base}/audiences/${aud}/fields",
+    headers={"Authorization": f"Bearer {os.environ['DAY3_API_KEY']}"},
+    json={"key": "plan", "label": "Plan", "type": "text", "fallback": "free"},
+).json()`,
+    },
+  ];
+}
+
+/** Segments tab: reading live membership is the feature; creating is second. */
+export function buildSegmentSnippets(
+  ctx: ApiDocsContext,
+  segment?: { id: string; name: string } | null,
+  fieldKeys?: string[] | null,
+): SnippetTask[] {
+  const base = apiBaseUrl(ctx.origin);
+  const aud = ctx.audienceId;
+  const seg = segment?.id ?? PLACEHOLDER_SEGMENT;
+  const key = fieldKeys?.[0] ?? "plan";
+
+  return [
+    {
+      id: "segment-contacts",
+      label: "Who matches now",
+      blurb: `Membership is evaluated live — this is who matches right now${
+        segment ? ` in "${segment.name}"` : ""
+      }. Cursor-paginate with \`?after=\`; the same list is also available as \`GET /contacts?segment_id=\`.`,
+      curl: `curl "${base}/audiences/${aud}/segments/${seg}/contacts?limit=100" \\
+  -H "Authorization: Bearer $DAY3_API_KEY"`,
+      js: `const res = await fetch(
+  "${base}/audiences/${aud}/segments/${seg}/contacts?limit=100",
+  { headers: { Authorization: \`Bearer \${process.env.DAY3_API_KEY}\` } },
+);
+const page = await res.json(); // { data, has_more, next_cursor }`,
+      python: `import os, requests
+
+page = requests.get(
+    "${base}/audiences/${aud}/segments/${seg}/contacts",
+    headers={"Authorization": f"Bearer {os.environ['DAY3_API_KEY']}"},
+    params={"limit": 100},
+).json()  # {"data": [...], "has_more": ..., "next_cursor": ...}`,
+    },
+    {
+      id: "create-segment",
+      label: "Create a segment",
+      blurb:
+        'A segment is a saved filter: `match` is "all" or "any" over 1–10 conditions on `email`, `first_name`, `last_name`, or any custom field key.',
+      curl: `curl -X POST "${base}/audiences/${aud}/segments" \\
+  -H "Authorization: Bearer $DAY3_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name": "Pro customers",
+    "filter": {
+      "match": "all",
+      "conditions": [ { "field": "${key}", "op": "equals", "value": "pro" } ]
+    }
+  }'`,
+      js: `const res = await fetch("${base}/audiences/${aud}/segments", {
+  method: "POST",
+  headers: {
+    Authorization: \`Bearer \${process.env.DAY3_API_KEY}\`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    name: "Pro customers",
+    filter: {
+      match: "all",
+      conditions: [{ field: "${key}", op: "equals", value: "pro" }],
+    },
+  }),
+});
+const segment = await res.json(); // segment.id is "seg_…"`,
+      python: `import os, requests
+
+segment = requests.post(
+    "${base}/audiences/${aud}/segments",
+    headers={"Authorization": f"Bearer {os.environ['DAY3_API_KEY']}"},
+    json={
+        "name": "Pro customers",
+        "filter": {
+            "match": "all",
+            "conditions": [{"field": "${key}", "op": "equals", "value": "pro"}],
+        },
+    },
+).json()`,
+    },
+  ];
+}
+
+/** Topics tab: setting a contact's choices is the feature; creating is second. */
+export function buildTopicSnippets(
+  ctx: ApiDocsContext,
+  topic?: { id: string; name: string } | null,
+): SnippetTask[] {
+  const base = apiBaseUrl(ctx.origin);
+  const aud = ctx.audienceId;
+  const top = topic?.id ?? PLACEHOLDER_TOPIC;
+
+  return [
+    {
+      id: "set-topics",
+      label: "Set a contact's topics",
+      blurb: `Per-topic opt-out for one contact — \`false\` opts them out${
+        topic ? ` of "${topic.name}"` : ""
+      }, \`true\` opts them back in. Read the effective state with GET on the same path.`,
+      curl: `curl -X PATCH "${base}/audiences/${aud}/contacts/jane%40acme.com/topics" \\
+  -H "Authorization: Bearer $DAY3_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "topics": { "${top}": false } }'`,
+      js: `const email = encodeURIComponent("jane@acme.com");
+const res = await fetch(
+  \`${base}/audiences/${aud}/contacts/\${email}/topics\`,
+  {
+    method: "PATCH",
+    headers: {
+      Authorization: \`Bearer \${process.env.DAY3_API_KEY}\`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ topics: { "${top}": false } }),
+  },
+);
+const { data } = await res.json(); // [{ topic_id, name, subscribed, is_default }]`,
+      python: `import os, requests
+from urllib.parse import quote
+
+email = quote("jane@acme.com", safe="")
+state = requests.patch(
+    f"${base}/audiences/${aud}/contacts/{email}/topics",
+    headers={"Authorization": f"Bearer {os.environ['DAY3_API_KEY']}"},
+    json={"topics": {"${top}": False}},
+).json()  # {"data": [{"topic_id": ..., "subscribed": ...}, ...]}`,
+    },
+    {
+      id: "create-topic",
+      label: "Create a topic",
+      blurb:
+        "`default_subscribed: true` is opt-out (everyone gets it unless they leave); `false` is opt-in. It can't be changed later, so pick deliberately.",
+      curl: `curl -X POST "${base}/audiences/${aud}/topics" \\
+  -H "Authorization: Bearer $DAY3_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "name": "Product updates",
+    "description": "Release notes and changelogs",
+    "default_subscribed": true
+  }'`,
+      js: `const res = await fetch("${base}/audiences/${aud}/topics", {
+  method: "POST",
+  headers: {
+    Authorization: \`Bearer \${process.env.DAY3_API_KEY}\`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    name: "Product updates",
+    description: "Release notes and changelogs",
+    default_subscribed: true,
+  }),
+});
+const topic = await res.json(); // topic.id is "top_…"`,
+      python: `import os, requests
+
+topic = requests.post(
+    "${base}/audiences/${aud}/topics",
+    headers={"Authorization": f"Bearer {os.environ['DAY3_API_KEY']}"},
+    json={
+        "name": "Product updates",
+        "description": "Release notes and changelogs",
+        "default_subscribed": True,
+    },
+).json()`,
+    },
+  ];
+}
+
+/** Audiences list page: list + create, then the first write a developer makes. */
+function buildAudienceCrudSnippets(ctx: ApiDocsContext): SnippetTask[] {
+  const base = apiBaseUrl(ctx.origin);
+
+  return [
+    {
+      id: "list-audiences",
+      label: "List audiences",
+      blurb: "The smallest call there is — also the standard way to verify a key works.",
+      curl: `curl "${base}/audiences" \\
+  -H "Authorization: Bearer $DAY3_API_KEY"`,
+      js: `const res = await fetch("${base}/audiences", {
+  headers: { Authorization: \`Bearer \${process.env.DAY3_API_KEY}\` },
+});
+const { data } = await res.json(); // [{ id: "aud_…", name, … }]`,
+      python: `import os, requests
+
+page = requests.get(
+    "${base}/audiences",
+    headers={"Authorization": f"Bearer {os.environ['DAY3_API_KEY']}"},
+).json()  # {"data": [{"id": "aud_...", "name": ...}], ...}`,
+    },
+    {
+      id: "create-audience",
+      label: "Create an audience",
+      blurb: "The response carries the new `aud_…` id — everything else in the API lives under it.",
+      curl: `curl -X POST "${base}/audiences" \\
+  -H "Authorization: Bearer $DAY3_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "name": "Product updates" }'`,
+      js: `const res = await fetch("${base}/audiences", {
+  method: "POST",
+  headers: {
+    Authorization: \`Bearer \${process.env.DAY3_API_KEY}\`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({ name: "Product updates" }),
+});
+const audience = await res.json(); // audience.id is "aud_…"`,
+      python: `import os, requests
+
+audience = requests.post(
+    "${base}/audiences",
+    headers={"Authorization": f"Bearer {os.environ['DAY3_API_KEY']}"},
+    json={"name": "Product updates"},
+).json()`,
+    },
+  ];
+}
+
+export type AudiencePanelTab = "contacts" | "fields" | "segments" | "topics";
+
+/** Panel content for the audience detail page — snippets follow the open tab. */
+export function buildAudiencePanelContent(input: {
+  origin: string;
+  audienceId: string;
+  audienceName: string | null;
+  tab?: AudiencePanelTab;
+  fields?: { key: string; label: string }[] | null;
+  segments?: { id: string; name: string }[] | null;
+  topics?: { id: string; name: string }[] | null;
+  subscriberLimit?: SubscriberLimit | null;
+}): ApiPanelContent {
+  const ctx: ApiDocsContext = {
+    origin: input.origin,
+    audienceId: input.audienceId,
+    audienceName: input.audienceName,
+    subscriberLimit: input.subscriberLimit,
+  };
+  const fieldKeys = input.fields?.map((f) => f.key) ?? null;
+  const tab = input.tab ?? "contacts";
+
+  const tasks =
+    tab === "fields"
+      ? buildFieldSnippets(ctx, fieldKeys)
+      : tab === "segments"
+        ? buildSegmentSnippets(ctx, input.segments?.[0] ?? null, fieldKeys)
+        : tab === "topics"
+          ? buildTopicSnippets(ctx, input.topics?.[0] ?? null)
+          : buildSnippetTasks(ctx).filter((t) => ["add", "list", "unsubscribe"].includes(t.id));
+
+  const idGroups: PanelIdGroup[] = [
+    {
+      title: "Audience",
+      rows: [{ label: input.audienceName ?? "This audience", value: input.audienceId }],
+    },
+  ];
+  if (input.segments && input.segments.length > 0) {
+    idGroups.push({
+      title: "Segment ids",
+      rows: input.segments.map((s) => ({ label: s.name, value: s.id })),
+    });
+  }
+  if (input.topics && input.topics.length > 0) {
+    idGroups.push({
+      title: "Topic ids",
+      rows: input.topics.map((t) => ({ label: t.name, value: t.id })),
+    });
+  }
+  if (input.fields && input.fields.length > 0) {
+    idGroups.push({
+      title: "Field keys",
+      rows: input.fields.map((f) => ({ label: f.label, value: f.key })),
+    });
+  }
+
+  return {
+    blurb: "Real ids and ready-to-run calls for this audience.",
+    idGroups,
+    tasks,
+    prompt: buildPanelPrompt(ctx, {
+      segments: input.segments,
+      topics: input.topics,
+      fieldKeys,
+    }),
+  };
+}
+
+/** Panel content for the audiences list page. */
+export function buildAudiencesPanelContent(input: {
+  origin: string;
+  audiences: { id: string; name: string }[] | null;
+}): ApiPanelContent {
+  const list = input.audiences ?? [];
+  const first = list[0] ?? null;
+  const ctx: ApiDocsContext = {
+    origin: input.origin,
+    audienceId: first?.id ?? PLACEHOLDER_AUDIENCE,
+    audienceName: first?.name ?? null,
+  };
+
+  return {
+    blurb: "Manage audiences and their contacts from your own code.",
+    idGroups:
+      list.length > 0
+        ? [{ title: "Audience ids", rows: list.map((a) => ({ label: a.name, value: a.id })) }]
+        : [],
+    tasks: [
+      ...buildAudienceCrudSnippets(ctx),
+      ...buildSnippetTasks(ctx).filter((t) => t.id === "add"),
+    ],
+    prompt: buildPanelPrompt(ctx, { audiences: list }),
+  };
+}
+
+// Domains and senders have no v1 endpoints (the reference says so explicitly) —
+// their panels show ids without pretending there's an API to call.
+const NOT_IN_V1_NOTE =
+  "Domains and senders don't have public API endpoints yet — verification and sending setup happen here in the app. These ids identify your resources when you talk to Day3 support.";
+
+/** Panel content for the domains pages (list or a single domain). */
+export function buildDomainsPanelContent(input: {
+  origin: string;
+  domains: { id: string; domain: string }[];
+}): ApiPanelContent {
+  return {
+    blurb: "Your sending-domain ids at a glance.",
+    idGroups:
+      input.domains.length > 0
+        ? [
+            {
+              title: input.domains.length === 1 ? "Domain" : "Domain ids",
+              rows: input.domains.map((d) => ({ label: d.domain, value: d.id })),
+            },
+          ]
+        : [],
+    tasks: [],
+    prompt: null,
+    note: NOT_IN_V1_NOTE,
+  };
+}
+
+/** Panel content for the senders page. */
+export function buildSendersPanelContent(input: {
+  origin: string;
+  senders: { id: string; fromName: string; fromEmail: string }[];
+}): ApiPanelContent {
+  return {
+    blurb: "Your sender ids at a glance.",
+    idGroups:
+      input.senders.length > 0
+        ? [
+            {
+              title: "Sender ids",
+              rows: input.senders.map((s) => ({
+                label: `${s.fromName} <${s.fromEmail}>`,
+                value: s.id,
+              })),
+            },
+          ]
+        : [],
+    tasks: [],
+    prompt: null,
+    note: NOT_IN_V1_NOTE,
+  };
 }
