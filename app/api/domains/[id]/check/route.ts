@@ -4,9 +4,10 @@ import { requireAccount } from "@/api/context";
 import { findDomain } from "@/api/finders";
 import { sendingDomains } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
-import { parseDnsRecords } from "@/lib/domain";
+import { dkimWindowClosed, parseDnsRecords } from "@/lib/domain";
+import { publishToCloudflare } from "@/services/dns-publish";
 import { resolveRecords } from "@/services/dns-resolve";
-import { ensureMailFrom, getDomainIdentity } from "@/services/ses-identity";
+import { ensureMailFrom, getDomainIdentity, restartDkim } from "@/services/ses-identity";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 // Per-record live status via DoH (independent of SES) so the UI can show each
@@ -43,6 +44,37 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
           state = await getDomainIdentity(row.domain, region);
         } catch (err) {
           console.error("[domains] ensureMailFrom failed:", err);
+        }
+      }
+      // Recover a domain SES has permanently given up on. SES stops polling for
+      // the DKIM CNAMEs 72h after the identity is created and parks the status at
+      // FAILED; if the records only went live afterwards, re-reading it (which is
+      // all this route otherwise does) returns FAILED forever. When the published
+      // records provably resolve, DNS isn't the problem — so reopen SES's window.
+      //
+      // requiredResolved gates this to the genuinely recoverable case, so a domain
+      // whose records were never added doesn't get poked on every poll. The
+      // restart normally clears the condition on its own (SES re-polls the
+      // already-live CNAMEs and flips to SUCCESS within about a minute); beyond
+      // that, cron never sweeps failed domains, so this only runs on an explicit
+      // user re-check, which enforceRateLimit above already throttles.
+      const live = await resolveRecords(state.records);
+      if (dkimWindowClosed(state.dkimStatus, live.requiredResolved)) {
+        try {
+          state = await restartDkim(row.domain, region);
+          // SES keeps the existing tokens when the signing config is unchanged, so
+          // this is usually a no-op — but if it ever does rotate them, a domain we
+          // manage the DNS for would stall again waiting on records nobody
+          // published. Best-effort: never let this fail the re-check.
+          if (row.dnsAutoConfigured && row.dnsZoneId) {
+            try {
+              await publishToCloudflare(db, account.id, row.dnsZoneId, state.records);
+            } catch (err) {
+              console.error("[domains] DKIM restart: Cloudflare re-publish failed:", err);
+            }
+          }
+        } catch (err) {
+          console.error("[domains] restartDkim failed:", err);
         }
       }
       await db

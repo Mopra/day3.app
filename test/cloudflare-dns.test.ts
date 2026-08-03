@@ -6,6 +6,7 @@ import {
   writeRecords,
   CloudflareApiError,
 } from "../src/services/cloudflare-dns";
+import { buildAuthorizeUrl } from "../src/services/cloudflare-oauth";
 import type { DnsRecord } from "../src/lib/types";
 
 // A deterministic 32-byte key (base64) for the crypto round-trip tests.
@@ -332,5 +333,137 @@ describe("writeRecords", () => {
     const results = await writeRecords("tok", "zone1", [dkim, dmarc]);
     expect(results.map((r) => r.action)).toEqual(["created", "error"]);
     expect(results[1].error).toContain("boom");
+  });
+});
+
+// A deliverability record shares its name with whatever the customer (or another
+// email provider mid-migration) already publishes there, so upsertRecord must
+// report rather than overwrite. The DKIM CNAMEs are ours alone and still patch.
+describe("upsertRecord conflicts on deliverability records", () => {
+  const returnPathMx: DnsRecord = {
+    type: "MX",
+    name: "send.updates.acme.com",
+    value: "feedback-smtp.eu-north-1.amazonses.com",
+    priority: 10,
+    description: "Return-Path (MX)",
+    required: false,
+    group: "deliverability",
+  };
+  const dmarc: DnsRecord = {
+    type: "TXT",
+    name: "_dmarc.updates.acme.com",
+    value: "v=DMARC1; p=none;",
+    description: "DMARC (recommended)",
+    required: false,
+    group: "deliverability",
+  };
+
+  it("refuses to repoint another provider's Return-Path MX", async () => {
+    const { calls } = mockCloudflare([
+      {
+        match: (c) => c.method === "GET",
+        result: [
+          {
+            id: "rec1",
+            type: "MX",
+            name: returnPathMx.name,
+            content: "feedback-smtp.us-east-1.amazonses.com",
+            priority: 10,
+          },
+        ],
+      },
+    ]);
+    const res = await upsertRecord("tok", "zone1", returnPathMx);
+    expect(res.action).toBe("conflict");
+    expect(res.existing).toBe("10 feedback-smtp.us-east-1.amazonses.com");
+    // The whole point: the zone is left untouched.
+    expect(calls.some((c) => c.method === "PATCH" || c.method === "POST")).toBe(false);
+  });
+
+  it("refuses to downgrade a stricter existing DMARC policy", async () => {
+    const { calls } = mockCloudflare([
+      {
+        match: (c) => c.method === "GET",
+        result: [
+          {
+            id: "rec2",
+            type: "TXT",
+            name: dmarc.name,
+            content: '"v=DMARC1; p=reject; rua=mailto:dmarc@acme.com"',
+          },
+        ],
+      },
+    ]);
+    const res = await upsertRecord("tok", "zone1", dmarc);
+    expect(res.action).toBe("conflict");
+    // Reported unquoted, the way it reads in a DNS panel.
+    expect(res.existing).toBe("v=DMARC1; p=reject; rua=mailto:dmarc@acme.com");
+    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
+  });
+
+  it("still creates a deliverability record when the name is free", async () => {
+    mockCloudflare([
+      { match: (c) => c.method === "GET", result: [] },
+      { match: (c) => c.method === "POST", result: { id: "rec3" } },
+    ]);
+    expect((await upsertRecord("tok", "zone1", dmarc)).action).toBe("created");
+  });
+
+  it("still skips an identical deliverability record", async () => {
+    mockCloudflare([
+      {
+        match: (c) => c.method === "GET",
+        result: [{ id: "rec4", type: "TXT", name: dmarc.name, content: `"${dmarc.value}"` }],
+      },
+    ]);
+    expect((await upsertRecord("tok", "zone1", dmarc)).action).toBe("skipped");
+  });
+
+  it("still overwrites a differing DKIM CNAME, which is ours alone", async () => {
+    const { calls } = mockCloudflare([
+      {
+        match: (c) => c.method === "GET",
+        result: [
+          { id: "rec5", type: "CNAME", name: dkim.name, content: "stale.dkim.amazonses.com", proxied: false },
+        ],
+      },
+      { match: (c) => c.method === "PATCH", result: { id: "rec5" } },
+    ]);
+    expect((await upsertRecord("tok", "zone1", dkim)).action).toBe("updated");
+    expect(calls.some((c) => c.method === "PATCH")).toBe(true);
+  });
+});
+
+describe("buildAuthorizeUrl scope encoding", () => {
+  const config = {
+    clientId: "cid",
+    clientSecret: "secret",
+    tokenEndpoint: "https://dash.cloudflare.com/oauth2/token",
+    authorizeEndpoint: "https://dash.cloudflare.com/oauth2/auth",
+    revokeEndpoint: "https://dash.cloudflare.com/oauth2/revoke",
+    userinfoEndpoint: "https://dash.cloudflare.com/oauth2/userinfo",
+    redirectUri: "https://app.example/api/integrations/cloudflare/callback",
+    scopes: "dns.write zone.read offline_access",
+  };
+
+  // A "+" here is read as a literal plus by any server that percent-decodes the
+  // query without form-decoding it, collapsing three scopes into one unknown one.
+  // Losing offline_access that way costs us the refresh token, and the connection
+  // then dies at the first token expiry with no way back.
+  it("percent-encodes the spaces between scopes rather than using '+'", () => {
+    const url = buildAuthorizeUrl(config, { state: "st", codeChallenge: "ch" });
+    const scope = url.match(/[?&]scope=([^&]*)/)?.[1];
+    expect(scope).toBe("dns.write%20zone.read%20offline_access");
+    expect(url).not.toContain("+");
+  });
+
+  it("round-trips to the exact space-delimited scope list a server should parse", () => {
+    const url = buildAuthorizeUrl(config, { state: "st", codeChallenge: "ch" });
+    expect(new URL(url).searchParams.get("scope")).toBe("dns.write zone.read offline_access");
+  });
+
+  it("omits scope entirely when none are configured", () => {
+    const url = buildAuthorizeUrl({ ...config, scopes: "" }, { state: "st", codeChallenge: "ch" });
+    expect(new URL(url).searchParams.has("scope")).toBe(false);
   });
 });

@@ -84,13 +84,23 @@ export function buildAuthorizeUrl(
   params: { state: string; codeChallenge: string },
 ): string {
   const url = new URL(config.authorizeEndpoint);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("client_id", config.clientId);
-  url.searchParams.set("redirect_uri", config.redirectUri);
-  url.searchParams.set("state", params.state);
-  url.searchParams.set("code_challenge", params.codeChallenge);
-  url.searchParams.set("code_challenge_method", "S256");
-  if (config.scopes) url.searchParams.set("scope", config.scopes);
+  const query = new URLSearchParams({
+    response_type: "code",
+    client_id: config.clientId,
+    redirect_uri: config.redirectUri,
+    state: params.state,
+    code_challenge: params.codeChallenge,
+    code_challenge_method: "S256",
+  });
+  if (config.scopes) query.set("scope", config.scopes);
+  // `scope` is a space-delimited list, and URLSearchParams serialises spaces as
+  // "+". A server that percent-decodes the query without form-decoding it reads
+  // that plus literally and sees ONE unknown scope instead of a list — which
+  // silently costs us scopes (a missing offline_access means no refresh token, so
+  // the connection dies at the first token expiry with no way back). %20 is
+  // unambiguous to both kinds of parser. Safe as a blanket replace: no other
+  // parameter here can contain a space.
+  url.search = query.toString().replace(/\+/g, "%20");
   return url.toString();
 }
 

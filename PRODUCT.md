@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-07-29**.
+> Last verified against the codebase: **2026-08-03**.
 
 ---
 
@@ -445,9 +445,21 @@ the same "Saving… / Saved" indicator as the campaign composer.
 ### 6.5 Sending domains (deliverability)
 - Add a domain and get the DKIM/SPF/DMARC DNS records to publish.
 - **Auto-check / manual recheck** of verification status.
+- **Recovery from a timed-out verification.** SES stops watching for the DKIM
+  records 72 hours after a domain is added and then reports a permanent failure.
+  If the records are published later, a recheck detects that they resolve
+  correctly and reopens verification against them — the published records stay
+  valid, so there is nothing for the user to re-add.
 - Optional **Return-Path (custom MAIL FROM)** setup for better deliverability.
 - **One-click DNS auto-configuration via Cloudflare OAuth** (connect a Cloudflare
   account; Day3 writes the records for you).
+  - **Existing records are never overwritten.** The required DKIM records sit at
+    names only Day3 uses, so they are always written. The optional deliverability
+    records (Return-Path, DMARC) share their names with whatever the account may
+    already publish — another provider's Return-Path during a migration, or a
+    stricter DMARC policy — so when a different value is already there, Day3 leaves
+    it alone and reports it, showing both values side by side for the user to
+    decide. Verification is unaffected either way.
 
 ### 6.6 Senders (From identities)
 - A **Senders** page manages the From name + address pairs campaigns send as. Each

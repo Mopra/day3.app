@@ -70,8 +70,15 @@ type CfDnsRecord = {
   priority?: number; // present on MX records
 };
 
-export type RecordAction = "created" | "updated" | "skipped" | "error";
-export type RecordWriteResult = { record: DnsRecord; action: RecordAction; error?: string };
+export type RecordAction = "created" | "updated" | "skipped" | "conflict" | "error";
+export type RecordWriteResult = {
+  record: DnsRecord;
+  action: RecordAction;
+  error?: string;
+  // On "conflict": the value already published at that name, for the UI to show
+  // alongside ours so the customer can decide which they want.
+  existing?: string;
+};
 
 // Cloudflare stores TXT content wrapped in double quotes. Send it quoted so
 // Cloudflare doesn't rewrite (and warn about) it, and compare quote-insensitively
@@ -93,8 +100,25 @@ function toCfPayload(record: DnsRecord) {
   return record.type === "MX" ? { ...base, priority: record.priority ?? 10 } : base;
 }
 
+// Render an existing Cloudflare record's value the way the customer would read it
+// in their DNS panel (unquoted TXT; MX prefixed with its priority).
+function describeExisting(match: CfDnsRecord): string {
+  const content = normalizeContent(match.type, match.content);
+  return match.type === "MX" && match.priority != null ? `${match.priority} ${content}` : content;
+}
+
 // Idempotent single-record write: skip an identical existing record, patch one
 // that differs, otherwise create it. Safe to re-run (house rule: idempotency).
+//
+// One exception to "patch one that differs": a `group: "deliverability"` record
+// (Return-Path MX/SPF, DMARC) lives at a name the customer may already be using —
+// another email provider's bounce Return-Path, or their own DMARC policy. Silently
+// overwriting those repoints another provider's feedback or downgrades a stricter
+// policy, neither of which is ours to decide, so when the published *value* differs
+// we report a "conflict" and leave the zone alone. A matching value with only the
+// MX priority off is our own record, and still gets corrected. The DKIM CNAMEs are
+// unambiguously ours (`<token>._domainkey`) so those always patch — and they're the
+// only records verification actually depends on.
 export async function upsertRecord(
   token: string,
   zoneId: string,
@@ -118,6 +142,12 @@ export async function upsertRecord(
     const samePriority = record.type !== "MX" || match.priority === (record.priority ?? 10);
     if (sameContent && proxiedOk && samePriority) {
       return { record, action: "skipped" };
+    }
+    // Only a differing *value* means the record is somebody else's. A matching host
+    // with the wrong MX priority is our own record needing a correction, so that
+    // still patches.
+    if (!sameContent && (record.group ?? "verify") === "deliverability") {
+      return { record, action: "conflict", existing: describeExisting(match) };
     }
     await cfFetch(token, `/zones/${zoneId}/dns_records/${match.id}`, {
       method: "PATCH",
@@ -217,9 +247,25 @@ async function exchangeToken(
     throw new Error(msg);
   }
   const expiresIn = typeof json.expires_in === "number" ? json.expires_in : 3600;
+  const refreshToken = (json.refresh_token as string) ?? fallbackRefresh ?? "";
+  // A grant with no refresh token still *works* — right up until the access token
+  // expires, at which point the connection is unrecoverable and every DNS write
+  // fails with "reconnect Cloudflare". That's hours-to-days after consent, far from
+  // the cause, so make the noise now. Usually means the OAuth client isn't
+  // registered for `offline_access`: the authorization server grants only the
+  // scopes its client is configured for and quietly drops the rest from `scope`,
+  // so consent still succeeds and nothing looks wrong until much later.
+  if (!refreshToken) {
+    console.error(
+      "[cloudflare-oauth] token response carried no refresh_token — this connection will " +
+        `stop working in ~${expiresIn}s and will need manual reconsent. Granted scope: ` +
+        `"${json.scope ?? "(none)"}". Check that offline_access is among the OAuth ` +
+        "client's configured scopes.",
+    );
+  }
   return {
     accessToken: json.access_token as string,
-    refreshToken: (json.refresh_token as string) ?? fallbackRefresh ?? "",
+    refreshToken,
     expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
     scope: json.scope as string | undefined,
   };

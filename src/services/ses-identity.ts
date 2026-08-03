@@ -1,6 +1,7 @@
 import {
   CreateEmailIdentityCommand,
   GetEmailIdentityCommand,
+  PutEmailIdentityDkimSigningAttributesCommand,
   PutEmailIdentityMailFromAttributesCommand,
   SESv2Client,
 } from "@aws-sdk/client-sesv2";
@@ -174,6 +175,40 @@ export async function createDomainIdentity(
   } catch (err) {
     console.error("[ses] PutEmailIdentityMailFromAttributes failed:", err);
   }
+  return getDomainIdentity(domain, region);
+}
+
+// Reopen SES's DKIM verification window for a domain it has given up on.
+//
+// SES polls for the Easy DKIM CNAMEs for 72 hours after the identity is created.
+// If they aren't live by then it parks DkimAttributes.Status at FAILED — a
+// terminal state it never re-polls, so a customer who adds the records on day 4
+// stays broken forever no matter how correct their DNS is. Asking SES to
+// regenerate the signing key resets the status to PENDING and restarts the clock.
+//
+// Because the signing configuration we send matches what's already on the
+// identity, SES reuses the existing key: the tokens (and therefore the customer's
+// published CNAMEs) survive, and verification simply resumes against them —
+// usually flipping to SUCCESS within a minute. Treat the returned records as
+// authoritative anyway and re-publish if they differ, so a future key-length
+// change (which would rotate the tokens) can't strand the domain silently.
+//
+// Callers should only reach for this when the published records provably resolve,
+// i.e. DNS is not the problem. See the self-heal in /api/domains/[id]/check.
+export async function restartDkim(
+  domain: string,
+  region: string,
+): Promise<DomainIdentityState> {
+  const c = client(region);
+  await c.send(
+    new PutEmailIdentityDkimSigningAttributesCommand({
+      EmailIdentity: domain,
+      SigningAttributesOrigin: "AWS_SES",
+      // Required even for Easy DKIM: omitting it fails with "Signing key length
+      // parameter is null or empty". Matches createDomainIdentity's key length.
+      SigningAttributes: { NextSigningKeyLength: "RSA_2048_BIT" },
+    }),
+  );
   return getDomainIdentity(domain, region);
 }
 

@@ -28,6 +28,22 @@ export function recheckWindowExpired(d: SendingDomain, now: number = Date.now())
   return now - ts > DOMAIN_RECHECK_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 }
 
+// Is this domain's DKIM failure the recoverable kind?
+//
+// SES polls for the DKIM CNAMEs for 72 hours after the identity is created, then
+// parks the status at FAILED and never re-polls — so records added on day 4 leave
+// the domain broken forever. If those records provably resolve in public DNS then
+// nothing is wrong at the DNS host: the verification window merely closed, and
+// reopening it (see restartDkim) is the only way forward.
+//
+// Shared deliberately: the /check route uses this to decide whether to restart,
+// and the setup guide uses it to decide whether to tell the user a retry will
+// work. Two independent conditions would eventually disagree and the UI would
+// promise a fix that never runs.
+export function dkimWindowClosed(dkimStatus: string, requiredRecordsResolve: boolean): boolean {
+  return dkimStatus === "failed" && requiredRecordsResolve;
+}
+
 // Safe-parse the stored records. Legacy rows predate the `required` and `group`
 // flags, so we default them (those were DKIM CNAMEs — required, verify group).
 // Stored values override the defaults via the spread.

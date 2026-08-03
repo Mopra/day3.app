@@ -62,15 +62,32 @@ CLOUDFLARE_OAUTH_AUTHORIZE_ENDPOINT=https://dash.cloudflare.com/oauth2/auth
 CLOUDFLARE_OAUTH_TOKEN_ENDPOINT=https://dash.cloudflare.com/oauth2/token
 CLOUDFLARE_OAUTH_REVOKE_ENDPOINT=https://dash.cloudflare.com/oauth2/revoke
 CLOUDFLARE_OAUTH_USERINFO_ENDPOINT=https://dash.cloudflare.com/oauth2/userinfo   # best-effort "connected as" label
-CLOUDFLARE_OAUTH_SCOPES=dns.write zone.read   # REQUIRED: Cloudflare 400s the consent if scope is empty
+CLOUDFLARE_OAUTH_SCOPES=dns.write zone.read offline_access   # REQUIRED: Cloudflare 400s the consent if scope is empty
 ```
 > Token Authentication Method is **client_secret_basic** (matches the code).
 > Cloudflare **requires** the `scope` param at consent — an empty scope returns a
 > 400 from `/oauth/consent-form/api/consent`. The exact scope ids (from
 > `GET api.cloudflare.com/client/v4/oauth/scopes`) for this client are:
 > **`dns.write`** (DNS edit) and **`zone.read`**. They must match the client's
-> configured scopes. No `offline_access` scope exists — refresh tokens are issued
-> by default.
+> configured scopes.
+>
+> ⚠️ **`offline_access` is required for a refresh token, and asking for it here is
+> not enough.** Cloudflare's discovery document
+> (`https://dash.cloudflare.com/.well-known/openid-configuration`) lists
+> `offline_access` under `scopes_supported` and `refresh_token` under
+> `grant_types_supported` — an earlier revision of this doc wrongly claimed the
+> scope didn't exist and that refresh tokens came by default. They do not.
+>
+> Cloudflare grants only the scopes the **OAuth client is registered for** and
+> drops the rest from the returned `scope` *without failing the consent*. So
+> `offline_access` must also be ticked on the client itself (Manage account → OAuth
+> clients → the Day3 client). Miss it and you get a working connection that dies at
+> the first access-token expiry with no refresh path — `getValidAccessToken` then
+> marks the row `expired` and the user must reconnect by hand, permanently.
+>
+> To confirm a connection is healthy, check that `dns_integrations.scope` contains
+> `offline_access` and that the stored refresh token is non-empty. The token
+> exchange logs an error when the response carries no `refresh_token`.
 
 ---
 

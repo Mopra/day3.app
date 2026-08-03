@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  dkimWindowClosed,
   domainState,
   isVerified,
   parseDnsRecords,
@@ -130,5 +131,27 @@ describe("parseDnsRecords grouping (drives verify vs deliverability sections)", 
     expect(parseDnsRecords(null)).toEqual([]);
     expect(parseDnsRecords("{not json")).toEqual([]);
     expect(parseDnsRecords(JSON.stringify({ not: "an array" }))).toEqual([]);
+  });
+});
+
+describe("dkimWindowClosed", () => {
+  // The recoverable case: SES stopped polling before the records went live, so the
+  // DNS is correct and only the provider's verification window needs reopening.
+  it("is true when DKIM failed but the required records resolve", () => {
+    expect(dkimWindowClosed("failed", true)).toBe(true);
+  });
+
+  // Records genuinely missing/mistyped — restarting would just rotate tokens the
+  // customer hasn't published, and the UI must still say "fix your DNS".
+  it("is false when DKIM failed and the records do not resolve", () => {
+    expect(dkimWindowClosed("failed", false)).toBe(false);
+  });
+
+  // Guards the self-heal against ever touching a healthy or in-flight identity:
+  // only a terminal failure is recoverable this way.
+  it("is false for any non-failed DKIM status, even with records live", () => {
+    for (const status of ["success", "pending", "not_started", ""]) {
+      expect(dkimWindowClosed(status, true)).toBe(false);
+    }
   });
 });

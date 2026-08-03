@@ -76,6 +76,11 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
 
   const results = await writeRecords(token, zone.id, records);
   const errors = results.filter((r) => r.action === "error");
+  // Conflicts are a deliberate no-op on an optional deliverability record we
+  // declined to overwrite, not a failure: verification only needs the DKIM CNAMEs.
+  // Keep them out of dnsWriteError so the domain doesn't wear an error banner for
+  // working DNS — they're returned in `results` for the UI to present as a choice.
+  const conflicts = results.filter((r) => r.action === "conflict");
 
   await db
     .update(sendingDomains)
@@ -93,7 +98,22 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
     entityId: domain.id,
     status: errors.length ? "failed" : "completed",
     error: errors.length ? errors.map((e) => e.error).join("; ") : undefined,
-    payload: { zoneId: zone.id, actions: results.map((r) => ({ name: r.record.name, action: r.action })) },
+    payload: {
+      zoneId: zone.id,
+      actions: results.map((r) => ({ name: r.record.name, action: r.action })),
+      // Record what we declined to overwrite, so an operator debugging a
+      // deliverability complaint can see the zone already had its own value.
+      ...(conflicts.length
+        ? {
+            conflicts: conflicts.map((c) => ({
+              name: c.record.name,
+              type: c.record.type,
+              existing: c.existing,
+              ours: c.record.value,
+            })),
+          }
+        : {}),
+    },
   });
 
   const fresh = await findDomain(db, account.id, domain.id);

@@ -23,6 +23,7 @@ import { copyText } from "@/components/copy-button";
 import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
+  dkimWindowClosed,
   domainState,
   parseDnsRecords,
   recheckWindowExpired,
@@ -231,7 +232,10 @@ export function DomainSetupGuide({
       hint: verified
         ? "Verified"
         : state === "failed"
-          ? "Couldn't verify"
+          ? // Records live but verification failed ⇒ the window closed, not bad DNS.
+            dns.requiredResolved
+            ? "Retry to finish"
+            : "Couldn't verify"
           : stale
             ? "Needs attention"
             : dns.requiredResolved
@@ -460,9 +464,10 @@ function StepHeader({
 
 type CfConnection = { status: string; label: string | null; scope: string | null; connectedAt: string };
 type CfWriteResult = {
-  record: { name: string; type: string };
-  action: "created" | "updated" | "skipped" | "error";
+  record: { name: string; type: string; value: string; description?: string };
+  action: "created" | "updated" | "skipped" | "conflict" | "error";
   error?: string;
+  existing?: string;
 };
 
 // One-click DNS for Cloudflare users: connect via OAuth, then we write the
@@ -485,6 +490,9 @@ function CloudflareAutoConfig({
   const [configuring, setConfiguring] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [done, setDone] = useState(false);
+  // Optional records we declined to overwrite because the zone already had its own
+  // value there. Not an error — a choice only the customer can make.
+  const [conflicts, setConflicts] = useState<CfWriteResult[]>([]);
 
   const loadConnection = useCallback(async () => {
     try {
@@ -510,11 +518,26 @@ function CloudflareAutoConfig({
         toast.error(`Some records couldn't be written: ${errors[0].error}`);
         return;
       }
-      const written = res.results.filter((r) => r.action !== "skipped").length;
+      const left = res.results.filter((r) => r.action === "conflict");
+      setConflicts(left);
+      const written = res.results.filter(
+        (r) => r.action === "created" || r.action === "updated",
+      ).length;
+      // Conflicts don't block verification (only the DKIM records do), so this stays
+      // a success — but say plainly that we left something alone rather than
+      // claiming everything was configured.
       toast.success(
         written > 0
           ? `Added ${written} DNS record${written === 1 ? "" : "s"} to Cloudflare — verifying now.`
-          : "Your Cloudflare DNS is already set up — verifying now.",
+          : left.length
+            ? // "Already set up" would be misleading when we skipped something.
+              "Your DKIM records are already in place — verifying now."
+            : "Your Cloudflare DNS is already set up — verifying now.",
+        left.length
+          ? {
+              description: `We left ${left.length} existing record${left.length === 1 ? "" : "s"} untouched — see below.`,
+            }
+          : undefined,
       );
       setDone(true);
       onConfigured();
@@ -597,31 +620,34 @@ function CloudflareAutoConfig({
   );
 
   return (
-    <div className="rounded-xl border border-primary/20 bg-primary/5 p-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-3">
-          <Cloud className="size-6 shrink-0 text-primary" />
-          <div>
-            <h3 className="font-medium">{heading}</h3>
-            <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+    <div className="space-y-4">
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <Cloud className="size-6 shrink-0 text-primary" />
+            <div>
+              <h3 className="font-medium">{heading}</h3>
+              <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {connection && !expired && (
+              <Button onClick={configure} disabled={configuring || done}>
+                {configuring ? <OrbitLoader size={16} /> : <Zap />}
+                {done ? "Records added" : configuring ? "Configuring…" : "Configure automatically"}
+              </Button>
+            )}
+            {(expired || !connection) && reconnectButton}
+            {connection && (
+              <Button variant="ghost" size="sm" onClick={disconnect} disabled={disconnecting}>
+                {disconnecting ? <OrbitLoader size={16} /> : null}
+                Disconnect
+              </Button>
+            )}
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {connection && !expired && (
-            <Button onClick={configure} disabled={configuring || done}>
-              {configuring ? <OrbitLoader size={16} /> : <Zap />}
-              {done ? "Records added" : configuring ? "Configuring…" : "Configure automatically"}
-            </Button>
-          )}
-          {(expired || !connection) && reconnectButton}
-          {connection && (
-            <Button variant="ghost" size="sm" onClick={disconnect} disabled={disconnecting}>
-              {disconnecting ? <OrbitLoader size={16} /> : null}
-              Disconnect
-            </Button>
-          )}
-        </div>
       </div>
+      {conflicts.length > 0 && <DnsConflictNotice conflicts={conflicts} />}
     </div>
   );
 }
@@ -642,6 +668,55 @@ function DnsWriteErrorNotice({ error }: { error: string }) {
           {error ? <> — {error}.</> : "."} You can retry the one-click setup below, or add the
           records yourself using the values further down. Either path verifies the domain.
         </p>
+      </div>
+    </div>
+  );
+}
+
+/* ----------------------------------------------------------------------------- */
+
+// Optional deliverability records we found already in use and deliberately did NOT
+// overwrite (see upsertRecord). Deliberately not styled as an error: the domain
+// verifies regardless, and the existing value may well be the one they want kept
+// (e.g. another provider's Return-Path while they migrate, or a stricter DMARC
+// policy than our default). The decision is theirs, so show both values plainly.
+function DnsConflictNotice({ conflicts }: { conflicts: CfWriteResult[] }) {
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border bg-muted/40 p-5 sm:flex-row sm:items-start">
+      <AlertCircle className="size-6 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 space-y-3">
+        <div className="space-y-1">
+          <h3 className="font-medium">
+            We left {conflicts.length} existing record{conflicts.length === 1 ? "" : "s"} alone
+          </h3>
+          <p className="text-sm text-muted-foreground">
+            Your DNS already had {conflicts.length === 1 ? "a value" : "values"} at{" "}
+            {conflicts.length === 1 ? "this name" : "these names"}, so we didn&apos;t touch{" "}
+            {conflicts.length === 1 ? "it" : "them"} — overwriting could break another email
+            provider or weaken a policy you set on purpose. These are optional deliverability
+            records, so your domain still verifies either way. Change them yourself only if you
+            want ours instead.
+          </p>
+        </div>
+        <ul className="space-y-3 text-sm">
+          {conflicts.map((c) => (
+            <li key={`${c.record.type}:${c.record.name}`} className="min-w-0 space-y-1">
+              <p className="font-medium">
+                {c.record.type} <span className="font-normal text-muted-foreground">·</span>{" "}
+                <span className="break-all font-normal">{c.record.name}</span>
+                {c.record.description ? (
+                  <span className="font-normal text-muted-foreground"> ({c.record.description})</span>
+                ) : null}
+              </p>
+              <p className="break-all text-muted-foreground">
+                <span className="text-foreground">Yours:</span> {c.existing ?? "—"}
+              </p>
+              <p className="break-all text-muted-foreground">
+                <span className="text-foreground">Ours:</span> {c.record.value}
+              </p>
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );
@@ -727,6 +802,12 @@ function StatusHero({
   // DKIM records are live in public DNS but SES hasn't flipped to verified yet —
   // the part we control is done, so say so instead of a generic "waiting".
   const confirmed = !failed && dnsResolved;
+  // Failed *and* the records resolve: the provider closed its verification window
+  // before the records went live. Nothing is wrong at the DNS host, so this must
+  // not send the user off to "fix" records that are already correct. Same
+  // predicate the /check route restarts on, so "retry works" is never a promise
+  // the backend won't keep.
+  const windowClosed = failed && dkimWindowClosed(domain.dkimStatus ?? "", dnsResolved);
 
   const tone = failed
     ? "border-destructive/30 bg-destructive/5"
@@ -753,21 +834,34 @@ function StatusHero({
       tone={tone}
       indicator={indicator}
       title={
-        failed
-          ? "We couldn't verify this domain yet"
-          : confirmed
-            ? "DNS records confirmed — finalizing"
-            : "Waiting for your DNS records"
+        windowClosed
+          ? "Verification timed out — ready to retry"
+          : failed
+            ? "We couldn't verify this domain yet"
+            : confirmed
+              ? "DNS records confirmed — finalizing"
+              : "Waiting for your DNS records"
       }
       body={
-        failed
-          ? "The records below may be missing or mistyped. Fix them at your DNS host and we'll keep checking automatically."
-          : confirmed
-            ? "Your DKIM records are live. We're finalizing verification with your email provider — this usually takes a few minutes, and we're checking continuously."
-            : "Add the DNS records below at your domain host. We check automatically every few minutes — most domains verify within an hour, though DNS can take up to 48 hours."
+        windowClosed
+          ? "Your DKIM records are live and correct — they just went up after your email provider's verification window had closed, so it stopped listening. Retry now to reopen it: your records stay exactly as they are, and verification usually completes within a minute."
+          : failed
+            ? "We can't see your DKIM records in public DNS yet. Open step 1 to compare them against what's at your DNS host, then retry — automatic checks have stopped for this domain, so it won't recover on its own."
+            : confirmed
+              ? "Your DKIM records are live. We're finalizing verification with your email provider — this usually takes a few minutes, and we're checking continuously."
+              : "Add the DNS records below at your domain host. We check automatically every few minutes — most domains verify within an hour, though DNS can take up to 48 hours."
       }
       meta={meta}
-      action={<CheckButton checking={checking} onCheck={onCheck} label="Check now" variant="outline" />}
+      action={
+        <CheckButton
+          checking={checking}
+          onCheck={onCheck}
+          // A failed domain never recovers on its own (cron sweeps only "pending"),
+          // so the retry is the whole path forward — make it the primary action.
+          label={failed ? "Retry verification" : "Check now"}
+          variant={failed ? "default" : "outline"}
+        />
+      }
     />
   );
 }
