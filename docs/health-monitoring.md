@@ -36,6 +36,11 @@ while the HTTP code stays 200. Monitor the JSON body to alert on those.
 }
 ```
 
+Every DB-backed sub-check reports a `durationMs`, and each one runs under a
+client-side deadline (4s per check, 9s for the whole handler). **The endpoint
+always answers** — see "Why the probe can never hang" below for why that property
+matters more than it sounds.
+
 - **db** — a `select 1` round-trip. `ok:false` → HTTP 503.
 - **cron** — the most recent `cron` row in `job_logs` (written at the end of every
   `runScheduledSweeps`). Stale if older than 40 minutes (>2 missed 15-min runs),
@@ -44,6 +49,49 @@ while the HTTP code stays 200. Monitor the JSON body to alert on those.
   every 30s. Stale after 90s. If Redis is unreachable from the web tier the
   worker check reports `"heartbeat unavailable"` and stays `ok` — the cron check
   still catches a dead worker against the DB (which never needs Redis).
+
+## Why the probe can never hang
+
+Diagnosed 2026-08-04, after `go.day3.app/api/health` spent weeks flapping
+"offline" in runs of ~5 consecutive checks and then recovering on its own. The
+monitor recorded `TTFB timeout after 21000ms` every time — never a status code.
+
+The cause was not slowness anywhere. TLS to the Vercel edge completed in ~100ms,
+the Supabase pooler answered in ~330ms and Redis in ~25ms throughout, and other
+API routes served normally during the outage windows. What happened is that a
+serverless instance froze between invocations holding a Postgres socket whose peer
+had gone away without ever delivering a FIN or RST. On thaw, the instance wrote
+`select 1` into that half-open socket, and:
+
+- `connect_timeout` did not apply — the connection was already established;
+- `statement_timeout` did not apply — it is a **server-side** parameter, and the
+  query never reached a server;
+- **postgres.js has no client-side query timeout at all.**
+
+So the query hung indefinitely. The request produced *no response byte*, which a
+monitor can only record as a TTFB timeout — indistinguishable from the whole app
+being down. And because the web pool is `max: 1`, the abandoned query held the
+instance's only connection, so every later request routed to that warm instance
+hung the same way. That is the run of ~5 failures; it ended when the platform
+recycled the instance.
+
+Reproduced with a TCP proxy that blackholes an established connection: a bare
+`select 1` never returned in over 60 seconds despite `statement_timeout: 15000`.
+
+Three properties keep it fixed (`src/lib/deadline.ts`, `src/db/client.ts`):
+
+1. **Client-side deadlines** on every dependency (`withDeadline`). A wedged socket
+   becomes a fast, explicit 503 rather than silence.
+2. **`resetDb()` on a blown deadline.** A timed-out query is abandoned, not
+   cancelled, and keeps occupying its connection — so the pool *must* be thrown
+   away or the wedge outlives the request. This is what collapses a multi-minute
+   run of failures into a single failed probe (verified: 1 of 5 vs 5 of 5).
+3. **`max_lifetime` + `keep_alive`** on the web pool, so stale sockets are recycled
+   and dead peers are detected instead of trusted indefinitely.
+
+The general lesson, which applies well beyond this endpoint: **`statement_timeout`
+is a runaway-query cap, not a hang guard.** Any web-tier query that must not hang
+needs a client-side ceiling too.
 
 ### Querying cron staleness directly (SQL)
 

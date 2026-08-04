@@ -6,6 +6,7 @@ import {
   HEARTBEAT_KEY,
   HEARTBEAT_STALE_MS,
 } from "../src/lib/heartbeat";
+import { isDeadlineError, withDeadline } from "../src/lib/deadline";
 import { jobLogs } from "../src/db/schema";
 import { newId, nowIso } from "../src/lib/ids";
 import type { Db } from "../src/db/client";
@@ -150,6 +151,115 @@ describe("checkHealth", () => {
     const report = await checkHealth({ db, heartbeat: null });
     expect(report.checks.worker.ok).toBe(true); // unknown-but-ok
     expect(report.status).toBe("ok");
+  });
+
+  it("reports per-check durations so a slow dependency is identifiable", async () => {
+    const db = await testDb();
+    await seedCronRun(db, 60_000);
+    const report = await checkHealth({ db, heartbeat: null });
+    expect(report.checks.db.durationMs).toEqual(expect.any(Number));
+    expect(report.checks.cron.durationMs).toEqual(expect.any(Number));
+  });
+});
+
+// The failure mode that caused the production incident: a connection that is
+// "established" but whose queries never resolve and never reject (a half-open
+// socket after a serverless instance thaws). statement_timeout is server-side so
+// it never fires, and postgres.js has no client-side query timeout — without a
+// deadline here the probe returns NO RESPONSE AT ALL and the monitor records a
+// TTFB timeout, indistinguishable from the app being down.
+describe("checkHealth against a wedged connection", () => {
+  const hangForever = () => new Promise<never>(() => {});
+
+  const wedgedDb = {
+    execute: hangForever,
+    query: { jobLogs: { findFirst: hangForever } },
+  } as unknown as Db;
+
+  it("returns 503 fast instead of hanging when the db check never settles", async () => {
+    const started = Date.now();
+    const report = await checkHealth({ db: wedgedDb, heartbeat: null, dbTimeoutMs: 50 });
+
+    expect(report.status).toBe("unhealthy");
+    expect(healthHttpStatus(report)).toBe(503);
+    expect(report.checks.db.detail).toBe("database check timed out");
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
+
+  it("discards the wedged pool so the next request doesn't inherit it", async () => {
+    let wedgedCalls = 0;
+    await checkHealth({
+      db: wedgedDb,
+      heartbeat: null,
+      dbTimeoutMs: 50,
+      onDbWedged: () => {
+        wedgedCalls++;
+      },
+    });
+    expect(wedgedCalls).toBe(1);
+  });
+
+  it("degrades (200) when only the cron query is wedged, and drops the pool", async () => {
+    const cronWedgedDb = {
+      execute: async () => undefined,
+      query: { jobLogs: { findFirst: hangForever } },
+    } as unknown as Db;
+
+    let wedgedCalls = 0;
+    const report = await checkHealth({
+      db: cronWedgedDb,
+      heartbeat: null,
+      cronTimeoutMs: 50,
+      onDbWedged: () => {
+        wedgedCalls++;
+      },
+    });
+
+    expect(report.checks.db.ok).toBe(true);
+    expect(report.checks.cron.ok).toBe(false);
+    expect(report.checks.cron.detail).toBe("cron check timed out");
+    expect(healthHttpStatus(report)).toBe(200); // the tier still serves
+    expect(wedgedCalls).toBe(1);
+  });
+
+  it("does not leak the internal timedOut marker into the public body", async () => {
+    const report = await checkHealth({ db: wedgedDb, heartbeat: null, dbTimeoutMs: 50 });
+    expect(JSON.stringify(report)).not.toContain("timedOut");
+  });
+
+  it("leaves onDbWedged alone when the connection is refused rather than wedged", async () => {
+    let wedgedCalls = 0;
+    const report = await checkHealth({
+      db: downDb,
+      heartbeat: null,
+      onDbWedged: () => {
+        wedgedCalls++;
+      },
+    });
+    // A refused connection already failed fast; there is no stuck pool to discard.
+    expect(report.checks.db.detail).toBe("database unreachable");
+    expect(wedgedCalls).toBe(0);
+  });
+});
+
+describe("withDeadline", () => {
+  it("passes through a value that settles in time", async () => {
+    await expect(withDeadline(Promise.resolve("done"), 1000, "x")).resolves.toBe("done");
+  });
+
+  it("propagates the original rejection rather than masking it as a deadline", async () => {
+    const boom = Promise.reject(new Error("boom"));
+    await expect(withDeadline(boom, 1000, "x")).rejects.toThrow("boom");
+    await expect(withDeadline(Promise.reject(new Error("boom2")), 1000, "x")).rejects.not.toThrow(
+      /deadline/,
+    );
+  });
+
+  it("rejects with a DeadlineError once the ceiling passes", async () => {
+    const never = new Promise<never>(() => {});
+    const err = await withDeadline(never, 20, "slow thing").catch((e: unknown) => e);
+    expect(isDeadlineError(err)).toBe(true);
+    expect((err as Error).message).toContain("slow thing");
   });
 });
 

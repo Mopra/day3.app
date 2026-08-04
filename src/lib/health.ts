@@ -4,6 +4,7 @@ import { jobLogs } from "../db/schema";
 import { buildInfo, type BuildInfo } from "./version";
 import type { HeartbeatState } from "./heartbeat";
 import { logger } from "./logger";
+import { isDeadlineError, withDeadline } from "./deadline";
 
 // Readiness/health snapshot for the web tier. Three things matter for "is this
 // service actually working":
@@ -36,8 +37,8 @@ export type HealthReport = {
   status: "ok" | "degraded" | "unhealthy";
   build: BuildInfo;
   checks: {
-    db: CheckResult;
-    cron: CheckResult & { lastRunAt?: string; ageMs?: number };
+    db: CheckResult & { durationMs?: number };
+    cron: CheckResult & { lastRunAt?: string; ageMs?: number; durationMs?: number };
     worker: CheckResult & { lastBeatAt?: string; ageMs?: number };
   };
   timestamp: string;
@@ -46,37 +47,59 @@ export type HealthReport = {
 // Generic, constant detail strings returned to the (public) client. The real
 // driver error is sent to the log / error sink, never the response body.
 const DB_UNREACHABLE_DETAIL = "database unreachable";
+const DB_TIMEOUT_DETAIL = "database check timed out";
 const CRON_CHECK_FAILED_DETAIL = "cron check failed";
+const CRON_TIMEOUT_DETAIL = "cron check timed out";
 
-async function checkDb(db: Db): Promise<CheckResult> {
+// Per-check client-side deadlines. These are the whole reason this endpoint can't
+// hang: a `select 1` against a half-open socket never returns and never errors
+// (statement_timeout is server-side — see src/lib/deadline.ts), so without a
+// ceiling here the probe produces no response at all and the monitor records a
+// TTFB timeout instead of a status code. Both are comfortably above the ~350ms a
+// healthy pooler round-trip takes.
+export const DB_CHECK_TIMEOUT_MS = 4000;
+export const CRON_CHECK_TIMEOUT_MS = 4000;
+
+async function checkDb(db: Db, timeoutMs: number): Promise<CheckResult & { timedOut?: true }> {
   try {
     // Cheapest possible round-trip that proves the connection + auth work.
-    await db.execute(sql`select 1`);
+    await withDeadline(db.execute(sql`select 1`), timeoutMs, "health db check");
     return { ok: true };
   } catch (err) {
     // Real error (host/IP/port/credentials) goes to the redacted log/error sink
     // only — the public body gets a generic detail.
     void logger.reportError("health: db check failed", err);
-    return { ok: false, detail: DB_UNREACHABLE_DETAIL };
+    // A blown deadline means the connection is wedged rather than refused. Flag it
+    // so the caller can discard the pool; a refused connection needs no teardown.
+    return isDeadlineError(err)
+      ? { ok: false, detail: DB_TIMEOUT_DETAIL, timedOut: true }
+      : { ok: false, detail: DB_UNREACHABLE_DETAIL };
   }
 }
 
 async function checkCron(
   db: Db,
   now: Date,
-): Promise<CheckResult & { lastRunAt?: string; ageMs?: number }> {
+  timeoutMs: number,
+): Promise<CheckResult & { lastRunAt?: string; ageMs?: number; timedOut?: true }> {
   let lastRun: { createdAt: string } | undefined;
   try {
-    lastRun = await db.query.jobLogs.findFirst({
-      where: eq(jobLogs.jobType, "cron"),
-      orderBy: desc(jobLogs.createdAt),
-      columns: { createdAt: true },
-    });
+    lastRun = await withDeadline(
+      db.query.jobLogs.findFirst({
+        where: eq(jobLogs.jobType, "cron"),
+        orderBy: desc(jobLogs.createdAt),
+        columns: { createdAt: true },
+      }),
+      timeoutMs,
+      "health cron check",
+    );
   } catch (err) {
     // Same as checkDb: keep the driver error out of the public body, send it to
     // the redacted log/error sink instead.
     void logger.reportError("health: cron check failed", err);
-    return { ok: false, detail: CRON_CHECK_FAILED_DETAIL };
+    return isDeadlineError(err)
+      ? { ok: false, detail: CRON_TIMEOUT_DETAIL, timedOut: true }
+      : { ok: false, detail: CRON_CHECK_FAILED_DETAIL };
   }
   if (!lastRun) {
     return { ok: false, detail: "no cron sweep has run yet" };
@@ -114,18 +137,34 @@ export type HealthDeps = {
   heartbeat?: HeartbeatState | null;
   now?: Date;
   env?: NodeJS.ProcessEnv;
+  dbTimeoutMs?: number;
+  cronTimeoutMs?: number;
+  // Called when a DB check blew its deadline (wedged connection, not a refused
+  // one). The route passes `resetDb` so the next request gets a fresh pool
+  // instead of inheriting the stuck one — see src/db/client.ts.
+  onDbWedged?: () => void;
 };
 
 export async function checkHealth(deps: HealthDeps): Promise<HealthReport> {
   const now = deps.now ?? new Date();
-  const db = await checkDb(deps.db);
+  const dbStart = Date.now();
+  const db = await checkDb(deps.db, deps.dbTimeoutMs ?? DB_CHECK_TIMEOUT_MS);
+  const dbMs = Date.now() - dbStart;
 
   // If the DB is down there's nothing meaningful to report for the DB-backed
   // cron check; mark it unknown rather than running a query that will also fail.
+  const cronStart = Date.now();
   const cron = db.ok
-    ? await checkCron(deps.db, now)
+    ? await checkCron(deps.db, now, deps.cronTimeoutMs ?? CRON_CHECK_TIMEOUT_MS)
     : { ok: false, detail: "skipped (db down)" };
+  const cronMs = db.ok ? Date.now() - cronStart : 0;
   const worker = checkWorker(deps.heartbeat ?? null);
+
+  // Any wedged (as opposed to refused) connection means this instance's pool is
+  // unusable; drop it so the wedge dies with this request instead of persisting
+  // for the instance's whole lifetime.
+  if ("timedOut" in db && db.timedOut) deps.onDbWedged?.();
+  else if ("timedOut" in cron && cron.timedOut) deps.onDbWedged?.();
 
   // DB down → unhealthy (503). Otherwise any failing sub-check → degraded (200).
   const status: HealthReport["status"] = !db.ok
@@ -137,9 +176,22 @@ export async function checkHealth(deps: HealthDeps): Promise<HealthReport> {
   return {
     status,
     build: buildInfo(deps.env),
-    checks: { db, cron, worker },
+    // durationMs per DB-backed check: when this endpoint next misbehaves, the body
+    // says which dependency was slow instead of leaving only a caller-side timeout
+    // to go on. (`timedOut` is internal plumbing — strip it from the public body.)
+    checks: {
+      db: { ok: db.ok, detail: db.detail, durationMs: dbMs },
+      cron: { ...stripInternal(cron), durationMs: cronMs },
+      worker,
+    },
     timestamp: now.toISOString(),
   };
+}
+
+// Drops the internal `timedOut` marker so it never appears in the public JSON.
+function stripInternal<T extends { timedOut?: true }>(check: T): Omit<T, "timedOut"> {
+  const { timedOut: _timedOut, ...rest } = check;
+  return rest;
 }
 
 // Maps a report to the HTTP status the endpoint returns: 503 only when the DB is
