@@ -367,6 +367,41 @@ export type ActivityEvent = {
   createdAt: string;
 };
 
+// One row in the /emails log — a transactional (API-sent) email without its
+// bodies (the detail endpoint carries those, until the retention prune).
+export type TransactionalEmailListItem = {
+  id: string;
+  fromEmail: string;
+  fromName: string | null;
+  to: string[];
+  subject: string;
+  status: string;
+  error: string | null;
+  sandbox: boolean;
+  tags: Record<string, string> | null;
+  providerMessageId: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  bouncedAt: string | null;
+  complainedAt: string | null;
+};
+
+export type TransactionalEmailDetail = TransactionalEmailListItem & {
+  replyTo: string | null;
+  htmlBody: string | null;
+  textBody: string | null;
+  headers: Record<string, string> | null;
+  bodyPrunedAt: string | null;
+};
+
+export type TransactionalEmailEvent = {
+  id: string;
+  eventType: string;
+  payloadJson: string | null;
+  createdAt: string;
+};
+
 export type RiskReview = {
   riskLevel: string;
   riskScore: number;

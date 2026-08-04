@@ -587,6 +587,10 @@ export const emailEvents = pgTable(
     campaignId: text("campaign_id"),
     campaignRecipientId: text("campaign_recipient_id"),
 
+    // Set when the event belongs to a transactional (API) email instead of a
+    // campaign send; campaignId/campaignRecipientId stay null on those rows.
+    transactionalEmailId: text("transactional_email_id"),
+
     eventType: text("event_type").$type<EmailEventType>().notNull(),
     email: text("email"),
     provider: text("provider").notNull().default("ses"),
@@ -597,19 +601,107 @@ export const emailEvents = pgTable(
   },
   (t) => [
     index("idx_email_events_campaign_id").on(t.campaignId),
+    // The transactional email detail view lists an email's events.
+    index("idx_email_events_transactional_email_id").on(t.transactionalEmailId),
     index("idx_email_events_provider_message_id").on(t.providerMessageId),
     // The Activity page lists an account's events newest-first with offset
     // pagination — this composite index serves that scan directly.
     index("idx_email_events_account_created").on(t.accountId, t.createdAt),
     // SNS delivers at-least-once: the same delivery/bounce/complaint notification
-    // can arrive multiple times. De-dup on (providerMessageId, eventType) so a
-    // redelivery is a no-op insert (see onConflictDoNothing in the SES webhook).
-    // providerMessageId is nullable; Postgres treats NULLs as distinct, so
-    // event types without a message id (e.g. open/click) are unaffected.
+    // can arrive multiple times. De-dup on (providerMessageId, eventType, email)
+    // so a redelivery is a no-op insert (see onConflictDoNothing in the SES
+    // webhook). providerMessageId is nullable; Postgres treats NULLs as
+    // distinct, so event types without a message id (e.g. open/click) are
+    // unaffected — and every row we write WITH a message id also sets `email`.
+    //
+    // `email` is part of the key because one transactional message can have up
+    // to 50 recipients and SES emits a separate notification per affected
+    // address, all sharing one messageId: without the address, recipient #2's
+    // bounce would be silently dropped as a duplicate of #1's. For campaign
+    // sends (one recipient per messageId) this is identical to the old key.
     uniqueIndex("uq_email_events_provider_message_event").on(
       t.providerMessageId,
       t.eventType,
+      t.email,
     ),
+  ],
+);
+
+// Transactional emails sent through the public API (POST /v1/emails). One row
+// per API send — Postgres is the source of truth (the queue message carries the
+// id only), and `status` is the ledger that makes the send job idempotent:
+//   queued  — accepted by the API, waiting for the worker
+//   sending — claimed by a worker (lockedAt drives the stuck-lock sweep)
+//   sent    — provider accepted; delivered/bounced/complained arrive via SNS
+//   failed  — terminal (bad address, rejected content, ambiguous transport
+//             error, or swept stuck lock — never retried, a retry could
+//             duplicate)
+//   suppressed — every recipient was on the provider's suppression list
+// Bodies are pruned (nulled) after TRANSACTIONAL_BODY_RETENTION_DAYS by the
+// daily cron; the metadata row is kept forever for the log/API.
+export const TRANSACTIONAL_EMAIL_STATUSES = [
+  "queued",
+  "sending",
+  "sent",
+  "delivered",
+  "bounced",
+  "complained",
+  "failed",
+  "suppressed",
+] as const;
+export type TransactionalEmailStatus = (typeof TRANSACTIONAL_EMAIL_STATUSES)[number];
+
+export const transactionalEmails = pgTable(
+  "transactional_emails",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    // The API key that sent it (attribution/audit; null survives key deletion).
+    apiKeyId: text("api_key_id"),
+
+    fromEmail: text("from_email").notNull(),
+    fromName: text("from_name"),
+    replyTo: text("reply_to"),
+    // All recipients of the one message (Resend-style: a single email whose To
+    // header lists every address), max MAX_TRANSACTIONAL_RECIPIENTS.
+    to: jsonb("to").$type<string[]>().notNull(),
+    subject: text("subject").notNull(),
+    // Nullable two ways: at least one is required at send time, and both are
+    // nulled by the retention prune once the email is older than the window.
+    htmlBody: text("html_body"),
+    textBody: text("text_body"),
+    headers: jsonb("headers").$type<Record<string, string>>(),
+    tags: jsonb("tags").$type<Record<string, string>>(),
+    // True when sent by a free (set-up-only) org under the sandbox carve-out:
+    // recipients restricted to the org's own members, small monthly allowance.
+    sandbox: boolean("sandbox").notNull().default(false),
+
+    status: text("status").$type<TransactionalEmailStatus>().notNull().default("queued"),
+    error: text("error"),
+    provider: text("provider"),
+    providerMessageId: text("provider_message_id"),
+    // Stamped when a worker claims the row; the cron sweep fails rows locked
+    // longer than the stuck-lock window (crashed worker mid-send).
+    lockedAt: tstz("locked_at"),
+
+    sentAt: tstz("sent_at"),
+    deliveredAt: tstz("delivered_at"),
+    bouncedAt: tstz("bounced_at"),
+    complainedAt: tstz("complained_at"),
+    // Set when the retention prune nulls the bodies, so the API/UI can say
+    // "content expired" instead of implying the email was sent empty.
+    bodyPrunedAt: tstz("body_pruned_at"),
+
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    // The /emails page and GET /v1/emails list newest-first per account.
+    index("idx_transactional_emails_account_created").on(t.accountId, t.createdAt),
+    // SNS webhook correlates delivery/bounce/complaint by provider message id.
+    index("idx_transactional_emails_provider_message_id").on(t.providerMessageId),
+    // The stuck-lock cron sweep scans for status='sending' with an old lock.
+    index("idx_transactional_emails_status").on(t.status),
   ],
 );
 
@@ -732,8 +824,12 @@ export const idempotencyKeys = pgTable(
     endpoint: text("endpoint").notNull(),
     key: text("key").notNull(),
     requestHash: text("request_hash").notNull(),
-    responseStatus: integer("response_status").notNull(),
-    responseBody: text("response_body").notNull(),
+    // Null while the claiming request is still executing: the row is inserted
+    // BEFORE the handler runs (the claim is what makes concurrent duplicates
+    // of the same key impossible — see withIdempotency) and completed with the
+    // response afterwards.
+    responseStatus: integer("response_status"),
+    responseBody: text("response_body"),
     createdAt: tstz("created_at").notNull(),
   },
   (t) => [
@@ -741,17 +837,30 @@ export const idempotencyKeys = pgTable(
   ],
 );
 
-export const jobLogs = pgTable("job_logs", {
-  id: text("id").primaryKey(),
-  jobType: text("job_type").notNull(),
-  entityType: text("entity_type"),
-  entityId: text("entity_id"),
-  status: text("status").notNull(),
-  error: text("error"),
-  payloadJson: text("payload_json"),
-  createdAt: tstz("created_at").notNull(),
-  updatedAt: tstz("updated_at").notNull(),
-});
+export const jobLogs = pgTable(
+  "job_logs",
+  {
+    id: text("id").primaryKey(),
+    jobType: text("job_type").notNull(),
+    entityType: text("entity_type"),
+    entityId: text("entity_id"),
+    status: text("status").notNull(),
+    error: text("error"),
+    payloadJson: text("payload_json"),
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    // The table had no index but the PK, and every /api/health probe reads
+    // "latest row of this job_type" — a seq scan + sort on a table that grows by
+    // ~96 cron rows/day forever. Same shape backs cron's dailyChecksDue marker.
+    // Ascending is fine for the ORDER BY … DESC LIMIT 1: Postgres walks a btree
+    // backwards at the same cost.
+    index("idx_job_logs_type_created").on(t.jobType, t.createdAt),
+    // Admin overview: recent failed / dead-lettered work.
+    index("idx_job_logs_status_created").on(t.status, t.createdAt),
+  ],
+);
 
 export type Account = typeof accounts.$inferSelect;
 export type AccountUser = typeof accountUsers.$inferSelect;
@@ -769,6 +878,7 @@ export type Import = typeof imports.$inferSelect;
 export type Campaign = typeof campaigns.$inferSelect;
 export type CampaignRecipient = typeof campaignRecipients.$inferSelect;
 export type EmailEvent = typeof emailEvents.$inferSelect;
+export type TransactionalEmail = typeof transactionalEmails.$inferSelect;
 export type SuppressionEntry = typeof suppressionEntries.$inferSelect;
 export type RiskReview = typeof riskReviews.$inferSelect;
 export type JobLog = typeof jobLogs.$inferSelect;

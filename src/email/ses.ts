@@ -42,17 +42,17 @@ export class SesEmailProvider implements EmailProvider {
     try {
       const res = await this.client.send(
         new SendEmailCommand({
-          FromEmailAddress: input.fromName
-            ? `${input.fromName} <${input.fromEmail}>`
-            : input.fromEmail,
+          FromEmailAddress: formatFromAddress(input.fromName, input.fromEmail),
           ...(input.replyTo ? { ReplyToAddresses: [input.replyTo] } : {}),
-          Destination: { ToAddresses: [input.toEmail] },
+          Destination: {
+            ToAddresses: Array.isArray(input.toEmail) ? input.toEmail : [input.toEmail],
+          },
           ConfigurationSetName: this.config.configurationSet,
           Content: {
             Simple: {
               Subject: { Data: input.subject },
               Body: {
-                Html: { Data: input.html },
+                ...(input.html ? { Html: { Data: input.html } } : {}),
                 ...(input.text ? { Text: { Data: input.text } } : {}),
               },
               ...(headers ? { Headers: headers } : {}),
@@ -79,6 +79,20 @@ export class SesEmailProvider implements EmailProvider {
       throw err;
     }
   }
+}
+
+// Builds the From header value with the display name as an RFC 5322
+// quoted-string. Quoting is always valid and is what keeps a name containing
+// specials (comma, parens, angle brackets) from being parsed as extra
+// addresses — an unquoted `Evil <a@x.com>` display name would smuggle a second
+// mailbox into the header. Control characters are stripped outright: they have
+// no business in a display name and are the classic header-injection vector.
+// Exported for tests.
+export function formatFromAddress(name: string | undefined, email: string): string {
+  // eslint-disable-next-line no-control-regex
+  const clean = (name ?? "").replace(/[\x00-\x1f\x7f]/g, "").trim();
+  if (!clean) return email;
+  return `"${clean.replace(/[\\"]/g, "\\$&")}" <${email}>`;
 }
 
 // Node network errors whose presence (with no HTTP status on the error) proves

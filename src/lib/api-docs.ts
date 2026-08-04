@@ -13,6 +13,7 @@
 
 export const PLACEHOLDER_KEY = "day3_live_xxxxxxxxxxxxxxxxxxxx";
 export const PLACEHOLDER_AUDIENCE = "aud_YOUR_AUDIENCE_ID";
+export const PLACEHOLDER_FROM_DOMAIN = "yourdomain.com";
 
 /**
  * Remaining subscriber headroom on a capped (free) plan. `null` on paid tiers,
@@ -30,7 +31,14 @@ export type ApiDocsContext = {
   audienceName: string | null;
   /** Set only when the plan caps subscribers; absent means unlimited. */
   subscriberLimit?: SubscriberLimit | null;
+  /** A verified sending domain when the account has one, else the placeholder
+   *  — makes the transactional `from` examples paste-and-run. */
+  sendingDomain?: string | null;
 };
+
+function fromDomain(ctx: ApiDocsContext): string {
+  return ctx.sendingDomain ?? PLACEHOLDER_FROM_DOMAIN;
+}
 
 export function apiBaseUrl(origin: string): string {
   return `${origin.replace(/\/$/, "")}/api/v1`;
@@ -64,11 +72,112 @@ export type SnippetTask = {
   python: string;
 };
 
+/** The transactional-email snippets — the /emails page panel and the top of the
+ *  api-keys snippet list share these. */
+export function buildEmailSnippets(ctx: ApiDocsContext): SnippetTask[] {
+  const base = apiBaseUrl(ctx.origin);
+  const from = `Acme <notifications@${fromDomain(ctx)}>`;
+
+  return [
+    {
+      id: "send-email",
+      label: "Send an email",
+      blurb:
+        "One transactional email — password reset, receipt, magic link. `from` is any address on a verified sending domain; `to` takes up to 50 addresses. Set `Idempotency-Key` so a network retry can never double-send.",
+      curl: `curl -X POST "${base}/emails" \\
+  -H "Authorization: Bearer $DAY3_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -H "Idempotency-Key: $(uuidgen)" \\
+  -d '{
+    "from": "${from}",
+    "to": ["jane@acme.com"],
+    "subject": "Reset your password",
+    "html": "<p>Click <a href=\\"https://acme.com/reset?t=...\\">here</a> to reset.</p>"
+  }'`,
+      js: `const res = await fetch("${base}/emails", {
+  method: "POST",
+  headers: {
+    Authorization: \`Bearer \${process.env.DAY3_API_KEY}\`,
+    "Content-Type": "application/json",
+    "Idempotency-Key": crypto.randomUUID(),
+  },
+  body: JSON.stringify({
+    from: "${from}",
+    to: ["jane@acme.com"],
+    subject: "Reset your password",
+    html: '<p>Click <a href="https://acme.com/reset?t=...">here</a> to reset.</p>',
+  }),
+});
+const email = await res.json();
+if (!res.ok) throw new Error(email.error.message);
+console.log(email.id, email.status); // "eml_…" "queued"`,
+      python: `import os, uuid, requests
+
+res = requests.post(
+    "${base}/emails",
+    headers={
+        "Authorization": f"Bearer {os.environ['DAY3_API_KEY']}",
+        "Idempotency-Key": str(uuid.uuid4()),
+    },
+    json={
+        "from": "${from}",
+        "to": ["jane@acme.com"],
+        "subject": "Reset your password",
+        "html": '<p>Click <a href="https://acme.com/reset?t=...">here</a> to reset.</p>',
+    },
+)
+res.raise_for_status()
+email = res.json()  # {"id": "eml_...", "status": "queued", ...}`,
+    },
+    {
+      id: "email-status",
+      label: "Check delivery",
+      blurb:
+        "The send call returns as soon as the email is accepted; delivery happens within seconds. Poll the id to see it move queued → sent → delivered (or bounced/complained, with `events` telling the story).",
+      curl: `curl "${base}/emails/eml_YOUR_EMAIL_ID" \\
+  -H "Authorization: Bearer $DAY3_API_KEY"`,
+      js: `const res = await fetch(\`${base}/emails/\${emailId}\`, {
+  headers: { Authorization: \`Bearer \${process.env.DAY3_API_KEY}\` },
+});
+const email = await res.json();
+console.log(email.status);        // "delivered"
+console.log(email.events);        // [{ type: "sent", ... }, { type: "delivery", ... }]`,
+      python: `import os, requests
+
+email = requests.get(
+    f"${base}/emails/{email_id}",
+    headers={"Authorization": f"Bearer {os.environ['DAY3_API_KEY']}"},
+).json()
+print(email["status"], email["events"])`,
+    },
+    {
+      id: "list-emails",
+      label: "List sends",
+      blurb:
+        "Everything sent through the API, newest first, cursor-paginated. `?status=failed` (or bounced/complained) is the fastest way to find what needs attention.",
+      curl: `curl "${base}/emails?status=failed&limit=50" \\
+  -H "Authorization: Bearer $DAY3_API_KEY"`,
+      js: `const res = await fetch("${base}/emails?status=failed&limit=50", {
+  headers: { Authorization: \`Bearer \${process.env.DAY3_API_KEY}\` },
+});
+const page = await res.json(); // { data, has_more, next_cursor }`,
+      python: `import os, requests
+
+page = requests.get(
+    "${base}/emails",
+    headers={"Authorization": f"Bearer {os.environ['DAY3_API_KEY']}"},
+    params={"status": "failed", "limit": 50},
+).json()  # {"data": [...], "has_more": ..., "next_cursor": ...}`,
+    },
+  ];
+}
+
 export function buildSnippetTasks(ctx: ApiDocsContext): SnippetTask[] {
   const base = apiBaseUrl(ctx.origin);
   const aud = ctx.audienceId;
 
   return [
+    ...buildEmailSnippets(ctx).filter((t) => t.id === "send-email"),
     {
       id: "add",
       label: "Add a contact",
@@ -293,24 +402,51 @@ export function buildReferenceMarkdown(ctx: ApiDocsContext): string {
 
   return `# Day3 API v1 — reference
 
-Day3 is an email newsletter service. This API manages audiences and everything
-inside them. Sending campaigns is done in the Day3 web app, not over the API.
+Day3 is an email platform. This API sends transactional emails (password
+resets, receipts, magic links) and manages audiences and everything inside
+them. Campaign (newsletter) sending is done in the Day3 web app, not over the
+API.
 
 - **Base URL**: \`${base}\`
 - **Auth**: \`Authorization: Bearer day3_live_...\` on every request. Read the key
   from the \`DAY3_API_KEY\` environment variable — never hard-code or commit it.
 - **Format**: JSON in, JSON out. Field names are \`snake_case\`. Ids are prefixed
-  strings (\`aud_\`, \`sub_\`, \`seg_\`, \`top_\`, \`fld_\`). Timestamps are ISO-8601 UTC.
+  strings (\`eml_\`, \`aud_\`, \`sub_\`, \`seg_\`, \`top_\`, \`fld_\`). Timestamps are ISO-8601 UTC.
 - Ignore unknown response fields — new ones get added without a version bump.
 
 ## Objects
 
+- **Email** (\`eml_...\`) — one transactional email sent through the API.
 - **Audience** (\`aud_...\`) — a list of contacts. Everything else lives inside one.
 - **Contact** (\`sub_...\`) — a subscriber. Unique by email within an audience.
 - **Field** (\`fld_...\`) — a registered custom attribute key.
 - **Segment** (\`seg_...\`) — a saved filter, evaluated live at read time.
 - **Topic** (\`top_...\`) — a subscription category a contact can opt out of alone.
 - **Suppression** — an account-wide "never email this address" entry.
+
+Email object:
+
+\`\`\`json
+{
+  "id": "eml_...", "object": "email",
+  "from": "Acme <notifications@${fromDomain(ctx)}>",
+  "to": ["jane@acme.com"],
+  "reply_to": null,
+  "subject": "Reset your password",
+  "status": "delivered",
+  "error": null,
+  "tags": { "type": "password-reset" },
+  "sandbox": false,
+  "created_at": "2026-08-01T08:00:00.000Z",
+  "sent_at": "2026-08-01T08:00:01.000Z",
+  "delivered_at": "2026-08-01T08:00:03.000Z",
+  "bounced_at": null, "complained_at": null
+}
+\`\`\`
+
+\`status\` walks \`queued\` → \`sent\` → \`delivered\`, or ends at \`bounced\`,
+\`complained\`, \`failed\`, or \`suppressed\`. \`GET /emails/{id}\` additionally
+carries \`events\`, the raw timeline.
 
 Contact object:
 
@@ -330,6 +466,24 @@ Contact object:
 \`\`\`
 
 ## Endpoints
+
+Emails (transactional sending)
+- \`POST /emails\` — send one email. Body:
+  \`\`\`json
+  { "from": "Acme <notifications@${fromDomain(ctx)}>",
+    "to": ["jane@acme.com"],
+    "subject": "...",
+    "html": "<p>...</p>", "text": "...",
+    "reply_to": "support@${fromDomain(ctx)}",
+    "headers": { "X-Entity-Ref-ID": "..." },
+    "tags": { "type": "password-reset" } }
+  \`\`\`
+  \`from\` + \`to\` + \`subject\` + (\`html\` and/or \`text\`) are required; the rest is
+  optional. \`to\` is a string or an array of up to 50 addresses (one message,
+  all visible in the To header). Returns the Email object with \`status:
+  "queued"\` — delivery is asynchronous and takes a couple of seconds.
+- \`GET  /emails\` — list, newest first. Filter with \`?status=\`.
+- \`GET  /emails/{id}\` — one email + its delivery \`events\`.
 
 Audiences
 - \`GET    /audiences\` — list
@@ -443,6 +597,22 @@ Suppressions (account-wide, not per audience)
     (the free plan caps at 500). The batch is rejected whole, never partially
     applied, so the import can simply be re-run after upgrading. Tell the user
     to upgrade — don't retry, and don't split the batch to sneak under the cap.
+    On \`POST /emails\` the same code means the monthly send allowance is used up.
+14. **\`POST /emails\` requires \`from\` on a verified sending domain** — any
+    local-part works (\`noreply@\`, \`receipts@\`, …) once the domain is verified
+    under Domains in the app. An unverified domain is \`403
+    domain_not_verified\`; verify first, don't retry.
+15. **Transactional email ignores unsubscribes but honours deliverability
+    suppressions.** A contact who unsubscribed from newsletters still gets
+    their password reset; an address that hard-bounced or complained is
+    rejected with \`400 email_suppressed\` and must not be retried.
+16. **Free (set-up-only) plans send in sandbox mode**: recipients must be
+    members of the caller's own organization (anything else is \`403
+    sandbox_recipient_not_allowed\`) and there is a small monthly allowance —
+    enough to integrate and test, not to run production email. Responses carry
+    \`"sandbox": true\`. Upgrading lifts both restrictions with no code change.
+17. **Transactional sends have their own rate bucket** (default 120/min per
+    account) inside the general limit — a \`429\` still carries \`Retry-After\`.
 
 ## Errors
 
@@ -457,9 +627,9 @@ Every failure uses one envelope. Branch on \`code\`, never on \`message\`:
 
 | HTTP | codes |
 |------|-------|
-| 400 | \`invalid_request\`, \`invalid_email\`, \`invalid_filter\`, \`batch_too_large\` |
+| 400 | \`invalid_request\`, \`invalid_email\`, \`invalid_filter\`, \`batch_too_large\`, \`email_suppressed\` |
 | 401 | \`invalid_api_key\`, \`revoked_api_key\` |
-| 403 | \`plan_limit_reached\`, \`test_keys_not_supported\`, \`forbidden\` |
+| 403 | \`plan_limit_reached\`, \`sending_disabled\`, \`domain_not_verified\`, \`sandbox_recipient_not_allowed\`, \`test_keys_not_supported\`, \`forbidden\` |
 | 404 | \`not_found\` (also returned for another account's ids — existence is never leaked) |
 | 409 | \`contact_already_exists\`, \`email_suppressed\`, \`idempotency_conflict\` |
 | 422 | \`immutable_field\` (e.g. changing a field's \`key\`) |
@@ -470,7 +640,7 @@ Include \`request_id\` when reporting a problem to Day3 support.
 
 ## Not in v1
 
-Campaigns and sending, domains and senders, webhooks, and OAuth have no
+Campaign (newsletter) sending, domains and senders, webhooks, and OAuth have no
 endpoints yet. Don't invent them — if a task needs one, say so instead.
 `;
 }
@@ -625,6 +795,10 @@ type PanelPromptExtras = {
   segments?: { id: string; name: string }[] | null;
   topics?: { id: string; name: string }[] | null;
   fieldKeys?: string[] | null;
+  /** Verified sending domains — the `from` addresses transactional sends may use. */
+  verifiedDomains?: string[] | null;
+  /** True when the account sends in sandbox mode (free tier). */
+  transactionalSandbox?: boolean;
 };
 
 /**
@@ -658,6 +832,20 @@ export function buildPanelPrompt(ctx: ApiDocsContext, extras: PanelPromptExtras 
       `- Custom field keys (usable in \`attributes\` and segment filters): ${extras.fieldKeys
         .map((k) => `\`${k}\``)
         .join(", ")}`,
+    );
+  }
+  if (extras.verifiedDomains !== undefined) {
+    lines.push(
+      extras.verifiedDomains && extras.verifiedDomains.length > 0
+        ? `- My verified sending domains (any local-part works as \`from\` on \`POST /emails\`): ${extras.verifiedDomains
+            .map((d) => `\`${d}\``)
+            .join(", ")}`
+        : `- I have no verified sending domain yet — \`POST /emails\` will be rejected until one is verified under Domains in the app.`,
+    );
+  }
+  if (extras.transactionalSandbox) {
+    lines.push(
+      `- My account is on the free plan, so \`POST /emails\` runs in **sandbox mode**: recipients must be members of my own organization, on a small monthly allowance. Write the integration normally — upgrading lifts the restriction with no code change.`,
     );
   }
 
@@ -1049,6 +1237,47 @@ export function buildAudiencesPanelContent(input: {
       ...buildSnippetTasks(ctx).filter((t) => t.id === "add"),
     ],
     prompt: buildPanelPrompt(ctx, { audiences: list }),
+  };
+}
+
+/** Panel content for the /emails page — the transactional log's own </> panel. */
+export function buildEmailsPanelContent(input: {
+  origin: string;
+  /** Verified sending domains; the first one seeds the `from` examples. */
+  verifiedDomains: string[];
+  /** True when the account sends in sandbox mode (free tier). */
+  sandbox: boolean;
+}): ApiPanelContent {
+  const ctx: ApiDocsContext = {
+    origin: input.origin,
+    audienceId: PLACEHOLDER_AUDIENCE,
+    audienceName: null,
+    sendingDomain: input.verifiedDomains[0] ?? null,
+  };
+
+  return {
+    blurb: "Send transactional email — password resets, receipts, magic links — from your own code.",
+    idGroups:
+      input.verifiedDomains.length > 0
+        ? [
+            {
+              title: "Verified from-domains",
+              rows: input.verifiedDomains.map((d) => ({
+                label: `any local-part works, e.g. notifications@${d}`,
+                value: d,
+              })),
+            },
+          ]
+        : [],
+    tasks: buildEmailSnippets(ctx),
+    prompt: buildPanelPrompt(ctx, {
+      verifiedDomains: input.verifiedDomains,
+      transactionalSandbox: input.sandbox,
+    }),
+    note:
+      input.verifiedDomains.length === 0
+        ? "Sends are rejected until a sending domain is verified — set one up under Domains first."
+        : undefined,
   };
 }
 

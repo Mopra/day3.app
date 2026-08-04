@@ -15,10 +15,21 @@ import { nowIso } from "../lib/ids";
 // new-minus-old delta — RETURNING on its own only exposes post-update values.
 // Doing the read-and-conditional-increment in one statement is what bounds the
 // total across concurrent workers by the limit instead of by a stale read.
-export async function reserveQuota(db: Db, accountId: string, amount: number): Promise<number> {
+//
+// `limitOverride` substitutes a caller-supplied ceiling for the account's
+// monthly_email_limit while still using the same counter — the transactional
+// sandbox (free orgs, plan limit 0) reserves against a small fixed allowance
+// this way, so sandbox sends share the one atomic ledger with everything else.
+export async function reserveQuota(
+  db: Db,
+  accountId: string,
+  amount: number,
+  limitOverride?: number,
+): Promise<number> {
   const rows = await db.execute<{ granted: number }>(sql`
     WITH prev AS (
-      SELECT monthly_email_sent_count AS old_count, monthly_email_limit AS lim
+      SELECT monthly_email_sent_count AS old_count,
+             ${limitOverride === undefined ? sql`monthly_email_limit` : limitOverride}::int AS lim
       FROM accounts WHERE id = ${accountId} FOR UPDATE
     )
     UPDATE accounts

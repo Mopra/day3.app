@@ -9,6 +9,7 @@ import { reviewCampaign } from "./handlers/review-campaign";
 import { generateCampaignRecipients } from "./handlers/generate-recipients";
 import { sendCampaignBatch } from "./handlers/send-batch";
 import { sendFormConfirmation } from "./handlers/send-form-confirmation";
+import { sendTransactionalEmail } from "./handlers/send-transactional";
 import { purgeAccount } from "./handlers/purge-account";
 
 // Everything a queue handler can need, injected by the caller. The BullMQ worker
@@ -43,6 +44,8 @@ function jobContext(message: QueueMessage): { entityType: string; entityId: stri
       return { entityType: "email_event", entityId: message.eventId };
     case "send_form_confirmation":
       return { entityType: "subscriber", entityId: message.subscriberId, accountId: message.accountId };
+    case "send_transactional":
+      return { entityType: "transactional_email", entityId: message.emailId, accountId: message.accountId };
     case "purge_account":
       return { entityType: "account", entityId: message.accountId, accountId: message.accountId };
   }
@@ -99,6 +102,11 @@ async function dispatchQueueMessage(message: QueueMessage, deps: QueueDeps): Pro
         db,
         emailProvider: deps.emailProvider,
         confirmSecret: deps.unsubscribeSecret,
+      });
+    case "send_transactional":
+      return sendTransactionalEmail(message, {
+        db,
+        emailProvider: deps.emailProvider,
       });
     case "purge_account":
       return purgeAccount(message, {

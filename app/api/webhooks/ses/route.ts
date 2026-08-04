@@ -1,8 +1,15 @@
 import type { NextRequest } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import SnsPayloadValidator from "sns-payload-validator";
 import { getDb, type Db } from "@/db/client";
-import { campaignRecipients, emailEvents, subscribers, type CampaignRecipient } from "@/db/schema";
+import {
+  campaignRecipients,
+  emailEvents,
+  subscribers,
+  transactionalEmails,
+  type CampaignRecipient,
+  type TransactionalEmail,
+} from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { addSuppression } from "@/services/suppression";
 import { enforceAccountHealth } from "@/services/health";
@@ -115,11 +122,19 @@ export async function POST(req: NextRequest) {
   if (!messageId) return new Response("OK", { status: 200 });
 
   const db = getDb();
-  // providerMessageId is the SES MessageId we stored at send time.
+  // providerMessageId is the SES MessageId we stored at send time. A message is
+  // either a campaign send (campaign_recipients) or a transactional API send
+  // (transactional_emails) — check the campaign ledger first (higher volume).
   const recipient = await db.query.campaignRecipients.findFirst({
     where: eq(campaignRecipients.providerMessageId, messageId),
   });
-  if (!recipient) return new Response("OK", { status: 200 });
+  if (!recipient) {
+    const txEmail = await db.query.transactionalEmails.findFirst({
+      where: eq(transactionalEmails.providerMessageId, messageId),
+    });
+    if (txEmail) return handleTransactionalEvent(db, txEmail, eventType, messageId, payload.Message, event);
+    return new Response("OK", { status: 200 });
+  }
 
   const now = nowIso();
 
@@ -151,6 +166,145 @@ export async function POST(req: NextRequest) {
 
   // send / open / click / reject / etc. — not modelled in the MVP.
   return new Response("OK", { status: 200 });
+}
+
+// Delivery lifecycle for a transactional (API) email. Mirrors the campaign
+// path: record the event (dedupe-safe), advance the status, suppress hard
+// failures, recompute account health.
+//
+// One transactional message can carry up to 50 To addresses, and SES emits ONE
+// notification PER affected recipient, all sharing the same mail.messageId. So
+// everything here is per-address, not per-message:
+//   - events are recorded one row per reported address (the dedupe key includes
+//     the address, so a redelivery is still a no-op but recipient #2's bounce
+//     isn't mistaken for a duplicate of #1's);
+//   - suppression runs on every notification, keyed by the addresses THAT
+//     notification reports. An early return on the message's aggregate status
+//     would suppress only the first bounced address of fifty and leave the rest
+//     mailable — the failure mode this shape exists to avoid.
+// The message-level status flip and the health recompute are the only
+// once-per-message steps, and both are already idempotent (guarded UPDATE /
+// normal→paused transition).
+async function handleTransactionalEvent(
+  db: Db,
+  email: TransactionalEmail,
+  eventType: string,
+  messageId: string,
+  rawMessage: string,
+  event: Rec,
+): Promise<Response> {
+  const now = nowIso();
+
+  const record = async (type: "delivery" | "bounce" | "complaint", addresses: string[]) => {
+    for (const address of addresses) {
+      await db
+        .insert(emailEvents)
+        .values({
+          id: newId("evt"),
+          accountId: email.accountId,
+          transactionalEmailId: email.id,
+          eventType: type,
+          email: address,
+          provider: "ses",
+          providerMessageId: messageId,
+          payloadJson: rawMessage,
+          createdAt: now,
+        })
+        .onConflictDoNothing();
+    }
+  };
+
+  if (eventType === "delivery") {
+    await record("delivery", reportedAddresses(rec(event.delivery).recipients, email));
+    await db
+      .update(transactionalEmails)
+      .set({ status: "delivered", deliveredAt: now, updatedAt: now })
+      .where(and(eq(transactionalEmails.id, email.id), eq(transactionalEmails.status, "sent")));
+    return new Response("OK", { status: 200 });
+  }
+
+  if (eventType === "bounce") {
+    const bounce = rec(event.bounce);
+    const addresses = reportedAddresses(bounce.bouncedRecipients, email);
+    await record("bounce", addresses);
+    const bounceType = str(bounce.bounceType);
+    if (bounceType === "Permanent" || bounceType === "Undetermined") {
+      // Suppression FIRST and unconditionally: addSuppression is idempotent
+      // (onConflictDoNothing), so a redelivery is free, and every notification's
+      // own addresses get suppressed regardless of the message's status.
+      for (const address of addresses) {
+        await addSuppression(db, {
+          accountId: email.accountId,
+          email: address,
+          reason: "hard_bounce",
+          source: "ses-sns-webhook",
+        });
+      }
+      const flipped = await db
+        .update(transactionalEmails)
+        .set({ status: "bounced", bouncedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(transactionalEmails.id, email.id),
+            inArray(transactionalEmails.status, ["sent", "delivered"]),
+          ),
+        )
+        .returning({ id: transactionalEmails.id });
+      // Health only on the transition — it's an account-wide aggregate query,
+      // pointless to re-run for each of fifty recipients of one message.
+      if (flipped.length > 0) await enforceAccountHealth(db, email.accountId);
+    }
+    return new Response("OK", { status: 200 });
+  }
+
+  if (eventType === "complaint") {
+    const addresses = reportedAddresses(rec(event.complaint).complainedRecipients, email);
+    await record("complaint", addresses);
+    for (const address of addresses) {
+      await addSuppression(db, {
+        accountId: email.accountId,
+        email: address,
+        reason: "complaint",
+        source: "ses-sns-webhook",
+      });
+    }
+    const flipped = await db
+      .update(transactionalEmails)
+      .set({ status: "complained", complainedAt: now, updatedAt: now })
+      .where(
+        and(
+          eq(transactionalEmails.id, email.id),
+          inArray(transactionalEmails.status, ["sent", "delivered", "bounced"]),
+        ),
+      )
+      .returning({ id: transactionalEmails.id });
+    if (flipped.length > 0) await enforceAccountHealth(db, email.accountId);
+    return new Response("OK", { status: 200 });
+  }
+
+  return new Response("OK", { status: 200 });
+}
+
+// The addresses an SES event payload names ({emailAddress} objects), intersected
+// with the message's own recipients as defense in depth; falls back to the full
+// recipient list when the payload omits them (single-recipient messages, where
+// the fallback is exact anyway).
+function reportedAddresses(reported: unknown, email: TransactionalEmail): string[] {
+  const own = new Set(email.to.map((e) => e.toLowerCase()));
+  const fromPayload = Array.isArray(reported)
+    ? [
+        ...new Set(
+          reported
+            .map((r) =>
+              typeof r === "string"
+                ? r.toLowerCase()
+                : str(rec(r).emailAddress)?.toLowerCase(),
+            )
+            .filter((e): e is string => !!e && own.has(e)),
+        ),
+      ]
+    : [];
+  return fromPayload.length > 0 ? fromPayload : email.to;
 }
 
 async function recordEvent(

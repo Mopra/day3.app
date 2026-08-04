@@ -1,6 +1,13 @@
 import { Queue, type ConnectionOptions } from "bullmq";
 import IORedis, { type Redis } from "ioredis";
-import { DEFAULT_JOB_OPTIONS, QUEUE_NAME, type JobQueue, type QueueMessage } from "./messages";
+import { logger } from "../lib/logger";
+import {
+  DEFAULT_JOB_OPTIONS,
+  QUEUE_NAME,
+  jobPriorityFor,
+  type JobQueue,
+  type QueueMessage,
+} from "./messages";
 
 // Producer side of the queue (runs on Vercel). API route handlers enqueue jobs
 // here; the VPS worker (worker/index.ts) consumes them. The connection is lazy
@@ -25,6 +32,20 @@ export function getRedisConnection(): Redis {
       maxRetriesPerRequest: null,
       enableOfflineQueue: false,
       commandTimeout: 5000,
+      // Cap the reconnect backoff. ioredis' default (min(times * 50, 2000)) means
+      // a serverless instance whose socket died while it was frozen wakes into a
+      // reconnect attempt every 2s for the rest of its life. Widen the ceiling so
+      // an unreachable Redis costs a handful of attempts per minute, not ~30.
+      retryStrategy: (times) => Math.min(times * 200, 15_000),
+    });
+    // ioredis emits 'error' on every failed connect/reconnect. Without a listener
+    // it falls back to logging "[ioredis] Unhandled error event" for each one,
+    // which on the paths that use this connection bare — the health probe, the
+    // rate limiter, the AI budget — turns a Redis blip into an unbounded stream of
+    // log noise (BullMQ attaches its own listener, but only to connections the
+    // Queue wraps). Report it once per event through the redacted sink instead.
+    connection.on("error", (err) => {
+      void logger.reportError("redis connection error (producer)", err);
     });
   }
   return connection;
@@ -49,7 +70,7 @@ export function getQueue(): JobQueue {
   const q = getBullQueue();
   return {
     async send(message: QueueMessage) {
-      await q.add(message.type, message);
+      await q.add(message.type, message, { priority: jobPriorityFor(message.type) });
     },
   };
 }

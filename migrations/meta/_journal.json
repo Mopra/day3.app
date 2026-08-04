@@ -162,6 +162,34 @@
       "when": 1783373609640,
       "tag": "0022_kind_tusk",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1785786346436,
+      "tag": "0023_next_scrambler",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1785834342357,
+      "tag": "0024_known_inhumans",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785836145897,
+      "tag": "0025_freezing_weapon_omega",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785836658210,
+      "tag": "0026_mature_rattler",
+      "breakpoints": true
     }
   ]
 }

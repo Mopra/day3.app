@@ -8,6 +8,7 @@ import {
   DEFAULT_JOB_OPTIONS,
   QUEUE_NAME,
   envInt,
+  jobPriorityFor,
   type JobQueue,
   type QueueMessage,
 } from "../src/queue/messages";
@@ -54,7 +55,7 @@ const queue = new Queue(QUEUE_NAME, {
 // through this same queue.
 const jobQueue: JobQueue = {
   async send(message: QueueMessage) {
-    await queue.add(message.type, message);
+    await queue.add(message.type, message, { priority: jobPriorityFor(message.type) });
   },
 };
 

@@ -16,6 +16,7 @@ export type IdPrefix =
   | "cmp"
   | "img"
   | "rcp"
+  | "eml"
   | "evt"
   | "sup"
   | "rsk"

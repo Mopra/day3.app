@@ -7,15 +7,24 @@ import { newId, nowIso } from "../lib/ids";
 // Emails suppressed for this account (account scope) or globally. Returned set
 // members and the optional `emails` filter are compared in canonical form
 // (trimmed + lowercased) so callers must look up canonical emails too.
+//
+// `reasons` narrows the check to specific suppression reasons. Campaign sends
+// honor every reason; transactional sends pass the deliverability reasons only
+// (hard_bounce / complaint / provider_suppressed) — unsubscribing from a
+// newsletter must never block that same person's password reset.
 export async function getSuppressedEmails(
   db: Db,
   accountId: string,
   emails?: string[],
+  reasons?: SuppressionReason[],
 ): Promise<Set<string>> {
-  const scopeFilter = or(
-    eq(suppressionEntries.accountId, accountId),
-    isNull(suppressionEntries.accountId),
-    eq(suppressionEntries.scope, "global"),
+  const scopeFilter = and(
+    or(
+      eq(suppressionEntries.accountId, accountId),
+      isNull(suppressionEntries.accountId),
+      eq(suppressionEntries.scope, "global"),
+    ),
+    ...(reasons ? [inArray(suppressionEntries.reason, reasons)] : []),
   );
 
   const suppressed = new Set<string>();

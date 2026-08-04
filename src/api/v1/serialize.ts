@@ -6,6 +6,7 @@ import type {
   SuppressionEntry,
   SuppressionReason,
   Topic,
+  TransactionalEmail,
 } from "../../db/schema";
 import { safeParseSegmentFilter, type SegmentFilter } from "../../lib/segment-filter";
 
@@ -129,6 +130,39 @@ export const PUBLIC_TO_REASON: Record<PublicSuppressionReason, SuppressionReason
   bounced: "hard_bounce",
   complained: "complaint",
 };
+
+// The public status vocabulary hides `sending` (a worker-claim implementation
+// detail measured in milliseconds): callers see `queued` until the provider
+// accepted the message.
+export function publicEmailStatus(status: TransactionalEmail["status"]): string {
+  return status === "sending" ? "queued" : status;
+}
+
+export function serializeEmail(
+  e: TransactionalEmail,
+  events?: Array<{ eventType: string; createdAt: string }>,
+): Record<string, unknown> {
+  return {
+    id: e.id,
+    object: "email",
+    from: e.fromName ? `${e.fromName} <${e.fromEmail}>` : e.fromEmail,
+    to: e.to,
+    reply_to: e.replyTo,
+    subject: e.subject,
+    status: publicEmailStatus(e.status),
+    error: e.error,
+    tags: e.tags ?? {},
+    sandbox: e.sandbox,
+    created_at: toIso(e.createdAt),
+    sent_at: toIso(e.sentAt),
+    delivered_at: toIso(e.deliveredAt),
+    bounced_at: toIso(e.bouncedAt),
+    complained_at: toIso(e.complainedAt),
+    ...(events
+      ? { events: events.map((ev) => ({ type: ev.eventType, created_at: toIso(ev.createdAt) })) }
+      : {}),
+  };
+}
 
 export function serializeSuppression(e: SuppressionEntry): Record<string, unknown> {
   return {

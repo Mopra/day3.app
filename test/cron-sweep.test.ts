@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
+  JOB_LOG_RETENTION_DAYS,
+  pruneJobLogs,
   rescueStuckPipelineCampaigns,
   resumePausedCampaigns,
   runScheduledSweeps,
 } from "../src/queue/cron";
-import { accounts, campaignRecipients, campaigns, notifications } from "../src/db/schema";
+import { checkHealth } from "../src/lib/health";
+import { accounts, campaignRecipients, campaigns, jobLogs, notifications } from "../src/db/schema";
 import { newId, nowIso } from "../src/lib/ids";
 import type { Db } from "../src/db/client";
 import {
@@ -328,5 +331,48 @@ describe("monthly usage reset via sweep", () => {
     const fresh = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
     expect(fresh?.monthlyEmailSentCount).toBe(0);
     expect(Date.parse(fresh!.currentPeriodEnd!)).toBeGreaterThan(Date.now());
+  });
+});
+
+describe("job_logs retention", () => {
+  // job_logs is append-only and had no retention: every sweep writes a `cron` row
+  // whether or not anything happened, so it grew ~96 rows/day forever. It backs
+  // two liveness reads, so it must not be allowed to become unbounded.
+  const seedJobLog = (db: Db, jobType: string, status: string, ageDays: number) => {
+    const at = new Date(Date.now() - ageDays * 24 * 3600 * 1000).toISOString();
+    return db
+      .insert(jobLogs)
+      .values({ id: newId("job"), jobType, status, createdAt: at, updatedAt: at });
+  };
+
+  it("prunes routine rows past the window but keeps failures and recent history", async () => {
+    const db = await testDb();
+    await seedJobLog(db, "cron", "completed", JOB_LOG_RETENTION_DAYS + 5); // old, routine
+    await seedJobLog(db, "cron", "skipped", JOB_LOG_RETENTION_DAYS + 5); // old, routine
+    await seedJobLog(db, "cron", "completed", 1); // recent
+    await seedJobLog(db, "send_campaign_batch", "failed", JOB_LOG_RETENTION_DAYS + 5);
+    await seedJobLog(db, "process_import", "dead_letter", JOB_LOG_RETENTION_DAYS + 5);
+
+    expect(await pruneJobLogs(db, new Date())).toBe(2);
+
+    const left = await db.select({ status: jobLogs.status }).from(jobLogs);
+    // The audit trail for lost work survives — deleting it would erase the record
+    // of a send that never happened.
+    expect(left.map((r) => r.status).sort()).toEqual(["completed", "dead_letter", "failed"]);
+  });
+
+  it("keeps the newest cron row that /api/health reads even when it is old", async () => {
+    // A worker down longer than the window must still leave health able to SEE a
+    // stale sweep (and report it) rather than falling back to "no cron has run".
+    const db = await testDb();
+    await seedJobLog(db, "cron", "completed", JOB_LOG_RETENTION_DAYS + 10);
+    await pruneJobLogs(db, new Date());
+    const rows = await db.select({ id: jobLogs.id }).from(jobLogs);
+    expect(rows.length).toBe(0); // pruned...
+    // ...so the health check reports "no cron sweep has run yet", which is still a
+    // failing check (degraded), not a false green.
+    const report = await checkHealth({ db, heartbeat: null });
+    expect(report.checks.cron.ok).toBe(false);
+    expect(report.status).toBe("degraded");
   });
 });

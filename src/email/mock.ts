@@ -5,8 +5,9 @@ import type { EmailProvider, SendEmailInput, SendEmailResult } from "./provider"
 export class MockEmailProvider implements EmailProvider {
   async send(input: SendEmailInput): Promise<SendEmailResult> {
     const messageId = `mock_${crypto.randomUUID()}`;
+    const to = Array.isArray(input.toEmail) ? input.toEmail.join(",") : input.toEmail;
     console.log(
-      `[mock-email] to=${input.toEmail} from="${input.fromName}" <${input.fromEmail}> ` +
+      `[mock-email] to=${to} from="${input.fromName}" <${input.fromEmail}> ` +
         `subject="${input.subject}" campaign=${input.campaignId ?? "-"} ` +
         `recipient=${input.recipientId ?? "-"} messageId=${messageId}`,
     );

@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-08-03**.
+> Last verified against the codebase: **2026-08-04**.
 
 ---
 
@@ -17,14 +17,17 @@
 **Simple product update emails for small SaaS teams. No marketing suite. No contact
 tax. Set up and draft for free — pay only when you're ready to send.**
 
-Day3 is a deliberately minimal newsletter/email tool for small software teams that
-just want to send product updates and changelogs to their users — without learning,
-paying for, or fighting a full marketing automation platform.
+Day3 is a deliberately minimal email tool for small software teams: send product
+updates and changelogs to your users (newsletters/campaigns), and send your app's
+**transactional email** — password resets, receipts, magic links — through one
+Resend-style API call (§6.15). One domain setup, one allowance, one place to see
+delivery — without learning, paying for, or fighting a full marketing automation
+platform.
 
 ## 2. Positioning & philosophy
 
-Day3 is opinionated and narrow on purpose. It does a few things well and refuses to
-become a marketing suite.
+Day3 is opinionated: simple to use, honest about pricing, and built so the
+default path is the deliverable one.
 
 - **For small SaaS teams**, not agencies or large marketing departments.
 - **Product updates, not campaigns-in-the-marketing-sense.** Changelogs, release
@@ -39,11 +42,19 @@ become a marketing suite.
 - **Deliverability and compliance are built in, not add-ons:** verified sending
   domains, double opt-in, one-click unsubscribe, automatic bounce/complaint
   suppression, and account auto-pause on bad reputation.
-- **Deliberately excluded:** marketing automation flows, A/B testing, and
-  drag-and-drop template builders. Open and click tracking plus a
-  deliverability/reputation/engagement dashboard are included (see §6.10), and
+- **Dev-first transactional email, same product.** The same verified domain that
+  sends your newsletter sends your password resets — one `POST /v1/emails` call,
+  Resend-compatible in shape, with per-email delivery status and a free-tier
+  sandbox to integrate before paying (§6.15).
+- **Simple by default, deep when you need it.** The common path — write an email,
+  pick an audience, send — stays a few clicks. Open and click tracking and a
+  deliverability/reputation/engagement dashboard are included (§6.10), and
   audiences support **segments** (saved filters) and **topics** (subscription
-  categories) — see §6.3; the rest are out of scope by design.
+  categories) — see §6.3.
+- **Planned (designed, not yet shipped): Automations** — a node canvas with
+  triggers, branches, waits, and sends for onboarding and lifecycle email.
+  Automations and automation runs will be **unlimited on every paid tier** —
+  emails stay the only metered resource. Design: `docs/automations-design.md`.
 
 ## 3. Who it's for
 
@@ -114,6 +125,12 @@ Key pricing facts:
   mailto fallback); there is no checkout for a custom tier (operators set one up
   manually, e.g. via the plan metadata override).
 - **No per-contact / per-subscriber pricing.** Subscriber count does not affect price.
+- **Transactional email draws from the same monthly allowance.** One meter,
+  campaign or API send alike — an email is an email. Exception: the free tier's
+  **transactional sandbox** — free orgs can send up to **100 API emails/month, to
+  their own org members' addresses only** (real SES sends, flagged `sandbox`), so
+  a developer can integrate and test `POST /v1/emails` before paying. Upgrading
+  lifts both restrictions with no code change.
 - **Subscription lifecycle → behavior:**
   - `active` → can send up to the plan's allowance.
   - `past_due` → plan still visible, but **sending is blocked** until payment is fixed.
@@ -161,12 +178,13 @@ guards make that observable:
 | **Account user** | A team member (Clerk user) belonging to an account, with a role (`admin` / `member`). |
 | **Audience** | A named list of subscribers. |
 | **Subscriber** | A contact in an audience. Status: `subscribed`, `pending` (awaiting double opt-in), `unsubscribed`, `bounced`, `complained`, or `suppressed`. Only `subscribed` contacts receive campaigns. |
-| **Sending domain** | A verified email-sending identity (e.g. `news.yourcompany.com`), set up via AWS SES with DKIM/SPF/DMARC DNS records. Campaigns require a verified domain. Adding one auto-creates its first **sender**. |
+| **Sending domain** | A verified email-sending identity (e.g. `news.yourcompany.com`), set up via AWS SES with DKIM/SPF/DMARC DNS records. Campaigns and transactional sends both require a verified domain. Adding one auto-creates its first **sender**. **Globally exclusive:** one domain belongs to one account — the SES identity is shared across the whole platform, so a second account claiming it would inherit its verified status (and could send as it). |
 | **Sender** | A saved **From** identity — a from-name + from-address pair (e.g. `Jane from Acme <jane@news.acme.com>`) on a verified sending domain. Campaigns pick a sender instead of typing the From each time; an account can keep several per domain, with one marked default. |
 | **Campaign** | A single email send to one audience. Lifecycle: `draft` → (optionally `scheduled`) → `pending_review` → `approved` → `generating_recipients` → `sending` → `sent` (or `paused`, `blocked`, `failed`). |
 | **Campaign recipient** | A per-email send record — the source of truth for idempotent, no-duplicate delivery. Tracks delivery status (`pending`, `sending`, `sent`, `delivered`, `bounced`, `complained`, `unsubscribed`, `failed`, `skipped`). |
 | **Segment** | A saved, named filter over an audience's subscribers ("plan is pro"), evaluated live — never materialized. Campaigns can send to a segment instead of the whole audience. |
 | **Topic** | A subscription category on an audience ("Product updates", "Promotions"). Opt-out model (everyone in by default) or opt-in. Campaigns sent under a topic skip contacts who opted out; the unsubscribe page offers a per-topic opt-out. |
+| **Transactional email** | One email sent through the public API (`POST /v1/emails`) — password resets, receipts, magic links. Up to 50 recipients per message, tracked per email: `queued` → `sent` → `delivered` (or `bounced` / `complained` / `failed` / `suppressed`). Listed on the **Emails** page and addressable as `eml_…` over the API. |
 | **Form** | A hosted/embeddable signup form that captures new subscribers into an audience. |
 | **Suppression entry** | A blocklist record (per-account or global) that prevents sending to an address that unsubscribed, bounced, complained, or was manually suppressed. |
 | **Import** | A CSV upload job that adds subscribers to an audience. |
@@ -444,6 +462,12 @@ the same "Saving… / Saved" indicator as the campaign composer.
 
 ### 6.5 Sending domains (deliverability)
 - Add a domain and get the DKIM/SPF/DMARC DNS records to publish.
+- **A domain can only be claimed by one account.** Because a sending domain is a
+  single SES identity for the entire platform, adding one that another account
+  already has would return SES's account-wide "already verified" state and stamp
+  the new row verified with no DNS proof — letting its owner send DKIM-signed,
+  DMARC-aligned mail as the other tenant. Adding an already-claimed domain is a
+  409, whoever holds it.
 - **Auto-check / manual recheck** of verification status.
 - **Recovery from a timed-out verification.** SES stops watching for the DKIM
   records 72 hours after a domain is added and then reports a permanent failure.
@@ -582,11 +606,12 @@ link to its results), and **signups turned away at the free-plan subscriber cap*
 (throttled to once a day, with an upgrade link). The service fails open — a
 notification never blocks the flow that triggered it.
 
-### 6.14 Public API (v1) — audiences over HTTPS
+### 6.14 Public API (v1) — audiences and transactional email over HTTPS
 
-A REST API at **`/api/v1`** exposes everything inside Audiences — audiences,
-contacts, custom fields, segments, topics, and the suppression list — so teams can
-manage their lists from code and, above all, **migrate from another provider**
+A REST API at **`/api/v1`** does two jobs: it **sends transactional email**
+(`POST /v1/emails` — see §6.15) and it exposes everything inside Audiences —
+audiences, contacts, custom fields, segments, topics, and the suppression list —
+so teams can manage their lists from code and **migrate from another provider**
 (Resend, Mailchimp) with a short script. Full reference spec: `docs/api-v1-spec.md`.
 
 - **Auth:** bearer API keys (`day3_live_…`), created and revoked on the **API keys**
@@ -605,9 +630,10 @@ manage their lists from code and, above all, **migrate from another provider**
     looking anything up. The reference is also copyable on its own, as Markdown to
     drop into a repo's `AGENTS.md` / `CLAUDE.md`. Prompts never contain a live key:
     they instruct the assistant to read `DAY3_API_KEY` from the environment.
-  - **cURL / JavaScript / Python snippets** for the five things people actually do
-    (add a contact, import a list, unsubscribe someone, list contacts, import a
-    suppression list), and a map of every endpoint.
+  - **cURL / JavaScript / Python snippets** for the things people actually do
+    (send a transactional email, add a contact, import a list, unsubscribe
+    someone, list contacts, import a suppression list), and a map of every
+    endpoint.
   - **A subscriber-cap warning shown up front** on a capped (free) plan, stating
     the exact remaining headroom. An import that would cross the cap is rejected
     whole, on the first batch, so the page says so before anything is copied —
@@ -642,7 +668,83 @@ manage their lists from code and, above all, **migrate from another provider**
   writes too (batches that would cross it are rejected whole, never partially
   applied).
 
-### 6.15 Getting around
+### 6.15 Transactional email — the dev-first sending API
+
+Day3 sends an app's operational email — password resets, receipts, magic links,
+alerts — through one Resend-style API call. It is a **headline product surface**:
+its own **Emails** page in the sidebar, its own API endpoints, and its own docs
+in the API panel. The design goal is "integrated in ten minutes": precise
+synchronous errors, copy-paste snippets, and a sandbox that works before paying.
+
+**The API** (auth, conventions, and error envelope shared with the rest of v1):
+
+- `POST /v1/emails` — send. Body: `from` (any local-part on a **verified sending
+  domain** — `"Acme <notify@acme.com>"` or a bare address; no pre-created sender
+  needed), `to` (string or array, up to **50 recipients** on one message),
+  `subject`, `html` and/or `text`, optional `reply_to`, custom `headers`
+  (platform-owned ones like `List-Unsubscribe` are reserved), and string
+  `tags`. Returns the email object (`eml_…`, `status: "queued"`) immediately;
+  delivery is asynchronous and typically takes a couple of seconds.
+- `GET /v1/emails/{id}` — the status poll: `queued` → `sent` → `delivered` (or
+  `bounced` / `complained` / `failed` / `suppressed`) plus the raw `events`
+  timeline. `GET /v1/emails` lists sends, filterable by `?status=`.
+- **`Idempotency-Key` makes retries safe** — the single most important
+  transactional DX feature; a network-failure retry can never double-send a
+  password reset. The key is claimed *before* the send is processed, so even a
+  client retry that races its own first attempt resolves to one email (the
+  loser gets a "already in progress" 409).
+- **Transactional ignores unsubscribes but honors deliverability suppressions**:
+  someone who unsubscribed from the newsletter still gets their password reset;
+  an address that hard-bounced or complained is rejected up front with
+  `email_suppressed`.
+- Its own rate bucket (default 120 sends/min per account, env-tunable) inside
+  the general API limit, plus an aggregate content-size ceiling.
+- **Header-injection hardened**: the `from` display name is emitted as a
+  quoted string and may not contain bracket/quote/control characters, so it can
+  never smuggle a second mailbox (which in a shared SES account would mean
+  sending as another tenant's verified domain); control characters are rejected
+  in the subject, header values and addresses; and callers cannot set
+  auth/trace headers (`DKIM-Signature`, `Authentication-Results`, `ARC-*`,
+  `Received`, `Sender`), the unsubscribe headers, our own attribution headers,
+  or any `X-SES-*` (which could redirect event tracking).
+
+**Reliability** (same non-negotiables as campaign sending, §7.2): the API
+validates everything synchronously (domain, plan, quota, suppression), persists
+the email to Postgres, reserves quota atomically, and enqueues an ID-only job.
+Transactional jobs ride the same BullMQ queue at **top priority** — every job
+type carries an explicit priority, so a password reset never waits behind a
+100k-recipient campaign drain. The worker's send is duplicate-safe by the same
+status-ledger claim pattern as campaigns: only provably-unsent errors retry;
+ambiguous ones go terminal (observable via the API) rather than risk a double
+send. The cron sweep fails crashed sends, re-enqueues lost jobs, gives up
+loudly after 6 hours, and prunes bodies after **30 days** (metadata stays).
+
+Bounces and complaints on transactional mail feed the suppression list **and
+count toward the account's reputation auto-pause** (§6.7) on equal footing with
+campaign sends — the API is the higher-volume path and the one that skips
+campaign review, so excluding it would have left the 4%-bounce guard blind
+exactly where it matters most.
+
+**The Emails page** (sidebar, between Campaigns and Audiences) is the log: every
+API send with status chips, recipient/subject search, a status filter, and a
+detail drawer with the delivery timeline, error, tags, provider message id, and
+a rendered content preview (until the 30-day prune). Its `</>` API panel carries
+verified from-domains, send/status/list snippets, and an AI context pack; the
+empty state routes a first-time user to an API key. SES delivery/bounce/
+complaint webhooks update each email live — per recipient, since one message can
+carry fifty and SES reports each separately — and transactional events appear in
+the Activity log (§6.11) alongside campaign events.
+
+**Plans:** sends draw from the same monthly allowance as campaigns; the free
+tier gets the member-only 100/month sandbox (§4). Delivery lifecycle statuses,
+per-email, come free with the existing SES event pipeline.
+
+> Source of truth in code: routes `app/api/v1/emails/**`, shared vocabulary
+> `src/services/transactional.ts`, worker job
+> `src/queue/handlers/send-transactional.ts`, sweeps in `src/queue/cron.ts`,
+> UI `app/(app)/emails/page.tsx`, docs content `src/lib/api-docs.ts`.
+
+### 6.16 Getting around
 - A **command palette** (⌘K / Ctrl-K) jumps to any page or the common create actions
   from anywhere.
 - A **plan pill** in the sidebar shows the current tier on every screen; on the free
@@ -689,6 +791,14 @@ Day3 is split into two cooperating tiers that share one Postgres database:
    update recipient status + suppression.
 6. **Sweeps** — cron recovers stuck sends, re-checks pending domains, releases due
    scheduled campaigns, and reconciles campaign completion.
+
+**The transactional path** (§6.15) is the same pipeline minus review and
+recipient generation: the API route validates + persists + reserves quota
+synchronously, then enqueues a single ID-only `send_transactional` job that
+rides the same queue at top priority (explicit per-type priorities keep a
+password reset from waiting behind a campaign drain). The same SNS webhook
+updates transactional emails' delivery status, and the same cron sweep recovers
+their crashed/lost sends.
 
 ### 7.2 Reliability rules (non-negotiable)
 - **Idempotent jobs:** a retried message never duplicates a send. `campaign_recipients.status`

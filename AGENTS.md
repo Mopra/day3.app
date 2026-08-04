@@ -36,13 +36,15 @@ serves the UI and the API routes; a separate long-running Node worker
    only exception.
 4. **Email goes through the `EmailProvider` interface** (`src/email/`).
    `EMAIL_PROVIDER=mock` logs instead of sending; `ses` uses AWS SES (sesv2).
-5. **No features outside the MVP scope.** Pricing is bandwidth-based. The free
+5. **Pricing is bandwidth-based — you meter emails, never contacts.** The free
    tier (`free_org`) is set-up-only: it can configure everything and draft, but
    **cannot send** and is capped at 500 subscribers. Paid tiers (`1k_plan` →
    `1m_plan`) unlock sending and **all include the AI assistant** — 1k/5k on a
    smaller credit allowance, 10k+ on the full one. Gating lives in
    `src/lib/plans-catalog.ts` (`planCanSend` / `planHasAI` / `aiAllowanceForPlan` /
    `maxSubscribersForPlan`) and `src/services/subscriber-limit.ts`. See `PRODUCT.md §4`.
+   When adding a feature, gate it on the plan's *send* allowance where it sends
+   mail, and leave it unmetered where it doesn't — don't invent a second meter.
 
 ## Gotchas
 
@@ -81,6 +83,15 @@ serves the UI and the API routes; a separate long-running Node worker
   `db:migrate` shows up only at runtime: Drizzle selects every schema column, so a
   column that exists in `schema.ts` but not in the live DB makes every query on that
   table 500. If you add a column, generate + migrate in the same change.
+- **`statement_timeout` is not a hang guard.** It is a server-side parameter, so it
+  only bounds queries the server actually receives, and postgres.js has no
+  client-side query timeout. A half-open socket (peer gone, no FIN/RST — what a
+  frozen-then-thawed serverless instance holds) swallows a query forever: no
+  response, no error, and with `max: 1` the wedged connection takes every later
+  request on that instance with it. Wrap web-tier queries that must not hang in
+  `withDeadline` (`src/lib/deadline.ts`) and call `resetDb()` when one trips —
+  abandoning a query does not free its connection. This caused weeks of phantom
+  `/api/health` "outages"; see `docs/health-monitoring.md`.
 - Liveness: `GET /api/health` (200 healthy / 503 if DB down) reports DB, cron-sweep
   freshness, and the worker's Redis heartbeat (`day3:worker:heartbeat`, written every
   30s by `worker/index.ts`). Wire monitors/supervisor per `docs/health-monitoring.md`.

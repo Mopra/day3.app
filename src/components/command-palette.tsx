@@ -11,6 +11,7 @@ import {
   Mail,
   Plus,
   Search,
+  Send,
   Settings,
   Users,
   AtSign,
@@ -35,6 +36,7 @@ type Command = {
 const COMMANDS: Command[] = [
   { label: "New campaign", hint: "Create", icon: Plus, href: "/campaigns/new", keywords: "compose write email draft" },
   { label: "Campaigns", icon: Mail, href: "/campaigns" },
+  { label: "Emails", icon: Send, href: "/emails", keywords: "transactional api sends log password reset receipt" },
   { label: "Audiences", icon: Users, href: "/audiences", keywords: "subscribers list contacts" },
   { label: "Import subscribers", hint: "Audiences", icon: FileInput, href: "/audiences", keywords: "csv upload" },
   { label: "Sending domains", icon: Globe, href: "/domains", keywords: "dns dkim verify" },

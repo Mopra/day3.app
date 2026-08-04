@@ -23,6 +23,10 @@ export const queueMessageSchema = z.discriminatedUnion("type", [
   // worker re-reads the subscriber + form + account, signs the confirm token,
   // and sends via the account's verified sending domain.
   z.object({ type: z.literal("send_form_confirmation"), subscriberId: id, accountId: id }),
+  // One transactional email accepted by POST /v1/emails. ID-only: the worker
+  // re-reads the stored row (recipients, subject, bodies) from Postgres.
+  // Idempotent via the row's status ledger — only a `queued` row sends.
+  z.object({ type: z.literal("send_transactional"), emailId: id, accountId: id }),
   // Irreversible erasure of an account and everything it owns — enqueued when a
   // Clerk org is deleted, or when the last member of an org deletes their user
   // (see app/api/webhooks/clerk). ID-only; the worker re-reads and hard-deletes
@@ -79,6 +83,17 @@ export function laneCountFor(pending: number): number {
 // the VPS worker (consumer) processes them. Kept here (no bullmq import) so both
 // sides reference the same name without pulling in the driver.
 export const QUEUE_NAME = "day3-jobs";
+
+// Per-type BullMQ priority (lower number = processed sooner). Transactional
+// emails (password resets, receipts) must never wait behind a big campaign
+// drain, so they jump the line. CRITICAL BullMQ subtlety: jobs added WITHOUT a
+// priority are processed before ALL prioritized jobs — so every message gets an
+// explicit priority; prioritizing only the transactional type would do the
+// exact opposite of what it reads like. Both producers (src/queue/producer.ts
+// and worker/index.ts) must pass this to queue.add.
+export function jobPriorityFor(type: QueueMessage["type"]): number {
+  return type === "send_transactional" ? 1 : 10;
+}
 
 // Bounded retry + backoff policy applied to every enqueued job. Retries are
 // safe because handlers are idempotent on DB status, so a re-delivered message

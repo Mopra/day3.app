@@ -72,6 +72,11 @@ const DEFAULTS: Record<string, RateLimitRule> = {
   // batch endpoints count as one request, which is what makes bulk migration
   // cheap against this limit.
   public_api: { limit: 600, windowMs: 60_000 },
+  // Transactional sends (POST /v1/emails), keyed by account — each accepted
+  // request becomes a real SES send, so it gets its own tighter bucket inside
+  // the general public_api one. ~2 rps sustained; raise per-customer via
+  // RATE_LIMIT_TRANSACTIONAL_SEND when someone legitimately bursts receipts.
+  transactional_send: { limit: 120, windowMs: 60_000 },
 };
 
 function parseRule(name: string): RateLimitRule {

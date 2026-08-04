@@ -17,6 +17,7 @@ import { NotificationBell } from "@/components/notification-bell";
 import { CommandPalette } from "@/components/command-palette";
 import { LayoutGridIcon } from "@/components/ui/animated-icons/layout-grid";
 import { MailCheckIcon } from "@/components/ui/animated-icons/mail-check";
+import { SendIcon } from "@/components/ui/animated-icons/send";
 import { ChartColumnIcon } from "@/components/ui/animated-icons/chart-column";
 import { ActivityIcon } from "@/components/ui/animated-icons/activity";
 import { UsersIcon } from "@/components/ui/animated-icons/users";
@@ -45,6 +46,7 @@ const NAV: NavEntry[] = [
   // account (Billing, API keys, Settings).
   { to: "/dashboard", label: "Dashboard", icon: LayoutGridIcon },
   { to: "/campaigns", label: "Campaigns", icon: MailCheckIcon },
+  { to: "/emails", label: "Emails", icon: SendIcon },
   { to: "/audiences", label: "Audiences", icon: UsersIcon },
   { to: "/domains", label: "Domains", icon: EarthIcon },
   { to: "/senders", label: "Senders", icon: AtSignIcon },

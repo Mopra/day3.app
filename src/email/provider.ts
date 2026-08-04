@@ -5,9 +5,12 @@ export type SendEmailInput = {
   fromEmail: string;
   fromName: string;
   replyTo?: string;
-  toEmail: string;
+  // A single address (campaign sends) or several (transactional API sends —
+  // one message whose To header lists every address, Resend-style).
+  toEmail: string | string[];
   subject: string;
-  html: string;
+  // At least one body is required; transactional API sends may be text-only.
+  html?: string;
   text?: string;
   headers?: Record<string, string>;
 };

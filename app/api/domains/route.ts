@@ -6,6 +6,7 @@ import { requireAccount } from "@/api/context";
 import { findDomain } from "@/api/finders";
 import { sendingDomains, senders } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
+import { isDomainClaimed } from "@/services/domain-ownership";
 import { createDomainIdentity } from "@/services/ses-identity";
 
 export const GET = route(async () => {
@@ -36,6 +37,16 @@ export const POST = route(async (req: NextRequest) => {
 
   if (!fromEmail.endsWith(`@${domain}`)) {
     throw new HttpError(400, "From email must use the sending domain");
+  }
+
+  // Domain ownership is GLOBAL, not per-tenant: one domain is one shared SES
+  // identity, so letting a second account claim it would hand them a
+  // "verified" row with no DNS proof — and the ability to send DKIM-signed mail
+  // as the real owner. See services/domain-ownership.ts for the full reasoning.
+  // The same 409 whether the holder is this account or another one: which
+  // tenants use which domains isn't ours to leak.
+  if (await isDomainClaimed(db, domain)) {
+    throw new HttpError(409, "That domain is already added");
   }
 
   const id = newId("dom");

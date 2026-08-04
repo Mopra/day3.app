@@ -1,6 +1,13 @@
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, lt, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { accounts, campaignRecipients, campaigns, jobLogs, sendingDomains } from "../db/schema";
+import {
+  accounts,
+  campaignRecipients,
+  campaigns,
+  jobLogs,
+  sendingDomains,
+  transactionalEmails,
+} from "../db/schema";
 import { campaignContentError, campaignSendGateError } from "../api/campaigns";
 import { nowIso } from "../lib/ids";
 import { DOMAIN_RECHECK_WINDOW_DAYS } from "../lib/domain";
@@ -10,6 +17,7 @@ import { notifyAccount, notifyCampaignSent } from "../services/notifications";
 import { checkSendEligibility } from "../services/plans";
 import { releaseReservation } from "../services/quota";
 import { getDomainIdentity, type DomainIdentityState } from "../services/ses-identity";
+import { TRANSACTIONAL_BODY_RETENTION_DAYS } from "../services/transactional";
 import { laneCountFor, SEND_BATCH_SIZE, type JobQueue } from "./messages";
 
 const STUCK_LOCK_MINUTES = 15;
@@ -56,6 +64,138 @@ async function failStuckRecipients(db: Db): Promise<number> {
     await releaseReservation(db, accountId, count);
   }
   return updated.length;
+}
+
+// Transactional emails need the same crash-recovery treatment as campaign
+// recipients, with the same duplicate-safety rule: a row stuck in "sending"
+// (worker crashed mid-send) may or may not have left, so it becomes "failed",
+// never "queued" again. Rows stuck in "queued", by contrast, provably never
+// sent (the claim is what flips them out of queued) — those get their job
+// re-enqueued (dead-lettered retries, Redis data loss) up to a give-up window,
+// after which they fail and release their quota reservation.
+const TRANSACTIONAL_REQUEUE_MS = 15 * 60 * 1000; // healthy retries keep updatedAt fresher than this
+const TRANSACTIONAL_GIVE_UP_MS = 6 * 60 * 60 * 1000; // a 6h-late transactional email is better failed loudly
+export async function sweepTransactionalEmails(
+  db: Db,
+  jobsQueue: JobQueue,
+  now: Date,
+): Promise<{ failed: number; requeued: number }> {
+  const nowMs = now.getTime();
+
+  // 1) Crashed mid-send → failed (may have reached the provider; never retry).
+  const lockCutoff = new Date(nowMs - STUCK_LOCK_MINUTES * 60 * 1000).toISOString();
+  const stuck = await db
+    .update(transactionalEmails)
+    .set({
+      status: "failed",
+      error: "send attempt did not complete (stuck lock)",
+      lockedAt: null,
+      updatedAt: nowIso(),
+    })
+    .where(
+      and(eq(transactionalEmails.status, "sending"), lt(transactionalEmails.lockedAt, lockCutoff)),
+    )
+    .returning({ accountId: transactionalEmails.accountId, to: transactionalEmails.to });
+
+  // 2) Queued too long overall → failed + reservation released (provably unsent).
+  const giveUpCutoff = new Date(nowMs - TRANSACTIONAL_GIVE_UP_MS).toISOString();
+  const givenUp = await db
+    .update(transactionalEmails)
+    .set({
+      status: "failed",
+      error: "send could not be completed (gave up after repeated retries)",
+      updatedAt: nowIso(),
+    })
+    .where(
+      and(eq(transactionalEmails.status, "queued"), lt(transactionalEmails.createdAt, giveUpCutoff)),
+    )
+    .returning({ accountId: transactionalEmails.accountId, to: transactionalEmails.to });
+
+  // A stuck-lock row's email may have left (crash after handoff), so like the
+  // campaign sweep we release its reservation anyway — erring by ≤1 per crash
+  // beats permanently inflating the counter. Given-up rows provably never sent.
+  const byAccount = new Map<string, number>();
+  for (const row of [...stuck, ...givenUp]) {
+    byAccount.set(row.accountId, (byAccount.get(row.accountId) ?? 0) + row.to.length);
+  }
+  for (const [accountId, count] of byAccount) {
+    await releaseReservation(db, accountId, count);
+  }
+
+  // 3) Queued with no live job → re-enqueue (idempotent: the handler's claim
+  // makes a duplicate job a no-op). Stamp updatedAt first so the next sweep
+  // doesn't re-enqueue the same row while its fresh job waits its turn.
+  const requeueCutoff = new Date(nowMs - TRANSACTIONAL_REQUEUE_MS).toISOString();
+  const stale = await db
+    .update(transactionalEmails)
+    .set({ updatedAt: nowIso() })
+    .where(
+      and(eq(transactionalEmails.status, "queued"), lt(transactionalEmails.updatedAt, requeueCutoff)),
+    )
+    .returning({ id: transactionalEmails.id, accountId: transactionalEmails.accountId });
+  for (const row of stale) {
+    try {
+      await jobsQueue.send({ type: "send_transactional", emailId: row.id, accountId: row.accountId });
+    } catch (err) {
+      // Next sweep retries once the row goes stale again.
+      console.error(`[cron] transactional re-enqueue failed for ${row.id}:`, err);
+    }
+  }
+
+  return { failed: stuck.length + givenUp.length, requeued: stale.length };
+}
+
+// Storage hygiene: transactional bodies are full HTML documents; after the
+// retention window only the metadata row (status, recipients, timestamps)
+// stays queryable. bodyPrunedAt lets the UI/API say "content expired" instead
+// of implying the email was sent empty.
+export async function pruneTransactionalBodies(db: Db, now: Date): Promise<number> {
+  const cutoff = new Date(
+    now.getTime() - TRANSACTIONAL_BODY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const pruned = await db
+    .update(transactionalEmails)
+    .set({ htmlBody: null, textBody: null, bodyPrunedAt: nowIso(), updatedAt: nowIso() })
+    .where(
+      and(
+        lt(transactionalEmails.createdAt, cutoff),
+        isNull(transactionalEmails.bodyPrunedAt),
+        // Never prune an email that hasn't reached a terminal state (a queued
+        // row this old is the sweep's problem, not the pruner's).
+        inArray(transactionalEmails.status, [
+          "sent",
+          "delivered",
+          "bounced",
+          "complained",
+          "failed",
+          "suppressed",
+        ]),
+      ),
+    )
+    .returning({ id: transactionalEmails.id });
+  return pruned.length;
+}
+
+// job_logs is append-only and had no retention: every sweep writes a `cron` row,
+// so it grows by ~96 rows/day forever whether or not anything happened. It backs
+// two liveness reads (the /api/health cron staleness check and the dailyChecksDue
+// marker), which only ever want the newest row per job_type, plus the admin
+// overview's recent-failures list. Keeping ~30 days satisfies all three and keeps
+// the table small enough that a mistuned query can't become an outage.
+export const JOB_LOG_RETENTION_DAYS = 30;
+
+export async function pruneJobLogs(db: Db, now: Date): Promise<number> {
+  const cutoff = new Date(
+    now.getTime() - JOB_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  // Successful routine rows only. Failures and dead letters are the operator's
+  // audit trail for lost work — those age out on their own far more slowly, and
+  // deleting them would erase the record of a send that never happened.
+  const pruned = await db
+    .delete(jobLogs)
+    .where(and(lt(jobLogs.createdAt, cutoff), inArray(jobLogs.status, ["completed", "skipped"])))
+    .returning({ id: jobLogs.id });
+  return pruned.length;
 }
 
 // Campaigns sitting in "sending" with no pending/in-flight recipients (e.g.
@@ -496,6 +636,10 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
   };
 
   const failed = (await stage("fail_stuck", () => failStuckRecipients(db))) ?? 0;
+  const transactional = (await stage("transactional", () => sweepTransactionalEmails(db, queue, now))) ?? {
+    failed: 0,
+    requeued: 0,
+  };
   // Reset before resume so a period rollover this sweep un-pauses quota-paused
   // campaigns in the same run.
   const usageReset = (await stage("usage_reset", () => resetMonthlyUsage(db, now))) ?? 0;
@@ -513,6 +657,8 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
     (await stage("daily", async () => {
       if (!(await dailyChecksDue(db, now))) return false;
       await dailyHealthChecks(db);
+      await pruneTransactionalBodies(db, now);
+      await pruneJobLogs(db, now);
       await logJob(db, { jobType: "cron_daily", status: "completed" });
       return true;
     })) ?? false;
@@ -523,6 +669,8 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
     error: errors.length > 0 ? errors.join("; ") : undefined,
     payload: {
       stuckFailed: failed,
+      transactionalFailed: transactional.failed,
+      transactionalRequeued: transactional.requeued,
       released,
       resumed,
       rescued,

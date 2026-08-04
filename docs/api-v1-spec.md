@@ -12,16 +12,23 @@ formatting straight through. Normalized in `src/api/v1/serialize.ts` (the
 row → public-shape boundary); pagination cursors keep the raw column value.
 Regression-pinned in `test/api-migration-flow.test.ts`.
 
+**Added 2026-08-04: transactional email sending** (§2.0) — `POST /v1/emails`
+plus its read endpoints, with a free-tier sandbox mode. Tests:
+`test/transactional.test.ts`, `test/transactional-webhook.test.ts`.
+
 Known deviations from the draft: contact `created_at`
 backdating (open question 3) is not implemented; suppression GET lists only the
 account's own entries (the single-email check also consults global entries).
-Scope: Audiences and everything inside them (contacts, fields, segments, topics).
-Goal: make migrating an audience from Resend / Mailchimp trivially easy, and give
+Scope: transactional sending (§2.0), plus Audiences and everything inside them
+(contacts, fields, segments, topics).
+Goal: make migrating an audience from Resend / Mailchimp trivially easy, give
 developers a Resend-grade DX with the migration gaps fixed (bulk upsert,
-custom fields, suppression-state import).
+custom fields, suppression-state import), and let an app send its operational
+email through the same verified domain as its newsletter.
 
-Out of scope for v1: campaigns/sending, domains/senders, webhooks, OAuth. These
-get their own spec later; nothing below should paint us into a corner on them.
+Out of scope for v1: campaign (newsletter) sending, domains/senders,
+customer-facing webhooks, OAuth. These get their own spec later; nothing below
+should paint us into a corner on them.
 
 ---
 
@@ -140,6 +147,14 @@ Idempotency-Key: <client-generated, ≤255 chars>
 - Same key with a **different** request body → `409 idempotency_conflict`.
 - Backed by a small `idempotency_keys` table (Postgres, not Redis — must
   survive worker/Redis restarts; swept by the existing cron).
+- The key row is a **claim**, written before the handler runs, so two
+  *concurrent* requests with one key resolve to exactly one execution: the
+  loser gets `409 idempotency_conflict` ("already in progress") and should
+  retry in a moment. A claim abandoned by a crashed request is taken over
+  after 5 minutes. `POST /v1/emails` completes its claim in the same
+  transaction that writes the email row, so a crash mid-request either leaves
+  no email (the retry re-executes) or an email whose response the retry
+  replays — never a duplicate send.
 - `PATCH`/`DELETE` are naturally idempotent and don't need the header.
 
 ### Rate limits
@@ -159,7 +174,14 @@ The public API enforces exactly the same rules as the app (hard rule #5):
   500-subscriber cap via `subscriberHeadroom` → `403 plan_limit_reached`.
   Batch requests that would cross the cap are rejected **whole** (never
   partially applied against a cap) with the headroom in the error message.
-- No send-related endpoints exist in v1, so `planCanSend` is not in play yet.
+- Sending (`POST /v1/emails`) is gated by `planCanSend`, with a deliberate
+  carve-out: a free org sends in **sandbox mode** — real sends, but only to
+  addresses of its own organization's members, on a small monthly allowance
+  (`SANDBOX_MONTHLY_ALLOWANCE`). Responses carry `"sandbox": true`. Recipients
+  outside the org are `403 sandbox_recipient_not_allowed`; exhausting the
+  allowance is `403 plan_limit_reached`. Upgrading lifts both with no code
+  change. Transactional sends draw from the same monthly email allowance as
+  campaigns.
 
 ---
 
@@ -167,6 +189,90 @@ The public API enforces exactly the same rules as the app (hard rule #5):
 
 Naming: internally these rows are `subscribers`; the public API says
 **`contacts`** (matches the UI's Contacts tab and Resend/Mailchimp vocabulary).
+
+### 2.0 Emails (transactional sending)
+
+`POST /v1/emails` · `GET /v1/emails` · `GET /v1/emails/{id}`
+
+The app's operational email — password resets, receipts, magic links.
+Resend-compatible request shape. Implementation: `app/api/v1/emails/**`,
+worker job `src/queue/handlers/send-transactional.ts`; product docs in
+`PRODUCT.md §6.15`.
+
+**`POST /v1/emails`** — request:
+
+```json
+{
+  "from": "Acme <notifications@updates.acme.com>",
+  "to": ["jane@example.com"],
+  "subject": "Reset your password",
+  "html": "<p>…</p>",
+  "text": "…",
+  "reply_to": "support@acme.com",
+  "headers": { "X-Entity-Ref-ID": "abc" },
+  "tags": { "type": "password-reset" }
+}
+```
+
+- `from`, `to`, `subject`, and at least one of `html` / `text` are required.
+- `from` accepts a bare address or `"Name <addr>"`, and must be on a **verified
+  sending domain** of the account — any local-part works, no pre-created sender
+  needed. Otherwise `403 domain_not_verified`.
+- `to` is a string or an array of up to **50** addresses: ONE message whose To
+  header lists them all (not 50 separate emails). Addresses are canonicalized
+  and de-duplicated; each one counts against the monthly allowance.
+- `headers`: up to 20. Reserved names are rejected with `400` —
+  everything derived from the body (`from`/`to`/`subject`/`reply-to`/…), MIME
+  plumbing, auth/trace headers (`DKIM-Signature`, `Authentication-Results`,
+  `ARC-*`, `Received`, `Sender`, `Resent-*`), the unsubscribe headers, our
+  `X-Account-ID` / `X-Transactional-Email-ID`, and any `X-SES-*`.
+- Control characters are rejected in `subject`, header values, and addresses;
+  a display name may not contain `< > " \` (header-injection defense).
+- Aggregate size ceiling across html + text + headers + tags:
+  `MAX_TOTAL_BYTES` (1.5 MB of UTF-8).
+- Sending has its own rate bucket (`transactional_send`, default 120/min per
+  account) inside the general API limit.
+
+Response — the Email object, `202`-in-spirit but returned as `200`:
+
+```json
+{
+  "id": "eml_…", "object": "email",
+  "from": "Acme <notifications@updates.acme.com>",
+  "to": ["jane@example.com"],
+  "reply_to": null,
+  "subject": "Reset your password",
+  "status": "queued",
+  "error": null,
+  "tags": { "type": "password-reset" },
+  "sandbox": false,
+  "created_at": "2026-08-04T08:00:00.000Z",
+  "sent_at": null, "delivered_at": null,
+  "bounced_at": null, "complained_at": null
+}
+```
+
+`status` walks `queued` → `sent` → `delivered`, or ends at `bounced`,
+`complained`, `failed`, `suppressed`. Delivery is asynchronous (a
+top-priority worker job — a transactional send never waits behind a campaign
+drain) and normally completes within seconds. The internal `sending` state is
+reported as `queued`.
+
+**`GET /v1/emails/{id}`** adds `events`: the delivery timeline
+(`[{ "type": "sent", "created_at": … }, { "type": "delivery", … }]`), fed by
+the SES/SNS webhook. **`GET /v1/emails`** lists newest-first with cursor
+pagination and `?status=queued|sent|delivered|bounced|complained|failed|suppressed`.
+
+Suppression semantics differ from campaigns on purpose: a hard bounce,
+complaint, or provider suppression blocks the send (`400 email_suppressed`),
+but an **unsubscribe does not** — opting out of a newsletter must never block
+a password reset. Bounces and complaints on transactional mail feed the
+suppression list and count toward the account's reputation auto-pause exactly
+like campaign sends.
+
+Bodies (`html`/`text`) are pruned after
+`TRANSACTIONAL_BODY_RETENTION_DAYS` (30); the metadata row is kept, and the
+API/UI report the content as expired rather than empty.
 
 ### 2.1 Audiences
 

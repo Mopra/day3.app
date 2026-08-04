@@ -1,6 +1,6 @@
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { accounts, campaignRecipients } from "../db/schema";
+import { accounts, campaignRecipients, transactionalEmails } from "../db/schema";
 import { nowIso } from "../lib/ids";
 import { logger } from "../lib/logger";
 
@@ -56,7 +56,33 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
     )
     .groupBy(campaignRecipients.status);
 
-  const counts = Object.fromEntries(rows.map((r) => [r.status, Number(r.count)]));
+  // Transactional (API) sends count toward the SAME reputation. They must:
+  // AWS judges one bounce rate for the whole SES account, and the API is the
+  // path that skips campaign review entirely — an account mailing a harvested
+  // list through POST /v1/emails would otherwise never trip the auto-pause.
+  // A message carries up to 50 recipients, so it weighs jsonb_array_length(to)
+  // rather than one row; a bounce/complaint notification for any of them flips
+  // the message's status, which (like the campaign ledger) attributes the whole
+  // message — the conservative direction for a reputation guard.
+  const txRows = await db
+    .select({
+      status: transactionalEmails.status,
+      count: sql<number>`coalesce(sum(jsonb_array_length(${transactionalEmails.to})), 0)`.as("count"),
+    })
+    .from(transactionalEmails)
+    .where(
+      and(
+        eq(transactionalEmails.accountId, accountId),
+        gte(transactionalEmails.sentAt, cutoff),
+        inArray(transactionalEmails.status, ["sent", "delivered", "bounced", "complained"]),
+      ),
+    )
+    .groupBy(transactionalEmails.status);
+
+  const counts: Record<string, number> = {};
+  for (const r of [...rows, ...txRows]) {
+    counts[r.status] = (counts[r.status] ?? 0) + Number(r.count);
+  }
   const bounced = counts.bounced ?? 0;
   const complained = counts.complained ?? 0;
   const attempted =
