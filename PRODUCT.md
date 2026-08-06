@@ -48,6 +48,14 @@ default path is the deliverable one.
   sends your newsletter sends your password resets — one `POST /v1/emails` call,
   Resend-compatible in shape, with per-email delivery status and a free-tier
   sandbox to integrate before paying (§6.15).
+- **Your AI editor is a first-class composer.** Day3 speaks **MCP**, so Claude
+  Code, Cursor or VS Code can write a campaign where you already work — and the
+  draft lands in Day3 as *editable blocks*, not a wall of HTML, so you finish it
+  in the visual composer if you want to. Writing, previewing and test-sending are
+  open; mailing a real audience needs a key you explicitly allowed to send. This
+  is the deliberate counter-position to marketing suites that bolt a chat box
+  onto their own editor: the email is one artifact, editable from both ends
+  (§6.16).
 - **Simple by default, deep when you need it.** The common path — write an email,
   pick an audience, send — stays a few clicks. Open and click tracking and a
   deliverability/reputation/engagement dashboard are included (§6.10), and
@@ -204,6 +212,7 @@ guards make that observable:
 |---------|-----------|
 | **Account** | The tenant. One per Clerk **organization**. Holds plan, usage, sending status, company mailing address, and a public `slug` for forms. |
 | **Account user** | A team member (Clerk user) belonging to an account, with a role (`admin` / `member`). |
+| **API key** | A bearer credential (`day3_live_…`) for the public API and the MCP server, minted by an org admin and shown once (only its hash is stored). Every key is scoped to one account. Its **base grant** covers reading and writing contacts, audiences and campaign *drafts*; the one elevated **scope**, `campaigns:send`, is required to send or schedule a campaign to a real audience and is chosen at creation, never added later. |
 | **Audience** | A named list of subscribers. |
 | **Subscriber** | A contact in an audience. Status: `subscribed`, `pending` (awaiting double opt-in), `unsubscribed`, `bounced`, `complained`, or `suppressed`. Only `subscribed` contacts receive campaigns. |
 | **Sending domain** | A verified email-sending identity (e.g. `news.yourcompany.com`), set up via AWS SES with DKIM/SPF/DMARC DNS records. Campaigns and transactional sends both require a verified domain. Adding one auto-creates its first **sender**. **Globally exclusive:** one domain belongs to one account — the SES identity is shared across the whole platform, so a second account claiming it would inherit its verified status (and could send as it). |
@@ -678,7 +687,7 @@ A REST API at **`/api/v1`** does three jobs: it **sends transactional email**
 (`POST /v1/emails` — see §6.15), it exposes everything inside Audiences —
 audiences, contacts, custom fields, segments, topics, and the suppression list —
 so teams can manage their lists from code and **migrate from another provider**
-(Resend, Mailchimp) with a short script, and it exposes **campaigns**, so a
+(Resend, Mailchimp, …) with a short script (§10), and it exposes **campaigns**, so a
 newsletter can be written, previewed and sent from outside the app (see §6.16).
 Full reference spec: `docs/api-v1-spec.md`.
 
@@ -969,6 +978,7 @@ their crashed/lost sends.
 | Auth / tenancy / billing | Clerk (Organizations = tenant boundary; Clerk Billing, beta) |
 | File storage | Supabase Storage (CSV imports) |
 | AI (optional) | OpenRouter (default Claude Sonnet 4.6) via the Vercel AI SDK |
+| MCP server | Hand-rolled JSON-RPC over Streamable HTTP at `/api/mcp` — tools only and stateless, so no SDK or session store is needed |
 | DNS automation | Cloudflare OAuth (optional, for auto-configuring SES records) |
 | Testing | Vitest with pglite (in-memory Postgres per test) |
 
@@ -1062,7 +1072,8 @@ data is worse than one that says what it dropped.
 5. **Watch the import.** Each upload appears in the import history with rows added and a
    skip breakdown — invalid addresses, duplicates, already-suppressed addresses, and
    anything over the free plan's 500-subscriber cap. A **failed import is never
-   auto-retried**: fix the file and re-upload it against the same import row (§Gotchas).
+   auto-retried** — nothing happens behind your back: fix the file and re-upload it
+   against the same import row from the history's retry action (§6.3).
 6. **Verify.** The audience's status breakdown should match your source count minus the
    skips. **CSV export** the audience and diff it against the original if you want proof.
 
@@ -1109,8 +1120,8 @@ operations matters more than the code:
    `?after={next_cursor}` until `has_more` is false) and compare counts, then spot-check
    a few contacts' fields in the app.
 
-Five things reject a *whole* batch rather than a row, and every one of them is a caller
-bug worth coding against:
+Five things reject a *whole* batch rather than a row — four are caller bugs, the fifth is
+the plan cap, and all five are worth handling before the first real run:
 
 - more than 1,000 contacts in one call (`batch_too_large`);
 - **the same address twice in one payload** — emails are canonicalized first, so
@@ -1180,9 +1191,11 @@ in, **MCP** (§6.16) lets the same assistant write the first campaign against it
 10. **Watch Metrics and Activity** for the first sends — bounce and complaint spikes show
     up there per-email, and sustained bad rates auto-pause the account (§6.7).
 
-On the free tier you can do steps 1–8 and send real mail **to your own team** in sandbox
-mode (100/month) before paying — a complete rehearsal of the migration. The 500-subscriber
-cap means the *import* itself needs a paid plan for anything larger.
+**You can rehearse the whole thing free.** Steps 1–8 all work on the free tier (within
+its 500-subscriber cap), and sandbox mode sends real mail **to your own team** —
+100/month, same pipeline, same tracking — so the entire migration can be walked through,
+first campaign included, before any card is entered. Only the real list needs a paid
+plan: sending to anyone outside the org, and importing more than 500 contacts.
 
 ### 10.6 Deliverability during a migration (the part people get wrong)
 
