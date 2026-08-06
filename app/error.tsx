@@ -34,7 +34,7 @@ export default function Error({
           priority
         />
         <div className="space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight">Something went wrong</h1>
+          <h1 className="font-display text-3xl">Something went wrong</h1>
           <p className="text-muted-foreground">
             An unexpected error stopped this page from loading. It&apos;s usually temporary —
             try again, and if it keeps happening, let us know.

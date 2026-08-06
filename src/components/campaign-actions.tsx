@@ -314,7 +314,7 @@ export function CampaignActions({
                   { ok: onboarding.hasSubscribers, label: "Audience has subscribers" },
                 ].map((c) => (
                   <li key={c.label} className="flex items-center gap-2">
-                    <Check className="size-4 shrink-0 text-emerald-600" />
+                    <Check className="size-4 shrink-0 text-olive" />
                     {c.label}
                   </li>
                 ))}

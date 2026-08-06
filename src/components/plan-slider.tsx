@@ -422,7 +422,7 @@ export function PlanSlider({
             <p className="text-sm text-muted-foreground">
               How many emails do you send per month?
             </p>
-            <p className="mt-0.5 text-3xl font-semibold tracking-tight tabular-nums">
+            <p className="mt-0.5 font-display text-4xl tabular-nums">
               {onContact ? (
                 <>
                   {TOP_EMAILS}+
@@ -527,7 +527,7 @@ export function PlanSlider({
 
                 <div className="text-sm font-medium text-muted-foreground">{m.name}</div>
                 <div className="mt-1 flex items-baseline gap-1">
-                  <span className="text-3xl font-semibold tracking-tight">
+                  <span className="font-display text-4xl">
                     ${m.monthlyPriceUsd}
                   </span>
                   <span className="text-sm text-muted-foreground">/mo</span>
@@ -611,7 +611,7 @@ export function PlanSlider({
           >
             <div className="text-sm font-medium text-muted-foreground">Need more?</div>
             <div className="mt-1 flex items-baseline gap-1">
-              <span className="text-3xl font-semibold tracking-tight">Custom</span>
+              <span className="font-display text-4xl">Custom</span>
             </div>
             <div className="mt-1 text-sm text-muted-foreground">
               More than {TOP_EMAILS} emails / month

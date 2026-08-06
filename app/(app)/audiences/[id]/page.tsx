@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { Pencil, Plus, Trash2, UserMinus, Users } from "lucide-react";
@@ -80,7 +81,11 @@ function importSkipBreakdown(imp: ImportRow): string {
     parts.push(`${imp.duplicateRows.toLocaleString()} already in this audience`);
   if (imp.invalidRows > 0) parts.push(`${imp.invalidRows.toLocaleString()} invalid email${imp.invalidRows === 1 ? "" : "s"}`);
   if (imp.suppressedRows > 0)
-    parts.push(`${imp.suppressedRows.toLocaleString()} previously unsubscribed or bounced`);
+    parts.push(`${imp.suppressedRows.toLocaleString()} on your suppression list`);
+  if (imp.statusSkippedRows > 0)
+    parts.push(
+      `${imp.statusSkippedRows.toLocaleString()} marked bounced, spam or unconfirmed in your file`,
+    );
   if (imp.overCapRows > 0)
     parts.push(`${imp.overCapRows.toLocaleString()} over your plan's subscriber limit`);
   return parts.length > 0 ? `${parts.join(" · ")}.` : "";
@@ -555,7 +560,7 @@ export default function AudienceDetailPage() {
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-1.5">
-            <h1 className="text-2xl font-semibold tracking-tight">{audience?.name ?? "…"}</h1>
+            <h1 className="font-display text-3xl">{audience?.name ?? "…"}</h1>
             {audience && (
               <RowActions label="Audience actions" className="translate-y-[3px]">
                 <MenuItem
@@ -651,14 +656,33 @@ export default function AudienceDetailPage() {
               </DialogContent>
             </Dialog>
           </div>
-          <button
-            type="button"
-            onClick={downloadTemplate}
-            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-          >
-            CSV needs an <code className="font-mono">email</code> column —{" "}
-            <span className="underline underline-offset-2">download a template</span>
-          </button>
+          <div className="space-y-1 text-xs text-muted-foreground">
+            <button
+              type="button"
+              onClick={downloadTemplate}
+              className="transition-colors hover:text-foreground"
+            >
+              CSV needs an <code className="font-mono">email</code> column —{" "}
+              <span className="underline underline-offset-2">download a template</span>
+            </button>
+            {/* Migration guidance where the migration actually happens. A `status`
+                column now carries opt-outs, and the suppression list has to be
+                loaded first for bounces to be filtered on the way in. */}
+            <p>
+              Moving from another platform? A <code className="font-mono">status</code> column
+              carries opt-outs over (
+              <code className="font-mono">unsubscribed</code>, with an optional{" "}
+              <code className="font-mono">unsubscribed_at</code> date), and rows marked bounced or
+              spam are skipped — load those on{" "}
+              <Link
+                href="/suppressions"
+                className="underline underline-offset-2 hover:text-foreground"
+              >
+                Suppressions
+              </Link>{" "}
+              first so they stay blocked.
+            </p>
+          </div>
         </div>
         )}
       </div>
@@ -807,7 +831,7 @@ export default function AudienceDetailPage() {
             ) : (
               <ListEmpty
                 icon={Users}
-                title="No subscribers yet"
+                title="Nobody is on this list yet."
                 description={
                   <>
                     Import a CSV with an <code>email</code> column (optional{" "}

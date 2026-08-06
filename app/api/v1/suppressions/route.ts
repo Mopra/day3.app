@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { apiRoute, readJson } from "@/api/v1/route";
 import { ApiError, apiJson } from "@/api/v1/errors";
@@ -9,10 +9,8 @@ import {
   PUBLIC_TO_REASON,
   serializeSuppression,
 } from "@/api/v1/serialize";
-import type { Db } from "@/db/client";
 import { suppressionEntries } from "@/db/schema";
-import { canonicalizeEmail, isValidEmail } from "@/lib/csv";
-import { newId, nowIso } from "@/lib/ids";
+import { addSuppressions, countAccountSuppressed } from "@/services/suppression";
 
 const MAX_BATCH = 1000;
 
@@ -41,21 +39,14 @@ const ImportSchema = z.object({
   emails: z.array(z.string().trim().max(320)).min(1).max(MAX_BATCH),
 });
 
-async function countSuppressed(db: Db, accountId: string): Promise<number> {
-  const [{ count }] = await db
-    .select({ count: sql<number>`count(distinct ${suppressionEntries.email})`.as("count") })
-    .from(suppressionEntries)
-    .where(eq(suppressionEntries.accountId, accountId));
-  return Number(count);
-}
-
 // POST /api/v1/suppressions — import a suppression list (the old provider's
 // unsubscribes / hard bounces / complaints). Deliberately guardrailed: this is
 // the API's biggest foot-gun (posting the wrong file makes a whole audience
 // unmailable), so:
-//   - add-only: there is no DELETE in v1; un-suppression is a deliberate act
-//     in the app UI, per entry — a scripting mistake is human-recoverable but
-//     can't be script-reverted or abused to force-mail bounced addresses
+//   - add-only: there is no DELETE in v1; un-suppression is a deliberate act on
+//     the app's Suppressions page, per address — a scripting mistake is
+//     human-recoverable but can't be script-reverted in bulk, and a stolen key
+//     can't unsuppress bounced addresses to force-mail them
 //   - the response reports the blast radius (before/after totals)
 //   - entries are tagged source "api:<key id>" so the app can offer
 //     "undo this import" over exactly these rows
@@ -65,58 +56,29 @@ export const POST = apiRoute(async (req, ctx) => {
 
   return withIdempotency(ctx, req, "POST /v1/suppressions", body, async () => {
     const { db, account, apiKey } = ctx;
-    const reason = PUBLIC_TO_REASON[body.reason];
-    const now = nowIso();
+    const before = await countAccountSuppressed(db, account.id);
 
-    const seen = new Set<string>();
-    const rows: (typeof suppressionEntries.$inferInsert)[] = [];
-    let invalid = 0;
-    for (const raw of body.emails) {
-      const email = canonicalizeEmail(raw);
-      if (!isValidEmail(email)) {
-        invalid++;
-        continue;
-      }
-      if (seen.has(email)) continue; // in-payload duplicate — harmless, dedupe
-      seen.add(email);
-      rows.push({
-        id: newId("sup"),
-        accountId: account.id,
-        email,
-        scope: "account",
-        reason,
-        source: `api:${apiKey.id}`,
-        createdAt: now,
-      });
-    }
-    if (rows.length === 0 && invalid > 0) {
+    const result = await addSuppressions(db, {
+      accountId: account.id,
+      emails: body.emails,
+      reason: PUBLIC_TO_REASON[body.reason],
+      source: `api:${apiKey.id}`,
+    });
+
+    if (result.added === 0 && result.alreadySuppressed === 0 && result.invalid > 0) {
       throw new ApiError(400, "invalid_email", "No valid email addresses in the payload", {
         param: "emails",
       });
     }
 
-    const before = await countSuppressed(db, account.id);
-
-    // onConflictDoNothing on (account, email, reason): already-suppressed
-    // entries are counted, not duplicated. Chunked under the bound-params cap.
-    let added = 0;
-    for (let i = 0; i < rows.length; i += 1000) {
-      const inserted = await db
-        .insert(suppressionEntries)
-        .values(rows.slice(i, i + 1000))
-        .onConflictDoNothing()
-        .returning({ id: suppressionEntries.id });
-      added += inserted.length;
-    }
-
-    const after = await countSuppressed(db, account.id);
+    const after = await countAccountSuppressed(db, account.id);
 
     return apiJson({
       object: "suppression_import",
       reason: body.reason,
-      added,
-      already_suppressed: rows.length - added,
-      invalid,
+      added: result.added,
+      already_suppressed: result.alreadySuppressed,
+      invalid: result.invalid,
       total_suppressed_before: before,
       total_suppressed_after: after,
     });

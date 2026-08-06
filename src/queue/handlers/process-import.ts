@@ -134,7 +134,15 @@ export async function processImport(
             firstName: row.firstName ?? null,
             lastName: row.lastName ?? null,
             attributes: row.attributes ?? null,
-            status: "subscribed" as const,
+            // A `status` column carries opt-outs over from another platform, so a
+            // migration never re-subscribes someone who had left. Absent → the
+            // historical default, `subscribed`. Bounce/complaint statuses never
+            // reach here: parseSubscriberCsv drops those rows (statusSkippedRows).
+            status: row.status ?? ("subscribed" as const),
+            // Preserve the original opt-out date when the file carried one, so
+            // "when did they leave?" survives the move.
+            unsubscribedAt:
+              row.status === "unsubscribed" ? (row.unsubscribedAt ?? now) : null,
             source: "import",
             importedAt: now,
             createdAt: now,
@@ -152,9 +160,14 @@ export async function processImport(
     }
 
     // Duplicates = rows we tried to insert that onConflictDoNothing skipped
-    // (already in this audience). The four reasons sum to skippedRows.
+    // (already in this audience). The five reasons sum to skippedRows.
     const duplicateCount = candidates.length - imported;
-    const skipped = suppressedCount + parsed.invalidRows + overCapCount + duplicateCount;
+    const skipped =
+      suppressedCount +
+      parsed.invalidRows +
+      parsed.statusSkippedRows +
+      overCapCount +
+      duplicateCount;
 
     await db
       .update(imports)
@@ -167,6 +180,7 @@ export async function processImport(
         suppressedRows: suppressedCount,
         duplicateRows: duplicateCount,
         overCapRows: overCapCount,
+        statusSkippedRows: parsed.statusSkippedRows,
         error: null,
         updatedAt: nowIso(),
       })
@@ -184,6 +198,7 @@ export async function processImport(
         suppressed: suppressedCount,
         duplicate: duplicateCount,
         overCap: overCapCount,
+        statusSkipped: parsed.statusSkippedRows,
       },
     });
   } catch (err) {

@@ -204,6 +204,13 @@
       "when": 1786023894332,
       "tag": "0028_glossy_liz_osborn",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1786035976300,
+      "tag": "0029_dizzy_vapor",
+      "breakpoints": true
     }
   ]
 }

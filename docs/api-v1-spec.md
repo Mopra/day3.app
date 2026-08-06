@@ -569,12 +569,17 @@ suppression export — silently makes the whole audience unmailable). Guardrails
   `{ "added": 950, "already_suppressed": 45, "invalid": 5,
      "total_suppressed_before": 200, "total_suppressed_after": 1150 }`.
 - **API writes are add-only.** No `DELETE /v1/suppressions/{email}` in v1 —
-  un-suppression is a deliberate act done in the app UI (per-entry, with the
-  entry's reason and source visible), so a scripting mistake is recoverable
-  but can't be script-reverted in bulk (and a compromised key can't unsuppress
-  bounced addresses to force-mail them).
-- Entries created via API are tagged `source: "api"` (with the key id), so the
-  app can offer "undo this import" as a batch operation on exactly those rows.
+  un-suppression is a deliberate act done in the app UI (the **Suppressions**
+  page: per-address, with the entry's reason and source visible, via
+  `DELETE /api/suppressions/{email}` behind a session), so a scripting mistake
+  is recoverable but can't be script-reverted in bulk (and a compromised key
+  can't unsuppress bounced addresses to force-mail them). That path also
+  restores contacts marked `bounced`/`complained`/`suppressed` to `subscribed`,
+  and deliberately leaves self-service unsubscribes alone.
+- Entries created via API are tagged `source: "api:<key id>"` (app-created ones
+  are `"app"`), and the Suppressions page shows which is which. A batch
+  "undo this import" over exactly those rows is still open — today the undo is
+  per-address.
 - `Idempotency-Key` supported, same semantics as contact batch.
 - Suppressing an email does **not** delete existing contact rows; those
   contacts simply become unmailable (and batch/create for that email returns

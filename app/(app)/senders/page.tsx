@@ -211,7 +211,7 @@ export default function SendersPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <h1 className="text-2xl font-semibold tracking-tight">Senders</h1>
+          <h1 className="font-display text-3xl">Senders</h1>
           <ApiPanel
             build={(origin) => buildSendersPanelContent({ origin, senders: senders ?? [] })}
           />
@@ -251,7 +251,7 @@ export default function SendersPage() {
           ) : list.isEmpty ? (
             <ListEmpty
               icon={AtSign}
-              title="Add your first sender"
+              title="Decide who this comes from."
               description={
                 noVerifiedDomain
                   ? "First verify a sending domain — then you can add the From identities your campaigns send as."

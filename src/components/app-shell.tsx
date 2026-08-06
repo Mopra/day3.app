@@ -28,6 +28,7 @@ import { CreditCardIcon } from "@/components/ui/animated-icons/credit-card";
 import { KeyRoundIcon } from "@/components/ui/animated-icons/key-round";
 import { SettingsIcon } from "@/components/ui/animated-icons/settings";
 import { ShieldCheckIcon } from "@/components/ui/animated-icons/shield-check";
+import { BanIcon } from "@/components/ui/animated-icons/ban";
 
 type AnimatedIconHandle = {
   startAnimation: () => void;
@@ -41,13 +42,14 @@ type NavEntry = { to: string; label: string; icon: AnimatedIcon };
 const NAV: NavEntry[] = [
   // Dashboard, Campaigns + Audiences lead as the daily-driver pages (an audience
   // is the campaign's counterpart, so it sits just below), then the rest follows
-  // the real first-run setup flow (see OnboardingChecklist): what you send as
-  // (Domains → Senders) → grow your audience (Forms) → measure (Metrics) →
-  // account (Billing, API keys, Settings).
+  // the real first-run setup flow (see OnboardingChecklist): who you may mail
+  // (Suppressions) → what you send as (Domains → Senders) → grow your audience
+  // (Forms) → measure (Metrics) → account (Billing, API keys, Settings).
   { to: "/dashboard", label: "Dashboard", icon: LayoutGridIcon },
   { to: "/campaigns", label: "Campaigns", icon: MailCheckIcon },
   { to: "/emails", label: "Emails", icon: SendIcon },
   { to: "/audiences", label: "Audiences", icon: UsersIcon },
+  { to: "/suppressions", label: "Suppressions", icon: BanIcon },
   { to: "/domains", label: "Domains", icon: EarthIcon },
   { to: "/senders", label: "Senders", icon: AtSignIcon },
   { to: "/forms", label: "Forms", icon: FormInputIcon },
@@ -198,7 +200,49 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <AiBudgetProvider>
-      <div className="flex h-screen flex-col bg-background">
+      <div className="relative flex h-screen flex-col bg-background">
+        {/*
+          The desk. The sidebar carries no background of its own and the content
+          panel floats inside a gutter, so everything outside the panel is one
+          continuous surface — this gives that surface paper tooth and a single
+          slow warm wash, which is what makes the lit panel read as a sheet
+          resting on something rather than a div on a flat fill. It also puts the
+          app shell in the same visual language as the campaign composer canvas,
+          which is deliberately "a lit sheet on a dark desk" already.
+
+          Decorative, non-interactive, and behind everything (`-z-10` paints
+          above the parent's fill but below all in-flow content, and the panel's
+          own `bg-card` is opaque). Motion stops under prefers-reduced-motion;
+          the grain stays, since it isn't motion. See globals.css.
+
+          This layer carries `bg-background` itself, which is load-bearing and
+          not a duplicate of the parent's: `-z-10` makes it a stacking context,
+          and a stacking context is an isolated group, so the grain's
+          soft-light blend can only mix with pixels painted *inside* this div.
+          Without a fill of its own the grain would blend against transparency
+          and render as nothing at all. `isolate` is therefore redundant here —
+          stated anyway so a later refactor that drops the z-index doesn't
+          silently leak the blend onto the whole page.
+        */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 -z-10 isolate overflow-hidden bg-background"
+        >
+          {/*
+            Positioned left and low, where the desk is actually visible — a wash
+            centred under the content panel would be covered by it.
+
+            Held very low on purpose, and olive leads rather than caramel: the
+            surfaces around these are neutral grey, so a warm wash has nothing
+            to blend into and any real strength reads as a brown stain on the
+            page rather than as depth. Olive is green-grey and disappears into
+            neutral far more gracefully than caramel does. If the desk ever
+            wants more life, add contrast to the grain before raising these.
+          */}
+          <div className="absolute -left-32 -top-40 size-[36rem] rounded-full bg-[radial-gradient(circle,color-mix(in_srgb,var(--caramel)_8%,transparent),transparent_70%)] blur-3xl animate-desk-wash-1" />
+          <div className="absolute -bottom-48 -left-24 size-[32rem] rounded-full bg-[radial-gradient(circle,color-mix(in_srgb,var(--olive)_11%,transparent),transparent_70%)] blur-3xl animate-desk-wash-2" />
+          <div className="d3-desk-grain absolute inset-0" />
+        </div>
         <div className="flex min-h-0 flex-1">
           <aside className="flex w-56 shrink-0 flex-col">
             <Link href="/dashboard" className="flex h-14 items-center px-4">
@@ -283,8 +327,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </aside>
           <div className="flex min-w-0 flex-1 flex-col">
             {/* No top chrome bar: each page renders its own heading, and the
-                account controls live in the sidebar. The content panel floats. */}
-            <main className="m-5 min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-card px-8 py-6">
+                account controls live in the sidebar. The content panel floats —
+                and now casts, so it reads as a lit sheet lying on the desk
+                behind it rather than a differently-coloured rectangle. A wide,
+                soft, almost entirely downward shadow: a sheet resting on a
+                surface, not a card hovering above one. */}
+            <main className="m-5 min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-card px-8 py-6 shadow-[0_18px_50px_-24px_oklch(0_0_0/0.85)]">
               {children}
             </main>
           </div>

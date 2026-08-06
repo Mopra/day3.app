@@ -138,7 +138,7 @@ export default function CampaignsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Campaigns</h1>
+        <h1 className="font-display text-3xl">Campaigns</h1>
         <Button render={<Link href="/campaigns/new">New campaign</Link>} />
       </div>
 
@@ -170,7 +170,7 @@ export default function CampaignsPage() {
           ) : list.isEmpty ? (
             <ListEmpty
               icon={Mail}
-              title="No campaigns yet"
+              title="Write the first update."
               description="Write your first product update and send it to your audience."
               action={<Button render={<Link href="/campaigns/new">New campaign</Link>} />}
             />

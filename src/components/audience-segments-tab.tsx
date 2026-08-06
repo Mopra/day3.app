@@ -247,7 +247,7 @@ export function AudienceSegmentsTab({
           ) : list.isEmpty ? (
             <ListEmpty
               icon={Filter}
-              title="No segments yet"
+              title="Save a filter you'll reuse."
               description="A segment is a saved filter — “plan is pro”, “company has any value” — that always reflects your current contacts. Send a campaign to a segment instead of the whole audience."
               action={
                 <Button onClick={openAdd}>

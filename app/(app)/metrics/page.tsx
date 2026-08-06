@@ -41,6 +41,7 @@ import {
   rowLinkProps,
   useListController,
 } from "@/components/ui/data-list";
+import { Reveal } from "@/components/ui/reveal";
 import { SandboxBadge } from "@/components/sandbox-notice";
 import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -81,14 +82,14 @@ const engagementBase = (c: CampaignMetricCounts): number => c.delivered || c.sen
 type Tone = "good" | "warn" | "bad" | "neutral";
 
 const TONE_BAR: Record<Tone, string> = {
-  good: "bg-emerald-500",
+  good: "bg-olive",
   warn: "bg-amber-500",
   bad: "bg-destructive",
   neutral: "bg-foreground/30",
 };
 
 const TONE_DOT: Record<Tone, string> = {
-  good: "bg-emerald-500",
+  good: "bg-olive",
   warn: "bg-amber-500",
   bad: "bg-destructive",
   neutral: "bg-muted-foreground/40",
@@ -233,7 +234,7 @@ export default function MetricsPage() {
   const header = (
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Metrics</h1>
+        <h1 className="font-display text-3xl">Metrics</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Deliverability, reputation and engagement across your sends.
         </p>
@@ -289,7 +290,7 @@ export default function MetricsPage() {
           <CardContent>
             <ListEmpty
               icon={BarChart3}
-              title="No sending data yet"
+              title="Numbers arrive with your first send."
               description="Metrics appear here once you send your first campaign. Sent, delivered, opened, bounced, complained and unsubscribed are all tracked automatically."
               action={<Button render={<Link href="/campaigns/new">New campaign</Link>} />}
             />
@@ -317,9 +318,14 @@ export default function MetricsPage() {
 
   const tiles: { label: string; value: number; caption?: string; icon: LucideIcon; iconClass?: string }[] = [
     { label: "Sent", value: counts.sent, caption: `${counts.recipients.toLocaleString()} recipients`, icon: Send },
-    { label: "Delivered", value: counts.delivered, caption: pct(deliveryRate) + " of sent", icon: Inbox, iconClass: "text-emerald-500/70" },
-    { label: "Opened", value: counts.opened, caption: pct(openRate) + " open rate", icon: Eye, iconClass: "text-sky-500/70" },
-    { label: "Clicked", value: counts.clicked, caption: pct(clickRate) + " click rate", icon: MousePointerClick, iconClass: "text-violet-500/70" },
+    // Sent → Delivered → Opened → Clicked is a funnel, so it's encoded as one
+    // hue deepening rather than four unrelated colors: caramel at half strength
+    // for an open, full strength for a click, the deepest engagement on the
+    // page. That leaves the failure side (amber → clay) reading as a separate
+    // family instead of two more entries in a rainbow.
+    { label: "Delivered", value: counts.delivered, caption: pct(deliveryRate) + " of sent", icon: Inbox, iconClass: "text-olive/70" },
+    { label: "Opened", value: counts.opened, caption: pct(openRate) + " open rate", icon: Eye, iconClass: "text-caramel/60" },
+    { label: "Clicked", value: counts.clicked, caption: pct(clickRate) + " click rate", icon: MousePointerClick, iconClass: "text-caramel" },
     { label: "Bounced", value: counts.bounced, caption: pct(bounceRate) + " of sent", icon: Undo2, iconClass: "text-amber-500/70" },
     { label: "Complained", value: counts.complained, caption: pct(complaintRate, 2) + " rate", icon: Flag, iconClass: "text-destructive/70" },
     { label: "Unsubscribed", value: counts.unsubscribed, caption: pct(unsubRate, 2) + " rate", icon: UserMinus },
@@ -329,56 +335,59 @@ export default function MetricsPage() {
     <div className="space-y-6">
       {header}
 
-      {/* KPI tiles */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-7">
+      {/* KPI tiles. Reveal *is* the grid rather than a wrapper around it, so
+          the seven tiles keep their equal heights. */}
+      <Reveal delay={60} className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-7">
         {tiles.map((t) => (
           <MetricTile key={t.label} {...t} />
         ))}
-      </div>
+      </Reveal>
 
       {/* Deliverability funnel */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <CardTitle>Deliverability</CardTitle>
-          <span className="text-sm text-muted-foreground tabular-nums">
-            {pct(deliveryRate)} delivered
-          </span>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Bar
-            label="Sent"
-            width={1}
-            tone="neutral"
-            right={counts.sent.toLocaleString()}
-          />
-          <Bar
-            label="Delivered"
-            width={ratio(counts.delivered, counts.sent)}
-            tone="good"
-            right={`${counts.delivered.toLocaleString()} · ${pct(deliveryRate)}`}
-          />
-          <Bar
-            label="Opened"
-            width={ratio(counts.opened, counts.sent)}
-            tone="neutral"
-            right={`${counts.opened.toLocaleString()} · ${pct(openRate)}`}
-          />
-          <Bar
-            label="Clicked"
-            width={ratio(counts.clicked, counts.sent)}
-            tone="neutral"
-            right={`${counts.clicked.toLocaleString()} · ${pct(clickRate)}`}
-          />
-          {(counts.bounced > 0 || counts.failed > 0 || counts.skipped > 0) && (
-            <p className="pt-1 text-xs text-muted-foreground tabular-nums">
-              {counts.bounced.toLocaleString()} bounced · {counts.failed.toLocaleString()} failed ·{" "}
-              {counts.skipped.toLocaleString()} skipped (suppressed)
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      <Reveal delay={120}>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2">
+            <CardTitle>Deliverability</CardTitle>
+            <span className="text-sm text-muted-foreground tabular-nums">
+              {pct(deliveryRate)} delivered
+            </span>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Bar
+              label="Sent"
+              width={1}
+              tone="neutral"
+              right={counts.sent.toLocaleString()}
+            />
+            <Bar
+              label="Delivered"
+              width={ratio(counts.delivered, counts.sent)}
+              tone="good"
+              right={`${counts.delivered.toLocaleString()} · ${pct(deliveryRate)}`}
+            />
+            <Bar
+              label="Opened"
+              width={ratio(counts.opened, counts.sent)}
+              tone="neutral"
+              right={`${counts.opened.toLocaleString()} · ${pct(openRate)}`}
+            />
+            <Bar
+              label="Clicked"
+              width={ratio(counts.clicked, counts.sent)}
+              tone="neutral"
+              right={`${counts.clicked.toLocaleString()} · ${pct(clickRate)}`}
+            />
+            {(counts.bounced > 0 || counts.failed > 0 || counts.skipped > 0) && (
+              <p className="pt-1 text-xs text-muted-foreground tabular-nums">
+                {counts.bounced.toLocaleString()} bounced · {counts.failed.toLocaleString()} failed ·{" "}
+                {counts.skipped.toLocaleString()} skipped (suppressed)
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      </Reveal>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <Reveal delay={180} className="grid gap-4 md:grid-cols-2">
         {/* Reputation */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-2">
@@ -422,96 +431,98 @@ export default function MetricsPage() {
             </p>
           </CardContent>
         </Card>
-      </div>
+      </Reveal>
 
       {/* Per-campaign breakdown */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <CardTitle>By campaign</CardTitle>
-          {rows && rows.length > 0 && (
-            <ListCount shown={table.shown} total={table.total} noun="campaign" />
-          )}
-        </CardHeader>
-        <CardContent className="space-y-4 px-0">
-          {rows && rows.length > 3 && (
-            <div className="px-6">
-              <ListToolbar>
-                <ListSearch
-                  value={table.search}
-                  onChange={table.setSearch}
-                  placeholder="Search campaigns…"
-                />
-              </ListToolbar>
-            </div>
-          )}
-          {table.view === null ? null : table.isFilteredEmpty ? (
-            <ListNoResults onClear={() => table.setSearch("")} />
-          ) : (
-            <Table className="[&_td:first-child]:pl-6 [&_td:last-child]:pr-6 [&_th:first-child]:pl-6 [&_th:last-child]:pr-6">
-              <TableHeader>
-                <TableRow>
-                  <SortableHead label="Campaign" sortKey="name" sort={table.sort} onSort={table.toggleSort} />
-                  <SortableHead label="Sent" sortKey="sent" sort={table.sort} onSort={table.toggleSort} align="right" />
-                  <SortableHead label="Delivered" sortKey="delivered" sort={table.sort} onSort={table.toggleSort} align="right" />
-                  <SortableHead label="Open rate" sortKey="openRate" sort={table.sort} onSort={table.toggleSort} align="right" />
-                  <SortableHead label="Click rate" sortKey="clickRate" sort={table.sort} onSort={table.toggleSort} align="right" />
-                  <SortableHead label="Bounce rate" sortKey="bounceRate" sort={table.sort} onSort={table.toggleSort} align="right" />
-                  <SortableHead label="Unsub" sortKey="unsubscribed" sort={table.sort} onSort={table.toggleSort} align="right" />
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {table.view?.map((r) => {
-                  const c = r.counts;
-                  const oRate = ratio(c.opened, engagementBase(c));
-                  const clRate = ratio(c.clicked, engagementBase(c));
-                  const bRate = ratio(c.bounced, c.sent);
-                  return (
-                    <TableRow
-                      key={r.campaignId}
-                      {...rowLinkProps(() => router.push(`/campaigns/${r.campaignId}`))}
-                    >
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Link
-                            href={`/campaigns/${r.campaignId}`}
-                            className="font-medium hover:underline"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {r.name || "Untitled campaign"}
-                          </Link>
-                          <Badge variant={statusVariant(r.status)}>{statusLabel(r.status)}</Badge>
-                          {r.sandbox && <SandboxBadge />}
-                        </div>
-                        <span className="text-xs text-muted-foreground">
-                          {r.sentAt ? formatDate(r.sentAt) : "Not sent"}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{c.sent.toLocaleString()}</TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {c.delivered.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">{pct(oRate)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{pct(clRate)}</TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        <span className={cn(bRate >= 0.05 && "text-destructive", bRate >= 0.02 && bRate < 0.05 && "text-amber-600")}>
-                          {pct(bRate, 2)}
-                        </span>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {c.unsubscribed.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <RowOpen href={`/campaigns/${r.campaignId}`} />
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+      <Reveal delay={240}>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between gap-2">
+            <CardTitle>By campaign</CardTitle>
+            {rows && rows.length > 0 && (
+              <ListCount shown={table.shown} total={table.total} noun="campaign" />
+            )}
+          </CardHeader>
+          <CardContent className="space-y-4 px-0">
+            {rows && rows.length > 3 && (
+              <div className="px-6">
+                <ListToolbar>
+                  <ListSearch
+                    value={table.search}
+                    onChange={table.setSearch}
+                    placeholder="Search campaigns…"
+                  />
+                </ListToolbar>
+              </div>
+            )}
+            {table.view === null ? null : table.isFilteredEmpty ? (
+              <ListNoResults onClear={() => table.setSearch("")} />
+            ) : (
+              <Table className="[&_td:first-child]:pl-6 [&_td:last-child]:pr-6 [&_th:first-child]:pl-6 [&_th:last-child]:pr-6">
+                <TableHeader>
+                  <TableRow>
+                    <SortableHead label="Campaign" sortKey="name" sort={table.sort} onSort={table.toggleSort} />
+                    <SortableHead label="Sent" sortKey="sent" sort={table.sort} onSort={table.toggleSort} align="right" />
+                    <SortableHead label="Delivered" sortKey="delivered" sort={table.sort} onSort={table.toggleSort} align="right" />
+                    <SortableHead label="Open rate" sortKey="openRate" sort={table.sort} onSort={table.toggleSort} align="right" />
+                    <SortableHead label="Click rate" sortKey="clickRate" sort={table.sort} onSort={table.toggleSort} align="right" />
+                    <SortableHead label="Bounce rate" sortKey="bounceRate" sort={table.sort} onSort={table.toggleSort} align="right" />
+                    <SortableHead label="Unsub" sortKey="unsubscribed" sort={table.sort} onSort={table.toggleSort} align="right" />
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {table.view?.map((r) => {
+                    const c = r.counts;
+                    const oRate = ratio(c.opened, engagementBase(c));
+                    const clRate = ratio(c.clicked, engagementBase(c));
+                    const bRate = ratio(c.bounced, c.sent);
+                    return (
+                      <TableRow
+                        key={r.campaignId}
+                        {...rowLinkProps(() => router.push(`/campaigns/${r.campaignId}`))}
+                      >
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Link
+                              href={`/campaigns/${r.campaignId}`}
+                              className="font-medium hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {r.name || "Untitled campaign"}
+                            </Link>
+                            <Badge variant={statusVariant(r.status)}>{statusLabel(r.status)}</Badge>
+                            {r.sandbox && <SandboxBadge />}
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            {r.sentAt ? formatDate(r.sentAt) : "Not sent"}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{c.sent.toLocaleString()}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {c.delivered.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{pct(oRate)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{pct(clRate)}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          <span className={cn(bRate >= 0.05 && "text-destructive", bRate >= 0.02 && bRate < 0.05 && "text-amber-600")}>
+                            {pct(bRate, 2)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {c.unsubscribed.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <RowOpen href={`/campaigns/${r.campaignId}`} />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </Reveal>
     </div>
   );
 }

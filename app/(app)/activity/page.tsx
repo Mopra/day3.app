@@ -298,7 +298,7 @@ export default function ActivityPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Activity</h1>
+        <h1 className="font-display text-3xl">Activity</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Every email event — sends, deliveries, opens, clicks, bounces and failures — in one
           place, for status and troubleshooting.
@@ -338,7 +338,7 @@ export default function ActivityPage() {
           ) : events.length === 0 && !hasFilters ? (
             <ListEmpty
               icon={ActivityIcon}
-              title="No activity yet"
+              title="Every email event lands here."
               description="Every email event — sent, delivered, opened, clicked, bounced, complained, unsubscribed and failed — shows up here once you send your first campaign."
               action={<Button render={<Link href="/campaigns/new">New campaign</Link>} />}
             />

@@ -297,7 +297,16 @@ export function RowActions({
 
 /* ──────────────────────── empty / loading states ────────────────────── */
 
-/** The "you have nothing yet" state — icon, headline, helper copy, and a CTA. */
+/**
+ * The "you have nothing yet" state — icon, headline, helper copy, and a CTA.
+ *
+ * An empty screen is an invitation, so the headline is set in the display serif
+ * and written as a short sentence naming what this surface is for ("Your first
+ * audience starts here.") rather than reporting a count of zero ("No
+ * audiences"). Nothing has gone wrong on this screen; it should read like the
+ * start of something. Contrast `ListNoResults` below, which is a correction and
+ * stays deliberately plain.
+ */
 export function ListEmpty({
   icon: Icon,
   title,
@@ -318,9 +327,11 @@ export function ListEmpty({
           <Icon className="size-5 text-muted-foreground" />
         </div>
       )}
-      <p className="mt-3 font-medium">{title}</p>
+      <p className="mt-4 font-display text-xl">{title}</p>
       {description && (
-        <p className="mt-1 max-w-sm text-sm text-muted-foreground">{description}</p>
+        <p className="mt-1.5 max-w-sm text-sm leading-relaxed text-muted-foreground">
+          {description}
+        </p>
       )}
       {action && <div className="mt-4">{action}</div>}
     </div>

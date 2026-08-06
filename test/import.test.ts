@@ -118,6 +118,82 @@ describe("process_import", () => {
     expect(importRow?.importedRows).toBe(1);
   });
 
+  // A migration that re-subscribes everyone who had already opted out at the old
+  // provider is the worst thing a CSV import can do — it mails people who left,
+  // which is unlawful in most places and torches a new domain's reputation. So a
+  // `status` column is honoured, with the two statuses a file may assert.
+  it("imports an unsubscribed row as unsubscribed, keeping its original opt-out date", async () => {
+    const csv = [
+      "email,first_name,status,unsubscribed_at",
+      "stays@example.com,Stay,subscribed,",
+      "left@example.com,Left,unsubscribed,2025-11-02",
+      "gone@example.com,Gone,unsubscribe,", // no date in the file
+    ].join("\n");
+
+    const { db, store, account, audience, importId } = await createImport(csv);
+    await processImport({ importId, accountId: account.id }, db, store);
+
+    const subs = await db
+      .select()
+      .from(subscribers)
+      .where(eq(subscribers.audienceId, audience.id));
+    const byEmail = Object.fromEntries(subs.map((s) => [s.email, s]));
+
+    expect(byEmail["stays@example.com"].status).toBe("subscribed");
+    expect(byEmail["stays@example.com"].unsubscribedAt).toBeNull();
+    expect(byEmail["left@example.com"].status).toBe("unsubscribed");
+    expect(byEmail["left@example.com"].unsubscribedAt).toContain("2025-11-02");
+    // No date in the file → stamped at import time rather than left empty.
+    expect(byEmail["gone@example.com"].status).toBe("unsubscribed");
+    expect(byEmail["gone@example.com"].unsubscribedAt).toBeTruthy();
+
+    const importRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
+    expect(importRow?.importedRows).toBe(3);
+    expect(importRow?.skippedRows).toBe(0);
+  });
+
+  it("skips rows the file marks bounced, spam or unconfirmed instead of subscribing them", async () => {
+    const csv = [
+      "email,status",
+      "ok@example.com,subscribed",
+      "bounced@example.com,cleaned", // Mailchimp's word for a bounced address
+      "hard@example.com,bounced",
+      "spam@example.com,complained",
+      "waiting@example.com,pending", // never completed double opt-in
+    ].join("\n");
+
+    const { db, store, account, audience, importId } = await createImport(csv);
+    await processImport({ importId, accountId: account.id }, db, store);
+
+    const subs = await db
+      .select()
+      .from(subscribers)
+      .where(eq(subscribers.audienceId, audience.id));
+    expect(subs.map((s) => s.email)).toEqual(["ok@example.com"]);
+
+    const importRow = await db.query.imports.findFirst({ where: eq(imports.id, importId) });
+    // Counted under their own reason — the addresses are valid, we declined them.
+    expect(importRow?.statusSkippedRows).toBe(4);
+    expect(importRow?.invalidRows).toBe(0);
+    expect(importRow?.skippedRows).toBe(4);
+  });
+
+  it("treats an unrecognized status value as subscribed, so an unrelated column can't void an import", async () => {
+    // "status" is a common header for arbitrary data (trial/paid/churned). Reading
+    // it must never silently swallow somebody's whole list.
+    const csv = ["email,status", "a@example.com,trial", "b@example.com,paid"].join("\n");
+
+    const { db, store, account, audience, importId } = await createImport(csv);
+    await processImport({ importId, accountId: account.id }, db, store);
+
+    const subs = await db
+      .select()
+      .from(subscribers)
+      .where(eq(subscribers.audienceId, audience.id));
+    expect(subs.every((s) => s.status === "subscribed")).toBe(true);
+    expect(subs).toHaveLength(2);
+  });
+
   it("is idempotent: a retried message does not re-import a completed import", async () => {
     const csv = "email\nalice@example.com";
     const { db, store, account, importId } = await createImport(csv);

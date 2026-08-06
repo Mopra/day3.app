@@ -63,7 +63,14 @@ export type SocialItem = { network: SocialNetwork; url: string };
 // How a card lays its single image relative to its rich text.
 export type CardLayout = "image-left" | "image-right" | "image-top";
 
-// Brand-ish defaults so a freshly added button/callout already looks intentional.
+// Defaults so a freshly added button/callout already looks intentional.
+//
+// Deliberately a vivid blue rather than a brand color: this dresses the email
+// the *sender* is writing, not day3's own UI, and an espresso-on-cream button
+// was tried and reverted for reading flat on a white sheet. A button in an
+// email wants to look clickable more than it wants to look like us. The brand
+// tones are offered alongside it in FILL_SWATCHES (see ui/section-editor.tsx)
+// for anyone who wants them.
 export const DEFAULT_BUTTON_BG = "#2563eb";
 export const DEFAULT_BUTTON_TEXT = "#ffffff";
 export const DEFAULT_QUOTE_BG = "#f4f4f5";

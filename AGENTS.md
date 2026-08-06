@@ -82,6 +82,22 @@ serves the UI and the API routes; a separate long-running Node worker
   errors (connection-phase network failures, provider-rejected requests) ever
   return a recipient to `pending`; ambiguous errors (timeouts, 5xx) stay
   terminal for that recipient.
+- **Suppression is add-only everywhere except one route.** `POST /v1/suppressions`
+  (and `addSuppressions`) only ever adds; the single undo is
+  `DELETE /api/suppressions/{email}` behind a session (the Suppressions page), so a
+  leaked API key can't unblock a bounced address to mail it. That route clears every
+  reason held against the address, restores contacts marked
+  `bounced`/`complained`/`suppressed` to `subscribed`, and **deliberately leaves
+  `unsubscribed` rows alone** — only the recipient reverses their own opt-out. Global
+  (`scope='global'`) entries are never listed to a tenant (that would leak other
+  accounts' recipients) and a tenant can never delete one.
+- **A CSV import may only assert `subscribed` or `unsubscribed`** — the same rule the
+  public API enforces. `parseSubscriberCsv` maps a `status` column's opt-out synonyms to
+  `unsubscribed` (with `unsubscribed_at` for the original date), *drops* rows marked
+  bounced/complained/`cleaned`/`pending` into `statusSkippedRows`, and falls back to
+  `subscribed` for an unrecognized value — because `status` is a common header for
+  unrelated data ("trial"/"paid") and a strict reading would silently swallow whole
+  imports.
 - Failed-import recovery: a `status='failed'` import is never auto-retried. A user
   re-uploads a corrected CSV via `POST /api/audiences/[id]/imports/[importId]/retry`,
   which overwrites the stored object, resets the row to `pending`, and re-enqueues

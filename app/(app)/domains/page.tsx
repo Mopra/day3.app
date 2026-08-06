@@ -216,7 +216,7 @@ export default function DomainsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
-          <h1 className="text-2xl font-semibold tracking-tight">Sending domains</h1>
+          <h1 className="font-display text-3xl">Sending domains</h1>
           <ApiPanel
             build={(origin) => buildDomainsPanelContent({ origin, domains: domains ?? [] })}
           />
@@ -307,7 +307,7 @@ export default function DomainsPage() {
           ) : list.isEmpty ? (
             <ListEmpty
               icon={Globe}
-              title="Add your first sending domain"
+              title="Pick the domain your email comes from."
               description="This is the domain your newsletters are sent from. After adding it, you'll add a few DNS records so inboxes trust your email — we guide you through it."
               action={<Button onClick={() => setOpen(true)}>Add domain</Button>}
             />

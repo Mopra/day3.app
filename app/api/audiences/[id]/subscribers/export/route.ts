@@ -30,6 +30,7 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
       firstName: subscribers.firstName,
       lastName: subscribers.lastName,
       status: subscribers.status,
+      unsubscribedAt: subscribers.unsubscribedAt,
       attributes: subscribers.attributes,
     })
     .from(subscribers)

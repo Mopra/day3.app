@@ -223,7 +223,7 @@ guards make that observable:
 | **Topic** | A subscription category on an audience ("Product updates", "Promotions"). Opt-out model (everyone in by default) or opt-in. Campaigns sent under a topic skip contacts who opted out; the unsubscribe page offers a per-topic opt-out. |
 | **Transactional email** | One email sent through the public API (`POST /v1/emails`) — password resets, receipts, magic links. Up to 50 recipients per message, tracked per email: `queued` → `sent` → `delivered` (or `bounced` / `complained` / `failed` / `suppressed`). Listed on the **Emails** page and addressable as `eml_…` over the API. |
 | **Form** | A hosted/embeddable signup form that captures new subscribers into an audience. |
-| **Suppression entry** | A blocklist record (per-account or global) that prevents sending to an address that unsubscribed, bounced, complained, or was manually suppressed. |
+| **Suppression entry** | A blocklist record (per-account or global) that prevents sending to an address that unsubscribed, bounced, complained, or was manually suppressed. Account-scope entries are listed and removable on the **Suppressions** page (§6.7); global ones outlive the accounts that caused them and only support can lift them. |
 | **Import** | A CSV upload job that adds subscribers to an audience. |
 | **Risk review** | An automated spam/abuse assessment of a campaign before it sends: deterministic content checks, plus an optional AI pass that can only raise (never lower) the verdict. Produces a risk level and user-facing fix-it guidance. |
 
@@ -433,18 +433,26 @@ themselves, and manual writing continues unaffected.
   `email_address`, `first_name` / `firstname` / `first name`, …) — only an `email` column
   is required — and a downloadable sample template shows the expected shape. Import
   behavior worth knowing before a migration (§10.2):
-  - **Imported contacts land as `subscribed` immediately** — a CSV upload is you
-    vouching for consent you already have, so it does **not** run double opt-in and
-    sends nothing to anyone.
+  - **Imported contacts land as `subscribed`** unless the file says otherwise — a CSV
+    upload is you vouching for consent you already have, so it does **not** run double
+    opt-in and sends nothing to anyone.
+  - **A `status` column carries opt-outs over**, so a migration never re-subscribes
+    someone who had left: `unsubscribed` (and its common synonyms) imports as
+    unsubscribed, with an optional **`unsubscribed_at`** column preserving the original
+    opt-out date. Rows marked **bounced, spam-complained, or unconfirmed** — including
+    Mailchimp's `cleaned` and `pending` — are **skipped**, because a file may not assert
+    a delivery failure Day3 never observed, and those addresses belong on the
+    suppression list (§6.7). An *unrecognized* value falls back to `subscribed`, so a
+    `status` column that actually means something else ("trial", "paid") can never
+    silently swallow an import.
   - **Already-suppressed addresses are filtered out on the way in** and reported in the
     import's skip breakdown, so a suppression list loaded first is automatically honored.
-  - **A `status` column is export-only and ignored on import.** There is no way to bring
-    opt-outs in by CSV — they come in over the API (§10.3) or stay out of the file.
   - The import history lists every upload with added/skipped counts and the reason for
-    each skip (invalid, duplicate, suppressed, over the plan's subscriber cap).
-- **CSV export** of an audience's subscribers (all statuses, including their custom-field
-  values) in the same column shape the importer reads, so an export can be edited and
-  re-imported cleanly — and so leaving Day3 is a one-click download (§10.7).
+    each skip (invalid, duplicate, suppressed, marked bounced/spam/unconfirmed in the
+    file, over the plan's subscriber cap).
+- **CSV export** of an audience's subscribers (all statuses, their opt-out dates, and
+  their custom-field values) in the same column shape the importer reads, so an export
+  round-trips: edit it and re-import it, or take it elsewhere (§10.7).
 - **Custom fields:** beyond email/first/last name, a subscriber can carry any number of
   custom attributes (phone, company, …) collected by signup forms or CSV import. They
   show as columns in the subscriber list and are usable as `{{merge_tags}}` in campaigns.
@@ -579,6 +587,31 @@ the same "Saving… / Saved" indicator as the campaign composer.
   for CAN-SPAM); the send gate blocks it with an actionable message otherwise.
 - **Automatic suppression** of bounced/complained/unsubscribed addresses (per-account
   and global scopes).
+- **A Suppressions page** (its own item in the sidebar) is the account's blocklist made
+  visible: every address Day3 refuses to mail, with the reason (unsubscribed, bounced,
+  marked as spam, added by hand, blocked by the provider), when it was blocked, and
+  whether it arrived by hand or over the API. Searchable by address, filterable by
+  reason. It applies account-wide — every audience, campaigns and transactional sends
+  alike.
+  - **Add addresses** by pasting a list (one per line, or a comma-separated column
+    lifted straight out of another provider's export) with an explicit reason. This is
+    the no-code way to bring a bounce/complaint list over during a migration — do it
+    *before* importing contacts and those addresses are filtered out on the way in
+    (§10.2). Very large lists go through `POST /v1/suppressions` instead.
+  - **Un-suppress** an address, which is the product's only undo for a suppression and
+    exists precisely because a mis-pasted list would otherwise make an audience
+    permanently unmailable. It clears the block and returns contacts our own machinery
+    had marked `bounced` / `complained` / `suppressed` to `subscribed` — but **never
+    resurrects someone who unsubscribed themselves**; that reversal is theirs to make
+    (by signing up again). The confirmation says so, and warns that re-mailing a
+    hard-bounced address costs sender reputation.
+  - **The public API is add-only on purpose** — there is no `DELETE /v1/suppressions`,
+    so a leaked key cannot unblock addresses that bounced or complained in order to mail
+    them, and a scripted mistake cannot be scripted away in bulk (§6.14).
+  - **Platform-wide (global) suppressions are never listed** to an account — they are
+    addresses that opted out or complained anywhere on Day3, so enumerating them would
+    expose other accounts' recipients. Searching one exact address does report that it's
+    blocked platform-wide and that only support can lift it.
 - **Bounce/complaint handling** via SES → SNS webhooks updates recipient status and
   suppresses bad addresses; sustained bad reputation **over a trailing window** can
   auto-pause an account (and pages on-call via the error sink).
@@ -896,8 +929,9 @@ organization, built to answer "what state am I in, and what should I do next?":
 - **Recent campaigns** — the last five with status, sent count, and created date.
 
 **Navigation:** the sidebar follows the actual job order — Dashboard, Campaigns, Emails,
-Audiences, then what you send as (Domains, Senders), how you grow (Forms), how you
-measure (Metrics, Activity), and account (Billing, API keys, Settings).
+Audiences, who you may mail (Suppressions), what you send as (Domains, Senders), how you
+grow (Forms), how you measure (Metrics, Activity), and account (Billing, API keys,
+Settings).
 
 - A **command palette** (⌘K / Ctrl-K) jumps to any page or the common create actions
   from anywhere.
@@ -1029,9 +1063,13 @@ There are three routes in, all landing on the same data:
 
 | Route | Best for | Where |
 |-------|----------|-------|
-| **A — CSV export/import** | Non-technical users, one-off moves, lists up to 5,000 per file | Audience page → **Import CSV** (§10.2) |
-| **B — the v1 API** | Anything scripted, big lists, opt-outs and bounces, repeatable runs | `POST /api/v1/...` (§10.3) |
+| **A — CSV export/import** | Non-technical users, one-off moves, lists up to 5,000 per file | Audience page → **Import CSV**, plus **Suppressions** for the bounce list (§10.2) |
+| **B — the v1 API** | Anything scripted, big lists, repeatable runs, topic preferences | `POST /api/v1/...` (§10.3) |
 | **C — hand it to an AI assistant** | "I have an export and a coding assistant, do it for me" | **API keys** page → *Migrate from another provider* prompt (§10.4) |
+
+Neither route is a partial one: **a no-code migration can carry the whole picture**
+— active contacts, custom fields, people who had unsubscribed, and the old
+provider's bounce/complaint list.
 
 ### 10.1 What transfers, and what can't
 
@@ -1043,8 +1081,8 @@ data is worse than one that says what it dropped.
 | Email addresses | ✅ | CSV or API; canonicalized (trimmed + lowercased) |
 | First / last name | ✅ | `first_name` / `last_name` columns or fields |
 | Custom / merge fields | ✅ | Extra CSV columns, or `attributes` over the API — both **auto-register** in the audience's field registry (§6.3) and become `{{merge_tags}}` |
-| **Unsubscribes** | ✅ **API only** | `status: "unsubscribed"`, with the original `unsubscribed_at` preserved. Not possible by CSV — the `status` column is ignored on import |
-| **Hard bounces & spam complaints** | ✅ **API only** | `POST /v1/suppressions` with an explicit `reason` |
+| **Unsubscribes** | ✅ | A `status` column on the CSV (`unsubscribed`, plus an optional `unsubscribed_at` for the original date), or `status: "unsubscribed"` over the API |
+| **Hard bounces & spam complaints** | ✅ | Paste or upload them on the **Suppressions** page (§6.7), or `POST /v1/suppressions` with an explicit `reason` |
 | Topic / group / interest preferences | ✅ **API only** | Create topics (§6.3), then `PATCH /v1/audiences/{id}/contacts/{ref}/topics` |
 | Segments / saved filters | ⚠️ Re-created | Segments are live filters over your fields — recreate them once the fields are in (usually a minute per segment, and they then stay current) |
 | **Original signup dates** | ❌ | `created_at` in a payload is ignored; there is no backdating. Keep the original date as a custom field (e.g. `signed_up_at`) if you need it — it's then usable in segments and merge tags |
@@ -1056,29 +1094,41 @@ data is worse than one that says what it dropped.
 
 ### 10.2 Route A — CSV export/import (no code)
 
-1. **Export from the old provider.** Ask for the *active/subscribed* contacts, with
-   every merge field. Also export the **unsubscribe and bounce lists** separately —
-   they go in via §10.3, or the list is left behind.
-2. **Filter the file to people you may still email.** Every row in a CSV import lands
-   as `subscribed`, so an export that still contains opt-outs would re-subscribe them.
-   Delete those rows (or use the API instead).
+1. **Export from the old provider.** Ask for all contacts *with their status*, and for
+   the **unsubscribe / bounce / complaint lists** if they come as separate files.
+2. **Load the bounce and complaint list first**, on the **Suppressions** page (§6.7) —
+   paste the column straight out of the export and pick a reason. Doing this before the
+   contact import means those addresses are filtered out on the way in automatically,
+   and can never be mailed later by a re-import.
 3. **Create an audience** in Day3 and open **Import CSV** on it. Only an `email` column
    is required; column order is free, headers are alias-matched, and any extra column
    becomes a custom field keyed by a slug of its header (`Phone number` → `phone_number`).
    A **sample template** is downloadable from the same panel.
-4. **Split large lists.** The cap is **5,000 rows / 5 MB per file** — a 40,000-contact
+4. **Leave the opt-outs in the file.** A `status` column is honored, so people who had
+   unsubscribed arrive as `unsubscribed` rather than being re-subscribed — with an
+   optional `unsubscribed_at` column preserving the original opt-out date. Rows the file
+   marks **bounced, spam-complained, or unconfirmed** (including Mailchimp's `cleaned`
+   and `pending`) are skipped rather than imported: Day3 will not assert a delivery
+   failure it never saw, and those addresses belong on the suppression list. An
+   unrecognized value in a `status` column (a column that actually means
+   `trial`/`paid`) falls back to `subscribed`, so reading the column can never silently
+   swallow an import.
+5. **Split large lists.** The cap is **5,000 rows / 5 MB per file** — a 40,000-contact
    list is eight uploads, which is fine (they merge into the same audience and dedup
    against each other), or one API run instead.
-5. **Watch the import.** Each upload appears in the import history with rows added and a
-   skip breakdown — invalid addresses, duplicates, already-suppressed addresses, and
-   anything over the free plan's 500-subscriber cap. A **failed import is never
-   auto-retried** — nothing happens behind your back: fix the file and re-upload it
-   against the same import row from the history's retry action (§6.3).
-6. **Verify.** The audience's status breakdown should match your source count minus the
-   skips. **CSV export** the audience and diff it against the original if you want proof.
+6. **Watch the import.** Each upload appears in the import history with rows added and a
+   skip breakdown — invalid addresses, duplicates, addresses on your suppression list,
+   rows marked bounced/spam/unconfirmed in the file, and anything over the free plan's
+   500-subscriber cap. A **failed import is never auto-retried** — nothing happens behind
+   your back: fix the file and re-upload it against the same import row from the
+   history's retry action (§6.3).
+7. **Verify.** The audience's status breakdown should match your source count minus the
+   skips. **CSV export** the audience and diff it against the original if you want proof —
+   the export carries `status` and `unsubscribed_at`, so it round-trips.
 
 CSV imports send nothing and do not run double opt-in (§6.4) — importing is silent by
-design.
+design. What this route *can't* do is restore per-contact **topic preferences**; that
+needs the API (§10.3).
 
 ### 10.3 Route B — the v1 API (a script)
 
@@ -1095,11 +1145,12 @@ operations matters more than the code:
    (`added`, `already_suppressed`, `invalid`, `total_suppressed_before/after`). Doing
    this first means contact rows for those addresses are **rejected on the way in**
    with `email_suppressed` — that's the guard working, not an error to retry.
-   ⚠️ **Suppression is account-wide and add-only over the API** — there is no
-   `DELETE /v1/suppressions/{email}` and no self-serve un-suppress screen, so posting
-   the wrong file (say, the full contact list) makes those addresses unmailable and
-   needs support to undo. Entries are tagged with the key that created them, so an
-   accidental import is at least identifiable. Dry-run first.
+   ⚠️ **Suppression is account-wide, and add-only over the API** — there is
+   deliberately no `DELETE /v1/suppressions/{email}`, so a leaked key can never
+   unblock addresses in order to mail them. Posting the wrong file (say, the full
+   contact list) makes those addresses unmailable, which is undone **in the app** on
+   the Suppressions page (§6.7), one address at a time; entries are tagged with the
+   key that created them so an accidental import is identifiable. Dry-run first.
    **Plain unsubscribes generally belong in step 3, not here** — suppressing them stops
    them being imported as contacts at all, which loses the record that they opted out.
 3. **Load contacts in batches** —
@@ -1179,7 +1230,9 @@ in, **MCP** (§6.16) lets the same assistant write the first campaign against it
    **sender** for the From address people already recognize (§6.6).
 3. **Set your company mailing address** in Settings — sending is blocked without it
    (§6.7).
-4. **Create the audience**, then import **suppressions first**, contacts second.
+4. **Load the old provider's bounce/complaint list on Suppressions first**, then import
+   contacts — in that order, so the bad addresses are filtered out automatically instead
+   of being mailed once and bouncing again.
 5. **Verify the counts** against the source, and spot-check merge fields.
 6. **Recreate segments and topics** you relied on (§6.3).
 7. **Swap your signup forms** to Day3 (§6.4) so new subscribers land in the right place

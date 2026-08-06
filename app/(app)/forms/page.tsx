@@ -175,7 +175,7 @@ export default function FormsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Signup forms</h1>
+        <h1 className="font-display text-3xl">Signup forms</h1>
         <Dialog open={open} onOpenChange={openChange}>
           <DialogTrigger render={<Button disabled={audiences.length === 0}>New form</Button>} />
           <DialogContent>
@@ -274,7 +274,7 @@ export default function FormsPage() {
           ) : list.isEmpty ? (
             <ListEmpty
               icon={FileInput}
-              title="Create your first signup form"
+              title="Start collecting signups."
               description={
                 audiences.length === 0
                   ? "First create an audience — signups need somewhere to land."

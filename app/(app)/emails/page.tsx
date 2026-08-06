@@ -268,7 +268,7 @@ export default function EmailsPage() {
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-1.5">
-            <h1 className="text-2xl font-semibold tracking-tight">Emails</h1>
+            <h1 className="font-display text-3xl">Emails</h1>
             <ApiPanel
               build={(origin) =>
                 buildEmailsPanelContent({ origin, verifiedDomains, sandbox })
@@ -310,7 +310,7 @@ export default function EmailsPage() {
           ) : emails.length === 0 && !hasFilters ? (
             <ListEmpty
               icon={SendIcon}
-              title="No emails sent yet"
+              title="Your app hasn't sent anything yet."
               description="Send transactional email from your own code with one POST /v1/emails call — grab an API key, then use the </> button above for copy-paste snippets. Every send shows up here with its delivery status."
               action={<Button render={<Link href="/api-keys">Get an API key</Link>} />}
             />

@@ -117,7 +117,7 @@ export default function AdminOverviewPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Admin</h1>
+        <h1 className="font-display text-3xl">Admin</h1>
         <Link href="/admin/reviews" className="text-sm text-primary underline-offset-4 hover:underline">
           Campaign reviews →
         </Link>

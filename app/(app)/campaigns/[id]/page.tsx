@@ -535,7 +535,7 @@ export default function CampaignDetailPage() {
       {!isDraft && (
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight">{campaign.name}</h1>
+            <h1 className="font-display text-3xl">{campaign.name}</h1>
             {statusBadge}
           </div>
           <div className="flex gap-2">{actionButtons}</div>
@@ -943,7 +943,7 @@ export default function CampaignDetailPage() {
                   { ok: onboarding.hasSubscribers, label: "Audience has subscribers" },
                 ].map((c) => (
                   <li key={c.label} className="flex items-center gap-2">
-                    <Check className="size-4 shrink-0 text-emerald-600" />
+                    <Check className="size-4 shrink-0 text-olive" />
                     {c.label}
                   </li>
                 ))}

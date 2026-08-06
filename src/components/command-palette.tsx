@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity,
+  Ban,
   BarChart3,
   Globe,
   KeyRound,
@@ -38,7 +39,8 @@ const COMMANDS: Command[] = [
   { label: "Campaigns", icon: Mail, href: "/campaigns" },
   { label: "Emails", icon: Send, href: "/emails", keywords: "transactional api sends log password reset receipt" },
   { label: "Audiences", icon: Users, href: "/audiences", keywords: "subscribers list contacts" },
-  { label: "Import subscribers", hint: "Audiences", icon: FileInput, href: "/audiences", keywords: "csv upload" },
+  { label: "Import subscribers", hint: "Audiences", icon: FileInput, href: "/audiences", keywords: "csv upload migrate" },
+  { label: "Suppressions", icon: Ban, href: "/suppressions", keywords: "unsubscribed bounced blocked spam complaints blocklist unsuppress migrate" },
   { label: "Sending domains", icon: Globe, href: "/domains", keywords: "dns dkim verify" },
   { label: "Senders", icon: AtSign, href: "/senders", keywords: "from identity" },
   { label: "Signup forms", icon: FileInput, href: "/forms", keywords: "embed hosted" },

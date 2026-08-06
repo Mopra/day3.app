@@ -16,7 +16,7 @@ export default function ApiKeysPage() {
   return (
     <div className="max-w-4xl space-y-10">
       <div className="space-y-1">
-        <h1 className="text-2xl font-semibold tracking-tight">API keys</h1>
+        <h1 className="font-display text-3xl">API keys</h1>
         <p className="text-sm text-muted-foreground">
           Day3&apos;s REST API lets your own code — or an AI assistant working in your codebase —
           manage audiences, contacts, custom fields, segments and topics, and write campaign

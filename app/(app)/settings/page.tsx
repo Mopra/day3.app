@@ -30,7 +30,7 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+      <h1 className="font-display text-3xl">Settings</h1>
 
       <section className="space-y-4">
         <h2 className="text-base font-medium">Sender identity</h2>

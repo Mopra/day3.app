@@ -22,28 +22,33 @@ export function OnboardingChecklist({ onboarding }: { onboarding: OnboardingStat
   const steps: Step[] = [
     {
       title: "Verify a sending domain",
-      description: "Add a domain and publish its DNS records so email lands in the inbox.",
+      description: "Publish a few DNS records so inboxes trust your mail. We check them for you.",
       done: onboarding.hasVerifiedDomain,
       href: "/domains",
       cta: "Set up a domain",
     },
     {
       title: "Import an audience",
-      description: "Create an audience and import subscribers from a CSV.",
+      description: "Create a list, then bring your subscribers in from a CSV.",
       done: onboarding.hasSubscribers,
       href: "/audiences",
       cta: "Add subscribers",
     },
     {
       title: "Create a campaign",
-      description: "Draft your first email and pick its audience and sending domain.",
+      description: "Write the email, then pick who gets it and which domain it leaves from.",
       done: onboarding.hasCampaign,
       href: "/campaigns/new",
       cta: "Create a campaign",
     },
     {
+      // Was "Submit a campaign for review and send it to your audience", which
+      // reads as though a human approves it first. There is no approval step:
+      // sending runs the automated risk review and, if it passes, delivery
+      // starts (see AGENTS.md — `pending_review` is not a human review). Copy
+      // that implies a safety net nobody is holding is worse than no copy.
       title: "Send your first campaign",
-      description: "Submit a campaign for review and send it to your audience.",
+      description: "Sending runs an automatic safety check, then goes out in batches. There's no undo.",
       done: onboarding.hasSentCampaign,
       href: "/campaigns",
       cta: "View campaigns",
@@ -60,7 +65,9 @@ export function OnboardingChecklist({ onboarding }: { onboarding: OnboardingStat
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center justify-between">
-          <span>Get set up</span>
+          {/* Names the outcome the list leads to rather than the list itself;
+              the count beside it already says how far along you are. */}
+          <span>Before your first send</span>
           <span className="text-sm font-normal text-muted-foreground">
             {completed} of {steps.length} done
           </span>

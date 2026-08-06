@@ -102,7 +102,7 @@ export default function BillingPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Billing</h1>
+        <h1 className="font-display text-3xl">Billing</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Every feature is included on every plan. You only pick how many emails you
           send each month — upgrade or downgrade anytime.

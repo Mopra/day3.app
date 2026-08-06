@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ListError, RowOpen, rowLinkProps } from "@/components/ui/data-list";
+import { Reveal } from "@/components/ui/reveal";
 import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/format";
@@ -122,13 +123,17 @@ export default function DashboardPage() {
             : sendingDegraded
               ? "degraded"
               : "normal";
+  // Olive is "healthy" across the app (see CampaignStatusBadge and the metrics
+  // tones); amber is a heads-up; clay/destructive is a stop. Sandbox is caramel
+  // because it isn't a health state at all — sending works, it's the audience
+  // that's restricted — so it should not read as a shade of "fine" or "wrong".
   const statusDot = {
     loading: "bg-muted-foreground/40",
     paused: "bg-destructive",
-    sandbox: "bg-blue-500",
+    sandbox: "bg-caramel",
     disabled: "bg-destructive",
     degraded: "bg-amber-500",
-    normal: "bg-emerald-500",
+    normal: "bg-olive",
   }[sendingState];
   const sendingValue = {
     loading: "",
@@ -143,7 +148,7 @@ export default function DashboardPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+          <h1 className="font-display text-3xl">Dashboard</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {organization?.name
               ? `Sending overview for ${organization.name}.`
@@ -178,7 +183,11 @@ export default function DashboardPage() {
 
       {onboarding && <OnboardingChecklist onboarding={onboarding} />}
 
-      <div className="grid gap-4 md:grid-cols-3">
+      {/* Reveal *is* the grid, rather than a wrapper around it — an extra div
+          here would become the grid item and cost the three cards their equal
+          heights. The page title above is deliberately left out of the sequence
+          so the thing that says where you are paints immediately. */}
+      <Reveal delay={60} className="grid gap-4 md:grid-cols-3">
         <StatCard
           label="Plan"
           icon={Gem}
@@ -193,7 +202,7 @@ export default function DashboardPage() {
         >
           {account ? (
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-2xl font-semibold">{planLabel(account.plan)}</span>
+              <span className="font-display text-3xl">{planLabel(account.plan)}</span>
               {/* On free, "active" reads as contradictory next to "Sending: set-up
                   mode" — say what free actually is. Reserve the status word for paid. */}
               {!canSend ? (
@@ -243,9 +252,9 @@ export default function DashboardPage() {
             <Skeleton className="h-8 w-32" />
           ) : (
             <div className="space-y-2">
-              <div className="text-2xl font-semibold tabular-nums">
+              <div className="font-display text-3xl tabular-nums">
                 {usage.used.toLocaleString()}
-                <span className="text-base font-normal text-muted-foreground">
+                <span className="text-lg text-muted-foreground">
                   {" "}
                   / {usage.limit.toLocaleString()}
                 </span>
@@ -278,7 +287,7 @@ export default function DashboardPage() {
           }
         >
           {account ? (
-            <span className="inline-flex items-center gap-2 text-2xl font-semibold">
+            <span className="inline-flex items-center gap-2 font-display text-3xl">
               <span className={cn("size-2.5 rounded-full", statusDot)} aria-hidden />
               {sendingValue}
             </span>
@@ -286,73 +295,75 @@ export default function DashboardPage() {
             <Skeleton className="h-8 w-28" />
           )}
         </StatCard>
-      </div>
+      </Reveal>
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Recent campaigns</CardTitle>
-          {campaigns && campaigns.length > 0 && (
-            <Link
-              href="/campaigns"
-              className="text-sm text-primary underline-offset-4 hover:underline"
-            >
-              View all
-            </Link>
-          )}
-        </CardHeader>
-        <CardContent className="px-0">
-          {campaigns === null ? (
-            <div className="px-4">
-              <Skeleton className="h-24 w-full" />
-            </div>
-          ) : campaigns.length === 0 ? (
-            <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-              No campaigns yet.{" "}
-              <Link href="/campaigns/new" className="text-primary underline-offset-4 hover:underline">
-                Create the first one
+      <Reveal delay={120}>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle>Recent campaigns</CardTitle>
+            {campaigns && campaigns.length > 0 && (
+              <Link
+                href="/campaigns"
+                className="text-sm text-primary underline-offset-4 hover:underline"
+              >
+                View all
               </Link>
-              .
-            </p>
-          ) : (
-            <Table className="[&_td:first-child]:pl-4 [&_td:last-child]:pr-4 [&_th:first-child]:pl-4 [&_th:last-child]:pr-4">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Sent</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {campaigns.map((c) => (
-                  <TableRow key={c.id} {...rowLinkProps(() => router.push(`/campaigns/${c.id}`))}>
-                    <TableCell>
-                      <Link
-                        href={`/campaigns/${c.id}`}
-                        className="font-medium hover:underline"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {c.name}
-                      </Link>
-                    </TableCell>
-                    <TableCell>
-                      <CampaignStatusBadge status={c.status} scheduledAt={c.scheduledAt} />
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {c.sentCount.toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{formatDate(c.createdAt)}</TableCell>
-                    <TableCell className="text-right">
-                      <RowOpen href={`/campaigns/${c.id}`} />
-                    </TableCell>
+            )}
+          </CardHeader>
+          <CardContent className="px-0">
+            {campaigns === null ? (
+              <div className="px-4">
+                <Skeleton className="h-24 w-full" />
+              </div>
+            ) : campaigns.length === 0 ? (
+              <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+                No campaigns yet.{" "}
+                <Link href="/campaigns/new" className="text-primary underline-offset-4 hover:underline">
+                  Create the first one
+                </Link>
+                .
+              </p>
+            ) : (
+              <Table className="[&_td:first-child]:pl-4 [&_td:last-child]:pr-4 [&_th:first-child]:pl-4 [&_th:last-child]:pr-4">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Sent</TableHead>
+                    <TableHead>Created</TableHead>
+                    <TableHead />
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                </TableHeader>
+                <TableBody>
+                  {campaigns.map((c) => (
+                    <TableRow key={c.id} {...rowLinkProps(() => router.push(`/campaigns/${c.id}`))}>
+                      <TableCell>
+                        <Link
+                          href={`/campaigns/${c.id}`}
+                          className="font-medium hover:underline"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {c.name}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <CampaignStatusBadge status={c.status} scheduledAt={c.scheduledAt} />
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {c.sentCount.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{formatDate(c.createdAt)}</TableCell>
+                      <TableCell className="text-right">
+                        <RowOpen href={`/campaigns/${c.id}`} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </Reveal>
     </div>
   );
 }

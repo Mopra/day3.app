@@ -4,43 +4,82 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ------------------------------------------------------------------ *
+ * Day3 — "Warm Swiss SaaS" design tokens.
+ *
+ * The same Cream + Espresso + Caramel system the marketing site runs on
+ * (day3.app.website/app/globals.css), so the walk from the landing page into
+ * the dashboard doesn't change brands halfway. Nothing here is greyscale:
+ * every surface, border, and shadow carries a warm hue.
+ *
+ * The app renders dark-only (see app/layout.tsx) — a workspace you stare at
+ * for an hour should recede, not glare. So `.dark` below is the block that
+ * actually applies, and it is the one tuned by hand. `:root` is kept as the
+ * site's exact light values so a light mode is a class flip rather than a
+ * redesign, and so light-rendered surfaces (print, embeds) stay on-brand.
+ * ------------------------------------------------------------------ */
+
 :root {
-  --background: oklch(0.9821 0 0);
-  --foreground: oklch(0.2435 0 0);
-  --card: oklch(0.9911 0 0);
-  --card-foreground: oklch(0.2435 0 0);
-  --popover: oklch(0.9911 0 0);
-  --popover-foreground: oklch(0.2435 0 0);
-  --primary: oklch(0.4341 0.0392 41.9938);
-  --primary-foreground: oklch(1.0000 0 0);
-  --secondary: oklch(0.9200 0.0651 74.3695);
-  --secondary-foreground: oklch(0.3499 0.0685 40.8288);
-  --muted: oklch(0.9521 0 0);
-  --muted-foreground: oklch(0.5032 0 0);
-  --accent: oklch(0.9310 0 0);
-  --accent-foreground: oklch(0.2435 0 0);
-  --destructive: oklch(0.6271 0.1936 33.3390);
-  --destructive-foreground: oklch(1.0000 0 0);
-  --border: oklch(0.8822 0 0);
-  --input: oklch(0.8822 0 0);
-  --ring: oklch(0.4341 0.0392 41.9938);
-  --chart-1: oklch(0.4341 0.0392 41.9938);
-  --chart-2: oklch(0.9200 0.0651 74.3695);
-  --chart-3: oklch(0.9310 0 0);
-  --chart-4: oklch(0.9367 0.0523 75.5009);
-  --chart-5: oklch(0.4338 0.0437 41.6746);
-  --sidebar: oklch(0.9881 0 0);
-  --sidebar-foreground: oklch(0.2645 0 0);
-  --sidebar-primary: oklch(0.3250 0 0);
-  --sidebar-primary-foreground: oklch(0.9881 0 0);
-  --sidebar-accent: oklch(0.9761 0 0);
-  --sidebar-accent-foreground: oklch(0.3250 0 0);
-  --sidebar-border: oklch(0.9401 0 0);
-  --sidebar-ring: oklch(0.7731 0 0);
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
-  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  /* Brand palette (raw) — the same six values the marketing site mixes from.
+     Exposed as utilities (text-caramel, bg-olive/10) via @theme inline, so
+     status and accent colors can be brand colors instead of stock Tailwind
+     hues. `.dark` re-tunes the three accents for legibility on espresso. */
+  --cream: #f7f1e8;
+  --espresso: #241c17;
+  --oat: #e8dccb;
+  --caramel: #b98145;
+  --clay: #a35f45;
+  --olive: #6f7654;
+
+  --background: #f7f1e8; /* cream */
+  --foreground: #241c17; /* espresso */
+  --card: #fcf8f1; /* warm near-white, lifts above cream */
+  --card-foreground: #241c17;
+  --popover: #fcf8f1;
+  --popover-foreground: #241c17;
+  --primary: #241c17; /* espresso — high-contrast, confident, still warm */
+  --primary-foreground: #f7f1e8;
+  --secondary: #e8dccb; /* oat */
+  --secondary-foreground: #241c17;
+  --muted: #efe6d6;
+  --muted-foreground: #5e5346;
+  /* NOTE: `--accent` is a *hover surface* in this codebase (shadcn's meaning),
+     not the brand accent color. The marketing site uses the same token name
+     for caramel-as-a-color; keeping that here would turn every ghost-button
+     hover bright caramel. Use `text-caramel` / `bg-caramel` for the accent. */
+  --accent: #e3d7c3;
+  --accent-foreground: #241c17;
+  --destructive: #a35f45; /* clay */
+  --destructive-foreground: #fcf8f1;
+  --border: #e3d7c3;
+  --input: #ddd0ba;
+  --ring: #b98145; /* caramel focus ring */
+  --chart-1: #b98145; /* caramel */
+  --chart-2: #6f7654; /* olive */
+  --chart-3: #a35f45; /* clay */
+  --chart-4: #d0a878; /* caramel, lifted */
+  --chart-5: #8c8f74; /* olive, lifted */
+  --sidebar: #f2ebe0;
+  --sidebar-foreground: #241c17;
+  --sidebar-primary: #241c17;
+  --sidebar-primary-foreground: #f7f1e8;
+  --sidebar-accent: #e8dccb;
+  --sidebar-accent-foreground: #241c17;
+  --sidebar-border: #e3d7c3;
+  --sidebar-ring: #b98145;
+
+  /* Type — Geist for UI/body, Instrument Serif for display. The pair is the
+     site's; `--font-geist` / `--font-instrument-serif` come from next/font in
+     app/layout.tsx, with the stock stacks behind them as the fallback. */
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-serif: var(--font-instrument-serif), ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
   --radius: 0.5rem;
+
+  /* Neutral black, matching the neutral surfaces. Defined once here: `.dark`
+     deliberately does not redefine them (it used to, with byte-identical
+     values, which silently overrode any change made here). */
   --shadow-x: 0;
   --shadow-y: 1px;
   --shadow-blur: 3px;
@@ -55,64 +94,91 @@
   --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 4px 6px -1px hsl(0 0% 0% / 0.10);
   --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 8px 10px -1px hsl(0 0% 0% / 0.10);
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 }
 
+/*
+  The block the app actually renders in.
+
+  Surfaces here are deliberately NEUTRAL, not warm. Tinting them espresso was
+  tried and reverted: at full-screen scale a warm surface reads as brown rather
+  than as brand, and a mid-tone caramel `--primary` made the main buttons look
+  flat where the pale near-white they'd always been reads as lit against a dark
+  UI. Brand warmth in the app comes from the accent inks below, the display
+  serif, and the desk texture — never from the surfaces.
+
+  So: don't warm `--background` / `--card` / `--muted` / `--accent` / `--border`
+  / `--input`, and don't repurpose `--primary` as the brand accent. Use
+  `text-caramel` / `bg-olive` / `text-clay` for that.
+
+  Fonts, radius, and shadows are inherited from `:root` on purpose. This block
+  used to restate all three with byte-identical values, which meant a change to
+  the ramp above was silently overridden here.
+*/
 .dark {
+  /* The one thing this block does carry from the brand: the three accent inks,
+     lifted so they stay legible on a dark surface (each clears 6:1 against
+     `--background`). These are what status colors are drawn from, replacing the
+     stock blue/emerald/violet the app used to reach for. */
+  --caramel: #c98f53;
+  --clay: #d07a5c;
+  --olive: #9aa677;
+
   --background: oklch(0.1776 0 0);
   --foreground: oklch(0.9491 0 0);
   --card: oklch(0.2134 0 0);
   --card-foreground: oklch(0.9491 0 0);
   --popover: oklch(0.2134 0 0);
   --popover-foreground: oklch(0.9491 0 0);
+  /* Pale and warm, so a filled button reads as lit on a dark UI. Also the base
+     the "Draft with AI" CTA mixes its gradient from (`.d3-ai-cta` below) — a
+     mid-tone primary collapses that gradient into a flat fill. */
   --primary: oklch(0.9247 0.0524 66.1732);
   --primary-foreground: oklch(0.2029 0.0240 200.1962);
   --secondary: oklch(0.3163 0.0190 63.6992);
   --secondary-foreground: oklch(0.9247 0.0524 66.1732);
   --muted: oklch(0.2520 0 0);
   --muted-foreground: oklch(0.7699 0 0);
-  --accent: oklch(0.2850 0 0);
+  --accent: oklch(0.2850 0 0); /* hover surface — see the note in `:root` */
   --accent-foreground: oklch(0.9491 0 0);
   --destructive: oklch(0.6271 0.1936 33.3390);
   --destructive-foreground: oklch(1.0000 0 0);
   --border: oklch(0.2351 0.0115 91.7467);
   --input: oklch(0.4017 0 0);
   --ring: oklch(0.9247 0.0524 66.1732);
-  --chart-1: oklch(0.9247 0.0524 66.1732);
-  --chart-2: oklch(0.3163 0.0190 63.6992);
-  --chart-3: oklch(0.2850 0 0);
-  --chart-4: oklch(0.3481 0.0219 67.0001);
-  --chart-5: oklch(0.9245 0.0533 67.0855);
-  --sidebar: oklch(0.2103 0.0059 285.8852);
-  --sidebar-foreground: oklch(0.9674 0.0013 286.3752);
-  --sidebar-primary: oklch(0.4882 0.2172 264.3763);
-  --sidebar-primary-foreground: oklch(1.0000 0 0);
-  --sidebar-accent: oklch(0.2739 0.0055 286.0326);
-  --sidebar-accent-foreground: oklch(0.9674 0.0013 286.3752);
-  --sidebar-border: oklch(0.2739 0.0055 286.0326);
-  --sidebar-ring: oklch(0.8711 0.0055 286.2860);
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
-  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  --radius: 0.5rem;
-  --shadow-x: 0;
-  --shadow-y: 1px;
-  --shadow-blur: 3px;
-  --shadow-spread: 0px;
-  --shadow-opacity: 0.1;
-  --shadow-color: oklch(0 0 0);
-  --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
-  --shadow-xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);
-  --shadow-sm: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
-  --shadow: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 1px 2px -1px hsl(0 0% 0% / 0.10);
-  --shadow-md: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 2px 4px -1px hsl(0 0% 0% / 0.10);
-  --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 4px 6px -1px hsl(0 0% 0% / 0.10);
-  --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 8px 10px -1px hsl(0 0% 0% / 0.10);
-  --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  /* Charts are unused today; left on the brand ramp so the first chart built
+     starts on-palette rather than on stock defaults. */
+  --chart-1: #c98f53; /* caramel */
+  --chart-2: #9aa677; /* olive */
+  --chart-3: #d07a5c; /* clay */
+  --chart-4: #e0b483; /* caramel, lifted */
+  --chart-5: #b9c295; /* olive, lifted */
+  /* Also unused (src/components/ui/sidebar.tsx is not imported anywhere), but
+     kept in step with the neutral surfaces above rather than left on the
+     purple-blue the generator emitted. */
+  --sidebar: oklch(0.2103 0 0);
+  --sidebar-foreground: oklch(0.9674 0 0);
+  --sidebar-primary: oklch(0.9247 0.0524 66.1732);
+  --sidebar-primary-foreground: oklch(0.2029 0.0240 200.1962);
+  --sidebar-accent: oklch(0.2739 0 0);
+  --sidebar-accent-foreground: oklch(0.9674 0 0);
+  --sidebar-border: oklch(0.2739 0 0);
+  --sidebar-ring: oklch(0.8711 0 0);
 }
 
 @theme inline {
+  /* Brand colors → utilities (text-caramel, bg-olive/10, border-clay, …), so
+     status and accent colors are drawn from the palette rather than from stock
+     Tailwind hues that fight it. */
+  --color-cream: var(--cream);
+  --color-espresso: var(--espresso);
+  --color-oat: var(--oat);
+  --color-caramel: var(--caramel);
+  --color-clay: var(--clay);
+  --color-olive: var(--olive);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -235,6 +301,117 @@
   scrollbar-width: none;
   &::-webkit-scrollbar {
     display: none;
+  }
+}
+
+@layer base {
+  /* Warm text selection, matching the marketing site. */
+  ::selection {
+    background-color: color-mix(in srgb, var(--caramel) 32%, transparent);
+    color: var(--foreground);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Display type
+ *
+ * Instrument Serif, used with restraint: page titles and the numbers that
+ * answer a question ("how many did we send?"). Never body copy, never UI
+ * labels, never inside a table — at small sizes and high density it costs
+ * legibility and buys nothing. The serif is the brand's voice, so it belongs
+ * on the few lines a reader actually reads aloud in their head.
+ * ------------------------------------------------------------------ */
+.font-display {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+/* ------------------------------------------------------------------ *
+ * The desk (see src/components/app-shell.tsx)
+ *
+ * Every page floats a lit `bg-card` panel on `bg-background`, and the campaign
+ * composer canvas already deliberately reads as "a lit sheet on a dark desk".
+ * This makes that metaphor material at shell scale: the gutter and the sidebar
+ * become an actual espresso desk with paper tooth and one slow warm wash
+ * crossing it, so the panel reads as a sheet resting on something.
+ *
+ * All of it is decorative, sits behind the content, and stops entirely under
+ * `prefers-reduced-motion` (the grain stays — it isn't motion).
+ * ------------------------------------------------------------------ */
+
+/* Paper tooth over the desk.
+   `soft-light` rather than the `multiply` the marketing site uses over its
+   hero: multiply only darkens, which is invisible on a surface this dark, so
+   soft-light lets the grain's own highlights lift it instead.
+   Scaled to cover rather than tiled — the plate isn't authored as a seamless
+   tile, so repeating it would draw a visible grid across the desk.
+   `--d3-desk-grain` is the one number to turn if it reads too strong or too
+   faint. NOTE: this only shows if the blend has something to blend *with* —
+   its nearest stacking-context ancestor must carry the desk's own fill. */
+.d3-desk-grain {
+  --d3-desk-grain: 0.5;
+  background-image: url("/paper-grain.webp");
+  background-size: cover;
+  background-position: center;
+  mix-blend-mode: soft-light;
+  opacity: var(--d3-desk-grain);
+}
+
+/* Slow warm wash across the desk. Long periods (18–26s) and heavy blur, so it
+   never reads as an animation you could time — just a surface that isn't
+   perfectly flat. Shorter than the site's because there is less area here. */
+@keyframes d3-desk-wash-1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(30px, -22px) scale(1.08); }
+}
+@keyframes d3-desk-wash-2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-26px, 26px) scale(1.05); }
+}
+.animate-desk-wash-1 { animation: d3-desk-wash-1 22s ease-in-out infinite; }
+.animate-desk-wash-2 { animation: d3-desk-wash-2 26s ease-in-out infinite; }
+
+/* ------------------------------------------------------------------ *
+ * Ambient life
+ * ------------------------------------------------------------------ */
+
+/* Soft pulse for "this is happening right now" dots. Ported from the marketing
+   site, and deliberately calmer than Tailwind's `animate-ping`: it breathes
+   rather than radiating, which is what you want on a status a user might have
+   open on a second monitor for twenty minutes. */
+@keyframes d3-live-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
+.animate-live-dot { animation: d3-live-dot 1.8s ease-in-out infinite; }
+
+/* Scroll reveal — paired with the <Reveal> client wrapper (see
+   src/components/ui/reveal.tsx), which flips `.is-visible` on entry. */
+.reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition:
+    opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+  will-change: opacity, transform;
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-desk-wash-1,
+  .animate-desk-wash-2,
+  .animate-live-dot {
+    animation: none !important;
+  }
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
   }
 }
 

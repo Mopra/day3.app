@@ -155,13 +155,17 @@ function defaultAlign(kind: SectionKind): SectionAlign {
 // Fill palette for buttons / callouts — the brand color first, then a spread of
 // accents and neutrals. The label color is a simpler light/dark choice (a colored
 // fill almost always wants white or near-black text).
+// The brand trio leads (espresso default, then caramel and clay), and the wider
+// spread stays: these swatches dress the *sender's* email, not day3's UI, and
+// their brand is not ours — narrowing this to warm neutrals would be us
+// choosing for them.
 const FILL_SWATCHES = [
-  DEFAULT_BUTTON_BG, "#7c3aed", "#db2777", "#dc2626", "#ea580c",
-  "#16a34a", "#0891b2", "#111827", "#6b7280", "#ffffff",
+  DEFAULT_BUTTON_BG, "#b98145", "#a35f45", "#7c3aed", "#db2777",
+  "#dc2626", "#ea580c", "#16a34a", "#0891b2", "#6b7280", "#ffffff",
 ];
 // Soft tints for a callout's background, plus "no fill".
 const QUOTE_SWATCHES = [
-  DEFAULT_QUOTE_BG, "#eff6ff", "#f0fdf4", "#fef2f2", "#fefce8", "#faf5ff", "transparent",
+  DEFAULT_QUOTE_BG, "#f5ede0", "#eff6ff", "#f0fdf4", "#fef2f2", "#fefce8", "#faf5ff", "transparent",
 ];
 // Section block backgrounds: "no fill" first (the default — section sits on the
 // content background), then soft neutrals/tints and one dark for contrast blocks.

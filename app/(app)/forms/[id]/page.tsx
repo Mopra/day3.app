@@ -484,7 +484,7 @@ export default function FormDetailPage() {
           </Button>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h1 className="truncate text-2xl font-semibold tracking-tight">{form.name}</h1>
+              <h1 className="truncate font-display text-3xl">{form.name}</h1>
               {form.status !== "active" && <Badge variant="secondary">Inactive</Badge>}
             </div>
             <p className="text-sm text-muted-foreground">

@@ -37,14 +37,14 @@ export default function SelectOrgPage() {
       <div className="max-w-sm space-y-1.5 text-center">
         {hasOrgs ? (
           <>
-            <h1 className="text-2xl font-semibold">Choose your workspace</h1>
+            <h1 className="font-display text-3xl">Choose your workspace</h1>
             <p className="text-sm text-muted-foreground">
               Pick a workspace to continue, or create a new one.
             </p>
           </>
         ) : (
           <>
-            <h1 className="text-2xl font-semibold">One last step</h1>
+            <h1 className="font-display text-3xl">One last step</h1>
             <p className="text-sm text-muted-foreground">
               Name your workspace — it&apos;s your company&apos;s Day3 account, where your
               domains, audiences and campaigns live. You can rename it later.

@@ -1,6 +1,29 @@
 # Deliverability onboarding & migration help (design doc)
 
-**Status:** not started — design notes for future implementation.
+**Status (2026-08-06): partially shipped.**
+
+- **Feature 1** — half done. The add-domain dialog carries the "reuse the same
+  subdomain" callout ([domains/page.tsx](../app/(app)/domains/page.tsx)); the
+  post-verification "expect 2–4 weeks of spam-foldering" copy is **not** built.
+- **Feature 2** — **done, by a different shape than sketched below.** Bulk import
+  is `POST /v1/suppressions` (explicit reason, add-only, tagged with the creating
+  key) for scripts, plus a **Suppressions page** (`app/(app)/suppressions/`) that
+  lists/searches/filters the account's entries, adds addresses from a pasted list,
+  and **un-suppresses per address** — the undo the "recoverable in the app" premise
+  depended on. The import-flow nudge shipped too, on the audience import panel.
+  Deliberately *not* built: a CSV-upload + queue path for suppressions (pasting a
+  column covers realistic list sizes, and the API covers the rest), and a batch
+  "undo this API import" action.
+- **Also shipped alongside** (not in this doc's original plan): a CSV `status`
+  column, so a no-code migration carries opt-outs (`unsubscribed` +
+  `unsubscribed_at`) and skips rows the source marks bounced/complained/pending
+  instead of resubscribing them.
+- **Features 3 & 4** — not started. No warm-up ramping, no help page. Feature 4's
+  content largely exists as `PRODUCT.md §10.6`, but nothing links customers to it.
+
+The customer-facing migration story as it stands is documented in
+[`PRODUCT.md §10`](../PRODUCT.md) — keep the two in sync.
+
 **Priority:** should-have before actively courting customers migrating from other ESPs.
 
 ## Background: what prompted this

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { sanitizeHtml } from "../src/services/render";
 import {
+  DEFAULT_BUTTON_BG,
+  DEFAULT_BUTTON_TEXT,
   SectionsSchema,
   duplicateSection,
   emptySection,
@@ -249,9 +251,9 @@ describe("serializeSections (button sections)", () => {
     const html = serializeSections([
       buttonSection(1, [{ label: "Get started", href: "https://x.test/go" }]),
     ]);
-    expect(html).toContain('<td bgcolor="#2563eb" align="center" class="d3-btn-round">');
+    expect(html).toContain(`<td bgcolor="${DEFAULT_BUTTON_BG}" align="center" class="d3-btn-round">`);
     expect(html).toContain(
-      '<a href="https://x.test/go"><font color="#ffffff"><strong>Get started</strong></font></a>',
+      `<a href="https://x.test/go"><font color="${DEFAULT_BUTTON_TEXT}"><strong>Get started</strong></font></a>`,
     );
     expect(html).toContain('cellpadding="14"');
     // The button rounds via the class-keyed style rule (border-radius is forbidden in
@@ -289,7 +291,7 @@ describe("serializeSections (button sections)", () => {
       buttonSection(1, [{ label: "Go", href: "https://x.test", fullWidth: true }]),
     ]);
     expect(html).toContain('cellpadding="14" align="center" class="d3-btn-round" width="100%"');
-    expect(html).toContain('<td bgcolor="#2563eb" align="center" class="d3-btn-round" width="100%">');
+    expect(html).toContain(`<td bgcolor="${DEFAULT_BUTTON_BG}" align="center" class="d3-btn-round" width="100%">`);
   });
 
   it("omits the width attribute for a default (fit-to-label) button", () => {
@@ -298,7 +300,7 @@ describe("serializeSections (button sections)", () => {
     ]);
     // The button's own table/cell stay unsized (only the layout wrappers use 100%).
     expect(html).toContain('cellpadding="14" align="center" class="d3-btn-round"><tbody>');
-    expect(html).toContain('<td bgcolor="#2563eb" align="center" class="d3-btn-round"><a');
+    expect(html).toContain(`<td bgcolor="${DEFAULT_BUTTON_BG}" align="center" class="d3-btn-round"><a`);
   });
 });
 

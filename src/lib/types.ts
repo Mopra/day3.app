@@ -225,7 +225,19 @@ export type ImportRow = {
   suppressedRows: number;
   duplicateRows: number;
   overCapRows: number;
+  // Rows whose `status` column marked them bounced/complained/unconfirmed at the
+  // old provider — valid addresses we declined to import as contacts.
+  statusSkippedRows: number;
   error: string | null;
+  createdAt: string;
+};
+
+export type SuppressionRow = {
+  id: string;
+  email: string;
+  scope: "account" | "global";
+  reason: string;
+  source: string | null;
   createdAt: string;
 };
 

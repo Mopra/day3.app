@@ -836,7 +836,7 @@ Please:
 6. Before the full run, do a dry run with the first 10 contacts and show me the result so I can confirm the field mapping looks right.
 7. Afterwards, tell me the final counts and how to verify them against my old provider, and tell me plainly what did **not** come across — original signup dates can't be preserved, and anything the old export didn't include obviously can't either.
 
-Warn me clearly before anything irreversible. Suppression is account-wide and cannot be undone over the API, and there is no sandbox — this runs against my real account, which is exactly why I want the dry run first.
+Warn me clearly before anything irreversible. Suppression is account-wide and cannot be undone over the API (only by hand, one address at a time, on the Suppressions page in the app), and there is no sandbox — this runs against my real account, which is exactly why I want the dry run first.
 ${shared}${buildReferenceMarkdown(ctx)}`,
     },
     {

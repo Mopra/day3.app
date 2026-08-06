@@ -164,7 +164,7 @@ export function AudienceTopicsTab({
           ) : list.isEmpty ? (
             <ListEmpty
               icon={Bell}
-              title="No topics yet"
+              title="Let people choose what to hear about."
               description="Topics are subscription categories — “Product updates”, “Promotions” — contacts can leave without unsubscribing from everything. Send a campaign under a topic and anyone who opted out is skipped automatically."
               action={
                 <Button onClick={openAdd}>

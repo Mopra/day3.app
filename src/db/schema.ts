@@ -402,12 +402,15 @@ export const imports = pgTable(
     skippedRows: integer("skipped_rows").notNull().default(0),
     // Why rows were skipped, so the UI can explain "N skipped" instead of a black
     // box: malformed emails, addresses on the suppression list, duplicates
-    // (already in the audience), and rows dropped because the free-tier cap was
-    // hit. These sum to skippedRows.
+    // (already in the audience), rows dropped because the free-tier cap was hit,
+    // and rows whose `status` column marks them bounced/complained/unconfirmed at
+    // the source (those belong on the suppression list, not in an audience).
+    // These sum to skippedRows.
     invalidRows: integer("invalid_rows").notNull().default(0),
     suppressedRows: integer("suppressed_rows").notNull().default(0),
     duplicateRows: integer("duplicate_rows").notNull().default(0),
     overCapRows: integer("over_cap_rows").notNull().default(0),
+    statusSkippedRows: integer("status_skipped_rows").notNull().default(0),
     error: text("error"),
 
     createdAt: tstz("created_at").notNull(),

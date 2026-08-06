@@ -1,0 +1,1 @@
+ALTER TABLE "imports" ADD COLUMN "status_skipped_rows" integer DEFAULT 0 NOT NULL;

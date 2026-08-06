@@ -75,12 +75,12 @@ describe("csv export", () => {
   it("serializes subscribers with a header and the union of attribute keys", () => {
     const csv = toSubscriberCsv([
       { email: "a@x.co", firstName: "Ann", lastName: null, status: "subscribed", attributes: { phone: "123" } },
-      { email: "b@x.co", firstName: null, lastName: "Bee", status: "unsubscribed", attributes: { company: "Acme" } },
+      { email: "b@x.co", firstName: null, lastName: "Bee", status: "unsubscribed", unsubscribedAt: "2025-11-02T00:00:00.000Z", attributes: { company: "Acme" } },
     ]);
     const lines = csv.trimEnd().split("\r\n");
-    expect(lines[0]).toBe("email,first_name,last_name,status,company,phone");
-    expect(lines[1]).toBe("a@x.co,Ann,,subscribed,,123");
-    expect(lines[2]).toBe("b@x.co,,Bee,unsubscribed,Acme,");
+    expect(lines[0]).toBe("email,first_name,last_name,status,unsubscribed_at,company,phone");
+    expect(lines[1]).toBe("a@x.co,Ann,,subscribed,,,123");
+    expect(lines[2]).toBe("b@x.co,,Bee,unsubscribed,2025-11-02T00:00:00.000Z,Acme,");
   });
 
   it("quotes fields containing commas, quotes, or newlines", () => {
@@ -88,17 +88,46 @@ describe("csv export", () => {
       { email: "c@x.co", firstName: 'Jo, "JJ"', lastName: "Line\nBreak", status: "subscribed" },
     ]);
     const dataLine = csv.trimEnd().split("\r\n")[1];
-    expect(dataLine).toBe('c@x.co,"Jo, ""JJ""","Line\nBreak",subscribed');
+    expect(dataLine).toBe('c@x.co,"Jo, ""JJ""","Line\nBreak",subscribed,');
   });
 
-  it("round-trips through the parser, ignoring the export-only status column", () => {
+  // An export is a migration artifact in both directions: someone edits it and
+  // re-imports, or leaves Day3 and takes it elsewhere. So status and opt-out date
+  // must survive the round trip rather than being dropped as decoration.
+  it("round-trips an opt-out through the parser, status and date intact", () => {
     const csv = toSubscriberCsv([
-      { email: "RT@X.co", firstName: "Ray", lastName: "Tee", status: "unsubscribed", attributes: { phone: "555" } },
+      {
+        email: "RT@X.co",
+        firstName: "Ray",
+        lastName: "Tee",
+        status: "unsubscribed",
+        unsubscribedAt: "2025-11-02T09:30:00.000Z",
+        attributes: { phone: "555" },
+      },
     ]);
     const parsed = parseSubscriberCsv(csv);
     expect(parsed.rows).toEqual([
-      { email: "rt@x.co", firstName: "Ray", lastName: "Tee", attributes: { phone: "555" } },
+      {
+        email: "rt@x.co",
+        firstName: "Ray",
+        lastName: "Tee",
+        status: "unsubscribed",
+        unsubscribedAt: "2025-11-02T09:30:00.000Z",
+        attributes: { phone: "555" },
+      },
     ]);
+  });
+
+  // A pipeline-owned status can be exported but never re-asserted by a file: the
+  // row is dropped (and counted) instead of quietly becoming a subscriber again.
+  it("drops a bounced row on re-import rather than resubscribing it", () => {
+    const csv = toSubscriberCsv([
+      { email: "gone@x.co", status: "bounced" },
+      { email: "fine@x.co", status: "subscribed" },
+    ]);
+    const parsed = parseSubscriberCsv(csv);
+    expect(parsed.rows.map((r) => r.email)).toEqual(["fine@x.co"]);
+    expect(parsed.statusSkippedRows).toBe(1);
   });
 });
 
