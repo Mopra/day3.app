@@ -36,6 +36,7 @@ import { getAudienceFieldFallbacks } from "../../services/audience-fields";
 import { enforceAccountHealth } from "../../services/health";
 import { notifyCampaignPaused, notifyCampaignSent } from "../../services/notifications";
 import { releaseReservation, reserveQuota } from "../../services/quota";
+import { SANDBOX_EXHAUSTED_MESSAGE, SANDBOX_MONTHLY_ALLOWANCE } from "../../services/sandbox";
 import { MAX_SEND_BATCH_SIZE, SEND_BATCH_SIZE, type JobQueue } from "../messages";
 
 export type SendBatchDeps = {
@@ -146,7 +147,15 @@ export async function sendCampaignBatch(
     return;
   }
 
-  if (account.subscriptionStatus !== "active" || !account.sendingEnabled) {
+  // Eligibility can change between accept and send (risk pause, subscription
+  // lapse). Sandbox campaigns come from free orgs whose sendingEnabled is false
+  // by design, so they check risk/subscription only — the same rule the
+  // transactional send handler applies to sandbox rows.
+  const eligible =
+    account.subscriptionStatus === "active" &&
+    account.riskStatus !== "paused" &&
+    (campaign.sandbox || account.sendingEnabled);
+  if (!eligible) {
     await pauseAndNotify(
       db,
       campaign,
@@ -170,14 +179,27 @@ export async function sendCampaignBatch(
   // the remaining headroom between them — their reservations sum to at most the
   // limit (see services/quota.ts). The read above is advisory only; correctness
   // rests on that statement.
-  const claimCount = Number(await reserveQuota(db, account.id, batchSize));
+  // Sandbox campaigns reserve against the free tier's fixed allowance instead of
+  // the plan's monthly limit (which is 0 on the free tier — without the override
+  // every sandbox batch would pause here immediately). Same counter either way,
+  // so a sandbox campaign and the transactional API share one ledger.
+  const claimCount = Number(
+    await reserveQuota(
+      db,
+      account.id,
+      batchSize,
+      campaign.sandbox ? SANDBOX_MONTHLY_ALLOWANCE : undefined,
+    ),
+  );
 
   if (claimCount <= 0) {
     await pauseAndNotify(
       db,
       campaign,
       "quota",
-      "Monthly email limit was reached. Sending resumes automatically if quota frees up, or upgrade your plan to send more.",
+      campaign.sandbox
+        ? SANDBOX_EXHAUSTED_MESSAGE
+        : "Monthly email limit was reached. Sending resumes automatically if quota frees up, or upgrade your plan to send more.",
     );
     await logJob(db, {
       jobType: "send_campaign_batch",

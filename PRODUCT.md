@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-08-04**.
+> Last verified against the codebase: **2026-08-06**.
 
 ---
 
@@ -34,11 +34,13 @@ default path is the deliverable one.
   notes, "what's new" emails.
 - **No contact tax.** You are not billed per subscriber. Pricing is bandwidth:
   you pick a monthly email allowance.
-- **Free to build, paid to send.** A free account can set up domains, audiences,
-  senders and draft campaigns (up to **500 subscribers**), but **cannot send** —
-  sending is what a paid plan unlocks. Paid tiers differ only by monthly email
-  allowance and by the size of their **AI writing assistant** allowance — every
-  paid tier includes the assistant.
+- **Free to try for real, paid to reach your audience.** A free account can set up
+  domains, audiences, senders and draft campaigns (up to **500 subscribers**), and
+  can **send for real in sandbox mode** — up to 100 emails a month, to its own
+  team's addresses only, through the same pipeline with the same tracking. What a
+  paid plan unlocks is sending to *everyone else*. Paid tiers differ only by
+  monthly email allowance and by the size of their **AI writing assistant**
+  allowance — every paid tier includes the assistant.
 - **Deliverability and compliance are built in, not add-ons:** verified sending
   domains, double opt-in, one-click unsubscribe, automatic bounce/complaint
   suppression, and account auto-pause on bad reputation.
@@ -69,8 +71,9 @@ HubSpot, ConvertKit, etc.
 
 Billing runs through **Clerk Billing** (Stripe-backed) and is scoped to the
 **organization** (the tenant), not individual users. **Day3 sells sending
-bandwidth:** a paid plan is a monthly email allowance at a price. The free tier is
-set-up-only (no sending). **Every paid tier includes the AI assistant**; tiers
+bandwidth:** a paid plan is a monthly email allowance at a price. The free tier
+buys no bandwidth but is not silent — it sends in **sandbox mode** (100/month, own
+org members only; see below). **Every paid tier includes the AI assistant**; tiers
 differ in how large an AI allowance they carry.
 
 The AI allowance is denominated in **credits — 1 credit = $0.01 of metered AI
@@ -80,7 +83,7 @@ org can burn on that tier.
 
 | Plan | Clerk slug | Emails / month | Subscribers | AI assistant (window / month) | Price | $ / 1k |
 |------|-----------|----------------|-------------|-------------------------------|-------|--------|
-| **Free** | `free_org` | **0 — cannot send** | up to **500** | ❌ none | **$0** | — |
+| **Free** | `free_org` | **100 — sandbox only** (own team) | up to **500** | ❌ none | **$0** | — |
 | **1k** | `1k_plan` | **1,000** | unlimited | ✅ 10 / **20** credits | **$1 / mo** | $1.00 |
 | **5k** | `5k_plan` | **5,000** | unlimited | ✅ 15 / **50** credits | **$3 / mo** | $0.60 |
 | **10k** | `10k_plan` | **10,000** | unlimited | ✅ 20 / **100** credits | **$5 / mo** | $0.50 |
@@ -126,11 +129,29 @@ Key pricing facts:
   manually, e.g. via the plan metadata override).
 - **No per-contact / per-subscriber pricing.** Subscriber count does not affect price.
 - **Transactional email draws from the same monthly allowance.** One meter,
-  campaign or API send alike — an email is an email. Exception: the free tier's
-  **transactional sandbox** — free orgs can send up to **100 API emails/month, to
-  their own org members' addresses only** (real SES sends, flagged `sandbox`), so
-  a developer can integrate and test `POST /v1/emails` before paying. Upgrading
-  lifts both restrictions with no code change.
+  campaign or API send alike — an email is an email.
+- **Sandbox mode — how the free tier sends.** The free tier is not "no sending":
+  it runs the *real* send path, restricted to what protects the shared SES
+  reputation. **Up to 100 emails/month, to the org's own members' addresses
+  only** — real SES delivery, real recipient rows, real open/click tracking, real
+  metrics. One allowance covers **every** surface: campaign sends, `POST
+  /v1/emails`, and test sends, all reserved against the same
+  `monthly_email_sent_count` ledger as a paid send. So a team can run a whole
+  campaign end to end — compose, review, send, watch the opens arrive — before
+  paying, and a developer can integrate the API against it. Upgrading lifts both
+  restrictions with no code change.
+  - Sandbox campaigns are flagged `campaigns.sandbox` (stamped once, when the
+    campaign leaves draft, so a mid-flight plan change can't re-target or
+    re-meter a live send) and are badged **Sandbox** in the campaign list, on the
+    campaign, and in Metrics. Their numbers count toward the metrics totals —
+    they are real sends.
+  - Recipients are narrowed to the org roster at recipient-generation time. The
+    audience page's **"Add your team"** action puts the org's members in an
+    audience as contacts in one click, which is what makes a first sandbox send
+    reach anyone.
+  - A sandbox account whose allowance runs out is blocked with one shared
+    message across all three surfaces; a risk pause still outranks the sandbox.
+    An *unrecognized* plan value is not granted a sandbox — it fails closed.
 - **Subscription lifecycle → behavior:**
   - `active` → can send up to the plan's allowance.
   - `past_due` → plan still visible, but **sending is blocked** until payment is fixed.
@@ -229,6 +250,22 @@ guards make that observable:
   reads cleanly on mobile without a separate layout. Desktop clients keep the side-by-side
   layout. A **brand-new campaign opens on a starter layout** (a text block plus a ready-made
   call-to-action button) rather than a blank canvas.
+- **Templates — ready-made starting points:** a gallery of five hand-built layouts
+  (**Product update**, **Launch announcement**, **Founder note**, **Weekly digest**,
+  **Event invite**), each shipping both a **section layout** and a matching **global
+  theme**, plus a suggested subject line and preview text. It opens automatically on a
+  brand-new campaign (dismissible) and is reachable any time from the **Templates**
+  button in the composer toolbar. Each card's thumbnail is a live miniature of the real
+  email — rendered through the same sanitizer and document wrapper the send pipeline
+  uses — so it can never misrepresent the template. Applying one replaces the body and
+  theme (confirmed first if you've already written something) but **keeps your subject
+  line and preview text**; the suggested copy only fills fields you left empty.
+  Templates ship **placeholders, never borrowed content**: image slots start empty and
+  buttons start unlinked, so an unfinished template can't send someone else's picture or
+  a dead link, and every merge tag carries a fallback (`{{first_name|there}}`).
+  Templates are available on **every plan** and are **not metered** — they send no mail
+  and cost no AI credits, so they're the fastest path to a good-looking email on the
+  free tier, which has no AI allowance.
 - **Section types** — chosen per section from a type menu, switchable at any time
   without losing work:
   - **Text** — rich content per column (see the WYSIWYG editor below), with a
@@ -332,6 +369,10 @@ guards make that observable:
 AI features are **optional and gated** — if no AI key is configured, the AI UI is
 hidden and the app works normally. Powered by **OpenRouter**, defaulting to
 **Claude Sonnet 4.6** (`anthropic/claude-sonnet-4.6`, configurable).
+
+AI and **templates** (§6.1) solve different halves and compose: a template supplies the
+structure and the look, AI supplies the words. Neither is a required step — the composer
+always opens on a writable canvas.
 
 - **Draft a full campaign** from a short brief → generates subject, preview text,
   and a complete **multi-section body** assembled from the builder's blocks — a
@@ -606,19 +647,30 @@ link to its results), and **signups turned away at the free-plan subscriber cap*
 (throttled to once a day, with an upgrade link). The service fails open — a
 notification never blocks the flow that triggered it.
 
-### 6.14 Public API (v1) — audiences and transactional email over HTTPS
+### 6.14 Public API (v1) — audiences, campaigns and transactional email over HTTPS
 
-A REST API at **`/api/v1`** does two jobs: it **sends transactional email**
-(`POST /v1/emails` — see §6.15) and it exposes everything inside Audiences —
+A REST API at **`/api/v1`** does three jobs: it **sends transactional email**
+(`POST /v1/emails` — see §6.15), it exposes everything inside Audiences —
 audiences, contacts, custom fields, segments, topics, and the suppression list —
 so teams can manage their lists from code and **migrate from another provider**
-(Resend, Mailchimp) with a short script. Full reference spec: `docs/api-v1-spec.md`.
+(Resend, Mailchimp) with a short script, and it exposes **campaigns**, so a
+newsletter can be written, previewed and sent from outside the app (see §6.16).
+Full reference spec: `docs/api-v1-spec.md`.
 
 - **Auth:** bearer API keys (`day3_live_…`), created and revoked on the **API keys**
   page (its own item in the sidebar), org admins only. The full key is shown once at
   creation; only its SHA-256 hash is stored. Keys cannot manage keys (no key
   endpoints in the public API). Every key belongs to one organization and every
   request is scoped to it.
+- **Scopes:** the base grant is wide — read and write contacts, audiences and
+  campaign *drafts*. Exactly one action needs an explicit opt-in:
+  **`campaigns:send`**, which covers sending or scheduling a campaign to a real
+  audience. It is a checkbox at key creation ("Allow sending campaigns"), off by
+  default, and cannot be added to an existing key — granting it means minting a
+  new one, so a key's powers stay visible in the list rather than drifting. This
+  exists because of MCP (§6.16): a script does what its author wrote, but an
+  agent holding the same key decides for itself, and "email everyone" is not a
+  decision to hand over by default.
 - **The API keys page is also the documentation.** There is no separate docs site;
   everything needed to use the API sits below the key list, filled in with the
   account's real audience id:
@@ -744,7 +796,54 @@ per-email, come free with the existing SES event pipeline.
 > `src/queue/handlers/send-transactional.ts`, sweeps in `src/queue/cron.ts`,
 > UI `app/(app)/emails/page.tsx`, docs content `src/lib/api-docs.ts`.
 
-### 6.16 Getting around
+### 6.16 MCP — write campaigns in your AI editor
+
+Day3 runs a **Model Context Protocol server at `/api/mcp`**, so an AI coding
+editor (Claude Code, Cursor, VS Code) becomes an external composer for Day3
+emails. You describe the email where you already work; the draft appears in the
+Day3 workspace, ready to open, edit by hand, and send. It is the same product
+from the other side: not a second editor, a second *front door* onto the one in
+the app.
+
+- **Setup is one line.** A single HTTP endpoint, authenticated with the same
+  bearer key as the REST API — no package to install, no OAuth dance, one
+  credential and one revocation path. The API keys page carries the exact
+  install snippet for each editor.
+- **Day3 Markdown is what makes it work.** The composer's body is a structured
+  list of blocks, which is not what a language model writes well. So the API
+  takes a **small Markdown dialect** — ordinary Markdown plus block constructs
+  for buttons, images, multi-column layouts, cards, callouts, social rows and
+  section tints — and maps each construct onto a real builder block. The result
+  is that an AI-written email **opens in the visual composer as editable
+  blocks**, not as one frozen lump of HTML. It converts back too, so a campaign
+  a human edited in Day3 can be read as Markdown, revised, and written again.
+  Anything the dialect can't express round-trips through a raw-HTML escape
+  hatch rather than being silently dropped.
+- **Tools:** read the workspace (audiences, senders, plan and sending status),
+  list/read/create/update campaigns, render a preview, send a test email, and —
+  scope permitting — send or schedule to the audience.
+- **The safety line runs at "who receives it".** Writing, previewing and test
+  sending are unrestricted: a test reaches only addresses the user names, and
+  iterating on an email is the point. Sending to a real audience needs a key
+  minted with `campaigns:send` (§6.14), so an assistant with an ordinary key can
+  draft all day and still cannot mail anyone. Both send tools are marked
+  destructive so editors prompt before running them.
+- **Same gates as the app.** MCP calls the same service layer as the composer's
+  own buttons — plan eligibility, mailing address, verified domain, recipient
+  checks, risk review, sandbox mode. There is no path through MCP that skips a
+  check the UI applies.
+- **Why it matters commercially:** the free tier is set-up-only but sandbox mode
+  makes real sends to your own team possible, so *"draft my launch email and
+  send me a test"* works end to end with no credit card. The paywall lands
+  exactly where it should — at mailing real subscribers.
+
+> Source of truth in code: transport `src/mcp/protocol.ts`, tools
+> `src/mcp/tools.ts`, endpoint `app/api/mcp/route.ts`, the dialect
+> `src/lib/campaign-markdown.ts` (+ its reference text in
+> `src/lib/campaign-markdown-docs.ts`), campaign endpoints
+> `app/api/v1/campaigns/**`, shared send gates `src/services/campaign-send.ts`.
+
+### 6.17 Getting around
 - A **command palette** (⌘K / Ctrl-K) jumps to any page or the common create actions
   from anywhere.
 - A **plan pill** in the sidebar shows the current tier on every screen; on the free

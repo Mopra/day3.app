@@ -174,6 +174,42 @@ describe("serializeSections (image sections)", () => {
     expect(serializeSections([imageSection(2, [null, null])])).toBe("");
   });
 
+  // An all-placeholder section is invisible in the inbox, but a table is not free: if it
+  // survived as a part, serializeSections would put a 16px spacer on each side of it and
+  // the unfilled placeholder would punch a ~32px hole into the delivered email. So a
+  // section whose every cell is empty is dropped entirely — which is what lets templates
+  // (and the starter layout) ship placeholders safely.
+  it("drops an all-placeholder section rather than leaving a spacer around it", () => {
+    const withPlaceholders = serializeSections([
+      section(1, ["<p>Real content</p>"]),
+      // An unlinked button and an un-uploaded image: both placeholders.
+      {
+        id: "btn",
+        kind: "button",
+        columns: 1,
+        content: [""],
+        buttons: [{ label: "Get started", href: "" }],
+      },
+      imageSection(1, [null]),
+      section(1, ["<p>More content</p>"]),
+    ]);
+    const withoutPlaceholders = serializeSections([
+      section(1, ["<p>Real content</p>"]),
+      section(1, ["<p>More content</p>"]),
+    ]);
+    // The placeholders contribute nothing at all — not even the inter-section gap.
+    expect(withPlaceholders).toBe(withoutPlaceholders);
+    expect(withPlaceholders).not.toContain('valign="top"></td>');
+  });
+
+  it("keeps every cell when only some are empty (they carry the column layout)", () => {
+    // Contrast with the case above: a partly-filled section must keep its empty cells,
+    // or the remaining content would stretch across the whole row.
+    const html = serializeSections([section(2, ["<p>Left</p>", ""])]);
+    expect(html).toContain('<td class="d3-col" valign="top" width="50%"><p>Left</p></td>');
+    expect(html).toContain('<td class="d3-col" valign="top" width="50%"></td>');
+  });
+
   it("emits the section's fixed box dimensions when a height is set", () => {
     const html = serializeSections([
       { ...imageSection(1, [{ src: "https://cdn.test/a.png", width: 600, height: 400 }]), height: 250 },

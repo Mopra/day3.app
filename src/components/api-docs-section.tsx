@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Sparkles, Terminal, TriangleAlert } from "lucide-react";
+import { Plug, Sparkles, Terminal, TriangleAlert } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,6 +20,7 @@ import { useApi } from "@/lib/api";
 import {
   apiBaseUrl,
   buildAgentPrompts,
+  buildMcpSetups,
   buildReferenceMarkdown,
   buildSnippetTasks,
   exportKeyLine,
@@ -28,6 +29,7 @@ import {
   type ApiDocsContext,
   type SubscriberLimit,
 } from "@/lib/api-docs";
+import { MARKDOWN_DIALECT_REFERENCE } from "@/lib/campaign-markdown-docs";
 
 // Everything below the key list on /api-keys: a quickstart wired to the user's
 // real audience id, copy-paste prompts for an AI assistant, per-language
@@ -115,6 +117,21 @@ const ENDPOINT_GROUPS: Array<{ title: string; note: string; rows: [string, strin
     ],
   },
   {
+    title: "Campaigns",
+    note: "Write a newsletter from your own code — or from an AI editor over MCP.",
+    rows: [
+      ["GET /campaigns", "List; filter by status"],
+      ["POST /campaigns", "Create a draft from markdown, sections or html"],
+      ["GET /campaigns/{id}", "One campaign, body included as all three formats"],
+      ["PATCH /campaigns/{id}", "Edit a draft — only the fields you send change"],
+      ["DELETE /campaigns/{id}", "Delete a draft"],
+      ["GET /campaigns/{id}/preview", "The rendered email — ?format=html to view it"],
+      ["POST /campaigns/{id}/test", "Send to addresses you name; never the audience"],
+      ["POST /campaigns/{id}/send", "Send to the audience — needs the campaigns:send scope"],
+      ["POST|DELETE /campaigns/{id}/schedule", "Schedule or un-schedule a send"],
+    ],
+  },
+  {
     title: "Suppressions",
     note: "Account-wide, not per audience. Add-only over the API — un-suppress in the app.",
     rows: [
@@ -175,6 +192,7 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
   const tasks = useMemo(() => buildSnippetTasks(ctx), [ctx]);
   const prompts = useMemo(() => buildAgentPrompts(ctx), [ctx]);
   const reference = useMemo(() => buildReferenceMarkdown(ctx), [ctx]);
+  const mcpSetups = useMemo(() => buildMcpSetups(ctx, freshKey), [ctx, freshKey]);
 
   // The origin is only known after mount; rendering snippets against an empty
   // base URL would hand out broken copy targets.
@@ -287,6 +305,64 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
               </span>
             </div>
           </Step>
+        </CardContent>
+      </Card>
+
+      {/* ── MCP ────────────────────────────────────────────────────── */}
+      <Card>
+        <CardContent className="space-y-5">
+          <div className="flex items-center gap-2">
+            <Plug className="size-4 text-muted-foreground" />
+            <h3 className="text-sm font-medium">Write emails in your AI editor</h3>
+            <Badge variant="outline" className="font-normal text-muted-foreground">
+              MCP
+            </Badge>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Connect Day3 to Claude Code, Cursor or VS Code and write campaigns where you already
+            work. Drafts show up in Day3 straight away, and you can keep editing them in the
+            composer — or hand one back to your assistant to revise.
+          </p>
+
+          <Tabs defaultValue={mcpSetups[0].id}>
+            <TabsList>
+              {mcpSetups.map((s) => (
+                <TabsTrigger key={s.id} value={s.id}>
+                  {s.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {mcpSetups.map((s) => (
+              <TabsContent key={s.id} value={s.id} className="space-y-3 pt-4">
+                <p className="text-sm text-muted-foreground">{s.blurb}</p>
+                <Snippet code={s.code} />
+                <CopyButton value={s.code} label="Copy" variant="outline" />
+              </TabsContent>
+            ))}
+          </Tabs>
+
+          <div className="space-y-2 border-t border-border pt-4">
+            <p className="text-sm font-medium">What your assistant can do</p>
+            <p className="text-sm text-muted-foreground">
+              Read your audiences and senders, write and revise campaign drafts, preview the
+              rendered email, and send test emails to addresses you name.{" "}
+              <strong className="font-medium text-foreground">
+                It cannot email your audience
+              </strong>{" "}
+              unless you tick “Allow sending campaigns” when creating the key.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
+            <CopyButton
+              value={MARKDOWN_DIALECT_REFERENCE}
+              label="Copy the markdown reference"
+              variant="outline"
+            />
+            <span className="text-xs text-muted-foreground">
+              The email format, for a repo rules file. Over MCP your assistant already has it.
+            </span>
+          </div>
         </CardContent>
       </Card>
 

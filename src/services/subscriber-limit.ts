@@ -3,10 +3,11 @@ import type { Db } from "../db/client";
 import { subscribers } from "../db/schema";
 import { maxSubscribersForPlan } from "../lib/plans-catalog";
 
-// Spam/abuse protection for the set-up-only free tier: an account that can't send
-// shouldn't be able to hoard an unbounded subscriber list. Paid tiers are
-// unlimited (cap = null). All subscriber-insert paths (manual add, CSV import,
-// public form) gate through these helpers.
+// Spam/abuse protection for the free tier: an account that can only send to its
+// own team (sandbox mode) shouldn't be able to hoard an unbounded subscriber
+// list. Paid tiers are unlimited (cap = null). All subscriber-insert paths
+// (manual add, CSV import, public form, "add your team") gate through these
+// helpers.
 
 // Total subscriber rows for an account (all statuses — the cap is about stored
 // rows, not just sendable ones).

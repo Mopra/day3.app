@@ -5,6 +5,7 @@ import { canonicalizeEmail } from "../../lib/csv";
 import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
 import { campaignRecipientScope } from "../../services/recipient-scope";
+import { orgMemberEmails } from "../../services/sandbox";
 import { getSuppressedEmails } from "../../services/suppression";
 import { laneCountFor, SEND_BATCH_SIZE, type JobQueue } from "../messages";
 
@@ -88,12 +89,49 @@ export async function generateCampaignRecipients(
       ),
     );
 
+  // Sandbox campaigns reach the org's own members and no one else. This is the
+  // one place the restriction has to hold — everything downstream sends whatever
+  // rows land in campaign_recipients — so it is applied to the recipient set
+  // itself rather than trusted to the accept-time gate. The audience is bounded
+  // (free orgs are capped at 500 subscribers), so filtering in memory is cheaper
+  // than joining the roster into the query.
+  const members = campaign.sandbox ? await orgMemberEmails(db, campaign.accountId) : null;
+  const inScope = members
+    ? audienceMembers.filter((s) => members.has(canonicalizeEmail(s.email)))
+    : audienceMembers;
+
+  // A sandbox send with nobody to send to would otherwise flip straight to
+  // "sent" with zero recipients — indistinguishable, to the user, from a send
+  // that worked. The submit gate catches this case up front; reaching it here
+  // means the roster or the audience changed in between, so pause with the same
+  // instruction rather than completing an empty send.
+  if (members && inScope.length === 0) {
+    await db
+      .update(campaigns)
+      .set({
+        status: "paused",
+        pausedReason:
+          "On the Free plan you can only send to your own team, and none of your teammates are contacts in this audience. Add them, then resume.",
+        pausedCode: "user",
+        updatedAt: nowIso(),
+      })
+      .where(eq(campaigns.id, campaign.id));
+    await logJob(db, {
+      jobType: "generate_campaign_recipients",
+      entityType: "campaign",
+      entityId: campaign.id,
+      status: "failed",
+      error: "sandbox campaign has no org-member recipients",
+    });
+    return;
+  }
+
   const suppressed = await getSuppressedEmails(
     db,
     campaign.accountId,
-    audienceMembers.map((s) => s.email),
+    inScope.map((s) => s.email),
   );
-  const eligible = audienceMembers.filter((s) => !suppressed.has(canonicalizeEmail(s.email)));
+  const eligible = inScope.filter((s) => !suppressed.has(canonicalizeEmail(s.email)));
 
   const now = nowIso();
   for (let i = 0; i < eligible.length; i += INSERT_CHUNK) {
@@ -151,6 +189,10 @@ export async function generateCampaignRecipients(
     entityType: "campaign",
     entityId: campaign.id,
     status: "completed",
-    payload: { audience: audienceMembers.length, eligible: eligible.length },
+    payload: {
+      audience: audienceMembers.length,
+      eligible: eligible.length,
+      ...(campaign.sandbox ? { sandbox: true, orgMembersInAudience: inScope.length } : {}),
+    },
   });
 }

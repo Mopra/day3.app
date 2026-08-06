@@ -1,0 +1,1 @@
+ALTER TABLE "campaigns" ADD COLUMN "sandbox" boolean DEFAULT false NOT NULL;

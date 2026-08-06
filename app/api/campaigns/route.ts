@@ -19,6 +19,7 @@ export const GET = route(async () => {
       name: campaigns.name,
       subject: campaigns.subject,
       status: campaigns.status,
+      sandbox: campaigns.sandbox,
       riskLevel: campaigns.riskLevel,
       scheduledAt: campaigns.scheduledAt,
       sentAt: campaigns.sentAt,

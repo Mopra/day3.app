@@ -5,12 +5,14 @@ import { ArrowUpRight, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
+  effectiveMonthlyLimit,
   firstSendingPlan,
   isPlanKey,
   nextPlanUp,
-  planCanSend,
   planLabel,
   planMeta,
+  planSandboxMode,
+  SANDBOX_MONTHLY_ALLOWANCE,
   type PlanKey,
 } from "@/lib/plans-catalog";
 import type { Account } from "@/lib/types";
@@ -33,10 +35,11 @@ export type UsageInfo = {
 
 // Derives everything the usage UI needs from an account row. The 80% / 100%
 // thresholds drive the amber "running low" nudge and the red "limit reached"
-// state respectively.
+// state respectively. A sandbox (free) account meters the same way against the
+// sandbox allowance — it has a real ceiling now, so it gets a real meter.
 export function usageInfo(account: Account): UsageInfo {
   const used = account.monthlyEmailSentCount;
-  const limit = account.monthlyEmailLimit || 0;
+  const limit = effectiveMonthlyLimit(account.plan, account.monthlyEmailLimit) || 0;
   const ratio = limit > 0 ? used / limit : 0;
   const pct = Math.min(100, Math.round(ratio * 100));
   const state: UsageState = ratio >= 1 ? "over" : ratio >= 0.8 ? "warning" : "ok";
@@ -122,21 +125,30 @@ function NudgeCard({
 }
 
 // The contextual upgrade prompt. Two cases:
-//   - Free / non-sending tier → a persistent "subscribe to start sending" prompt
-//     (this is the primary conversion path; the free tier can set up + draft but
-//     never send).
+//   - Free / sandbox tier → a persistent "subscribe to send to your real
+//     audience" prompt (the primary conversion path; free can send for real, but
+//     only to its own team and only on the sandbox allowance).
 //   - Paid tier nearing/over the monthly cap → a "next tier up" prompt.
 // Renders nothing when a paid account is comfortably within its allowance, or is
 // already on the top tier.
 export function UpgradeNudge({ account }: { account: Account }) {
-  if (!planCanSend(account.plan)) {
+  if (planSandboxMode(account.plan)) {
     const target = planMeta(firstSendingPlan());
+    const left = Math.max(0, SANDBOX_MONTHLY_ALLOWANCE - account.monthlyEmailSentCount);
     return (
       <NudgeCard
-        tone="info"
+        tone={left === 0 ? "over" : "info"}
         primary
-        headline="You're on the Free plan"
-        body={`Set up domains, audiences and drafts for free. Subscribe to a paid plan (from $${target.monthlyPriceUsd}/mo) to start sending.`}
+        headline={
+          left === 0
+            ? "You've used up this month's sandbox emails"
+            : "You're on the Free plan — sandbox sending"
+        }
+        body={
+          left === 0
+            ? `Sandbox sends are capped at ${SANDBOX_MONTHLY_ALLOWANCE} emails a month. Subscribe (from $${target.monthlyPriceUsd}/mo) to send to your real audience.`
+            : `Send real campaigns to your own team — ${left} of ${SANDBOX_MONTHLY_ALLOWANCE} sandbox emails left this month. Subscribe (from $${target.monthlyPriceUsd}/mo) to send to everyone else.`
+        }
         cta="Choose a plan"
       />
     );
@@ -163,16 +175,11 @@ export function UpgradeNudge({ account }: { account: Account }) {
 }
 
 // A one-line usage summary ("3,200 / 5,000 emails this period") with the meter.
-// Used on the dashboard and billing current-plan cards. The free (non-sending)
-// tier has no allowance to meter, so it shows a setup-only message instead.
+// Used on the dashboard and billing current-plan cards. A sandbox account meters
+// against the sandbox allowance and says so, rather than showing a dash — the
+// number it's burning through is the whole point of the mode.
 export function UsageSummary({ account }: { account: Account }) {
-  if (!planCanSend(account.plan)) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        The Free plan can&apos;t send email — subscribe to a paid plan to unlock sending.
-      </p>
-    );
-  }
+  const sandbox = planSandboxMode(account.plan);
   const info = usageInfo(account);
   const remaining = Math.max(0, info.limit - info.used);
   return (
@@ -188,10 +195,17 @@ export function UsageSummary({ account }: { account: Account }) {
         <span className="text-xs text-muted-foreground">
           {info.state === "over"
             ? "Limit reached"
-            : `${remaining.toLocaleString()} left on ${planLabel(account.plan)}`}
+            : sandbox
+              ? `${remaining.toLocaleString()} sandbox emails left`
+              : `${remaining.toLocaleString()} left on ${planLabel(account.plan)}`}
         </span>
       </div>
       <UsageBar info={info} />
+      {sandbox && (
+        <p className="text-xs text-muted-foreground">
+          Sandbox sends go to your own team only.
+        </p>
+      )}
     </div>
   );
 }

@@ -47,6 +47,7 @@ import { CampaignStatusBadge } from "@/components/ui/campaign-status-badge";
 import { sanitizeHtml } from "@/services/render";
 import { CampaignComposer, type CampaignFormValues } from "@/components/campaign-composer";
 import { SendTestButton } from "@/components/send-test-button";
+import { SandboxBadge, SandboxBanner } from "@/components/sandbox-notice";
 import type {
   Campaign,
   CampaignStats,
@@ -223,6 +224,9 @@ export default function CampaignDetailPage() {
   const [stats, setStats] = useState<CampaignStats | null>(null);
   const [riskReview, setRiskReview] = useState<RiskReview | null>(null);
   const [personalization, setPersonalization] = useState<PersonalizationGap[]>([]);
+  // How many people a sandbox (free-tier) send would actually reach — teammates
+  // in the audience, not the whole audience. null = not a sandbox account.
+  const [sandboxRecipients, setSandboxRecipients] = useState<number | null>(null);
   const [recipients, setRecipients] = useState<Recipient[] | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -248,12 +252,14 @@ export default function CampaignDetailPage() {
         stats: CampaignStats;
         riskReview: RiskReview | null;
         personalization: PersonalizationGap[];
+        sandboxRecipients: number | null;
       }>(`/api/campaigns/${id}`)
       .then((res) => {
         setCampaign(res.campaign);
         setStats(res.stats);
         setRiskReview(res.riskReview);
         setPersonalization(res.personalization ?? []);
+        setSandboxRecipients(res.sandboxRecipients ?? null);
       })
       .catch((err) => toast.error(err.message));
     api
@@ -439,8 +445,15 @@ export default function CampaignDetailPage() {
     ? fixLinkFor(sendBlocked.sendBlockedReason)
     : null;
 
+  // Sandbox applies to this campaign once it's stamped (submitted onwards); for a
+  // draft it's the account's current mode that decides how the send will run.
+  const sandbox = campaign.sandbox || (submittable && !!onboarding?.sandbox);
+
   const statusBadge = (
-    <CampaignStatusBadge status={campaign.status} scheduledAt={campaign.scheduledAt} />
+    <div className="flex items-center gap-2">
+      <CampaignStatusBadge status={campaign.status} scheduledAt={campaign.scheduledAt} />
+      {campaign.sandbox && <SandboxBadge />}
+    </div>
   );
 
   const actionButtons = (
@@ -580,6 +593,8 @@ export default function CampaignDetailPage() {
           <AlertDescription>{campaign.pausedReason}</AlertDescription>
         </Alert>
       )}
+
+      {sandbox && submittable && <SandboxBanner surface="campaign" />}
 
       {sendBlocked && (
         <Alert>
@@ -879,11 +894,15 @@ export default function CampaignDetailPage() {
             <p className="text-sm text-muted-foreground">
               You&apos;re about to email{" "}
               <strong className="text-foreground">
-                {audienceSummary
-                  ? `${audienceSummary.subscribed.toLocaleString()} ${
-                      audienceSummary.subscribed === 1 ? "subscriber" : "subscribers"
+                {sandboxRecipients !== null
+                  ? `${sandboxRecipients.toLocaleString()} ${
+                      sandboxRecipients === 1 ? "teammate" : "teammates"
                     }`
-                  : "your audience"}
+                  : audienceSummary
+                    ? `${audienceSummary.subscribed.toLocaleString()} ${
+                        audienceSummary.subscribed === 1 ? "subscriber" : "subscribers"
+                      }`
+                    : "your audience"}
               </strong>
               {audienceSummary ? (
                 <>
@@ -893,6 +912,15 @@ export default function CampaignDetailPage() {
               ) : null}
               . After a quick safety review it sends right away — this can&apos;t be undone.
             </p>
+            {/* The count above is the whole confirmation on the free tier: the
+                audience may hold thousands, but a sandbox send reaches only the
+                teammates in it. Say so rather than letting the number puzzle. */}
+            {sandboxRecipients !== null && (
+              <p className="text-sm text-muted-foreground">
+                Sandbox mode — only members of your organization receive this send, even if the
+                audience is larger.
+              </p>
+            )}
             <dl className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
               <div className="flex gap-2">
                 <dt className="w-16 shrink-0 text-muted-foreground">From</dt>
@@ -931,6 +959,8 @@ export default function CampaignDetailPage() {
                     <SendDots />
                     Sending…
                   </>
+                ) : sandboxRecipients !== null ? (
+                  `Send to ${sandboxRecipients.toLocaleString()}`
                 ) : audienceSummary ? (
                   `Send to ${audienceSummary.subscribed.toLocaleString()}`
                 ) : (

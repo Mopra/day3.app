@@ -16,11 +16,12 @@ export const TRANSACTIONAL_SUPPRESSION_REASONS: SuppressionReason[] = [
 // Resend-compatible ceiling: one message, up to 50 visible To addresses.
 export const MAX_TRANSACTIONAL_RECIPIENTS = 50;
 
-// Sandbox carve-out for free (set-up-only) orgs: they can try the API for real
-// — verified domain, real SES send — but only to their own org members'
-// addresses, and only this many per month. Reserved against the same atomic
-// monthly counter as everything else (see reserveQuota's limitOverride).
-export const SANDBOX_MONTHLY_ALLOWANCE = 100;
+// The sandbox carve-out for free (set-up-only) orgs — real sends to the org's
+// own members, on a small shared monthly allowance — is not transactional-only:
+// campaigns run in the same mode on the free tier, against the same allowance.
+// It lives in services/sandbox.ts; re-exported here so the transactional call
+// sites keep reading as one vocabulary.
+export { SANDBOX_MONTHLY_ALLOWANCE } from "./sandbox";
 
 // Bodies (html/text) are nulled by the daily cron once an email is older than
 // this; the metadata row survives for the log/API. Full HTML documents at

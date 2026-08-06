@@ -22,6 +22,7 @@ type ApiKeyRow = {
   id: string;
   name: string;
   keyPrefix: string;
+  scopes: string[];
   lastUsedAt: string | null;
   revokedAt: string | null;
   createdAt: string;
@@ -50,6 +51,10 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
 
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
+  // Off by default, and deliberately so: a key that can mail the whole list is
+  // a different thing from a key that can edit a draft, and the difference
+  // should be a decision someone made rather than one they inherited.
+  const [canSend, setCanSend] = useState(false);
   const [creating, setCreating] = useState(false);
   // The one-time reveal: set right after create, cleared when dismissed.
   const [freshKey, setFreshKey] = useState<string | null>(null);
@@ -79,8 +84,9 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
         <div>
           <h2 className="text-base font-medium">Your keys</h2>
           <p className="text-sm text-muted-foreground">
-            A key carries full access to this organization&apos;s audiences. Give each place that
-            uses one its own key, so you can revoke it without breaking the others.
+            A key can read and write this organization&apos;s contacts and campaign drafts, but
+            cannot email anyone unless you allow it. Give each place that uses one its own key, so
+            you can revoke it without breaking the others.
           </p>
         </div>
         {!adminOnly && (
@@ -112,6 +118,11 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
                   <Badge variant="outline" className="font-mono text-xs">
                     {k.keyPrefix}…
                   </Badge>
+                  {k.scopes?.includes("campaigns:send") && (
+                    <Badge variant="secondary" className="text-xs">
+                      Can send
+                    </Badge>
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Created {formatDate(k.createdAt)} · Last used {formatDate(k.lastUsedAt)}
@@ -133,6 +144,7 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
             setCreateOpen(false);
             setFreshKey(null);
             setName("");
+            setCanSend(false);
           }
         }}
       >
@@ -164,6 +176,7 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
                     setCreateOpen(false);
                     setFreshKey(null);
                     setName("");
+                    setCanSend(false);
                   }}
                 >
                   Done
@@ -188,6 +201,28 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
                   maxLength={60}
                 />
               </div>
+              <div className="space-y-2">
+                <Label>Permissions</Label>
+                <p className="text-sm text-muted-foreground">
+                  Every key can read and write contacts, audiences and campaign drafts.
+                </p>
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2.5 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 size-4 accent-primary"
+                    checked={canSend}
+                    onChange={(e) => setCanSend(e.target.checked)}
+                  />
+                  <span>
+                    <span className="font-medium">Allow sending campaigns</span>
+                    <span className="block text-muted-foreground">
+                      Lets this key email a campaign to a whole audience without anyone confirming
+                      in Day3. Leave off for keys you hand to an AI assistant — it can still write,
+                      preview and send test emails.
+                    </span>
+                  </span>
+                </label>
+              </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setCreateOpen(false)}>
                   Cancel
@@ -199,6 +234,7 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
                     try {
                       const res = await api.post<{ key: string }>("/api/api-keys", {
                         name: name.trim(),
+                        scopes: canSend ? ["campaigns:send"] : [],
                       });
                       setFreshKey(res.key);
                       onKeyCreated?.(res.key);

@@ -9,6 +9,7 @@ import {
 import { SectionsSchema, serializeSections, type CampaignSection } from "../lib/sections";
 import { CampaignThemeSchema, type CampaignThemeInput } from "../lib/theme";
 import { campaignRecipientScope } from "../services/recipient-scope";
+import { orgMemberEmails } from "../services/sandbox";
 import { segments, topics } from "../db/schema";
 
 export const CampaignFieldsSchema = z.object({
@@ -180,6 +181,11 @@ export async function campaignSendGateError(
     segmentId?: string | null;
     topicId?: string | null;
   },
+  // Sandbox sends (free tier) reach only the org's own members, so the
+  // "has recipients" question below has a different answer for them — asked here
+  // rather than discovered at recipient generation, where the only options are a
+  // pause or a bewildering zero-recipient "sent".
+  opts: { sandbox?: boolean } = {},
 ): Promise<string | null> {
   // CAN-SPAM (and equivalents) require a valid physical postal address in every
   // marketing email. The footer renders {{company_address}} from the account, so
@@ -225,7 +231,68 @@ export async function campaignSendGateError(
         : "The audience has no subscribed recipients";
   }
 
+  // Sandbox: the audience has people, but the send will only reach the ones who
+  // are also org members. Zero of those is the single most likely way a free
+  // user's first send fails, so it gets the message that says what to do — the
+  // audience page's "Add your team" action creates exactly these contacts.
+  // Narrowed in SQL against the (small) member roster and stopped at the first
+  // hit, so this stays O(1) rather than pulling the scoped audience into memory.
+  if (opts.sandbox) {
+    const members = [...(await orgMemberEmails(db, accountId))];
+    const reachable = members.length
+      ? await db
+          .select({ id: subscribers.id })
+          .from(subscribers)
+          .where(
+            and(
+              eq(subscribers.audienceId, campaign.audienceId),
+              eq(subscribers.status, "subscribed"),
+              inArray(subscribers.email, members),
+              ...scope.conditions,
+            ),
+          )
+          .limit(1)
+      : [];
+    if (reachable.length === 0) {
+      return "On the Free plan you can only send to your own team. Add your teammates as contacts in this audience, then send.";
+    }
+  }
+
   return null;
+}
+
+// How many of the campaign's scoped recipients a sandbox send would actually
+// reach — the org's own members, and no one else. The send-confirmation dialog
+// needs this: "email 1,240 subscribers" is a lie on the free tier, and finding
+// out only from the recipient list afterwards is exactly the surprise a
+// confirmation step exists to prevent. Returns 0 when nothing is reachable.
+export async function sandboxRecipientCount(
+  db: Db,
+  accountId: string,
+  campaign: {
+    audienceId: string;
+    segmentId?: string | null;
+    topicId?: string | null;
+  },
+): Promise<number> {
+  if (!campaign.audienceId) return 0;
+  const members = [...(await orgMemberEmails(db, accountId))];
+  if (members.length === 0) return 0;
+  const scope = await campaignRecipientScope(db, { accountId, ...campaign });
+  if (scope.error) return 0;
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)`.as("count") })
+    .from(subscribers)
+    .where(
+      and(
+        eq(subscribers.accountId, accountId),
+        eq(subscribers.audienceId, campaign.audienceId),
+        eq(subscribers.status, "subscribed"),
+        inArray(subscribers.email, members),
+        ...scope.conditions,
+      ),
+    );
+  return Number(count);
 }
 
 export type PersonalizationGap = {

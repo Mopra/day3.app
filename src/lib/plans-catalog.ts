@@ -181,6 +181,38 @@ export function planCanSend(plan: string): boolean {
   return isPlanKey(plan) && PLANS[plan].sendingEnabled;
 }
 
+// --- Sandbox mode (the free tier's carve-out) --------------------------------
+// The free tier can't buy bandwidth, but it can *try* the real thing: real
+// delivery through the real pipeline, restricted to the org's own members and
+// capped at this many emails a month. One allowance covers every surface —
+// campaign sends, the transactional API, and test sends — reserved against the
+// same `monthly_email_sent_count` ledger a paid send uses, so there is exactly
+// one meter in the product. The recipient restriction needs a database and lives
+// in services/sandbox.ts; these are the pure facts the UI also needs.
+export const SANDBOX_MONTHLY_ALLOWANCE = 100;
+
+// Whether a plan sends in sandbox mode. Deliberately NOT `!planCanSend(plan)`:
+// an unknown or legacy plan string also can't send, but it must not be *granted*
+// sandbox sending on the strength of being unrecognized. Sandbox is a privilege
+// of a known non-sending tier (today, only free_org); anything unrecognized
+// keeps failing closed, exactly as it did before sandbox existed.
+export function planSandboxMode(plan: string): boolean {
+  return isPlanKey(plan) && !PLANS[plan].sendingEnabled;
+}
+
+// The monthly ceiling that actually applies to a plan: its bandwidth allowance,
+// or the sandbox allowance on a sandbox tier. The single answer to "how many
+// emails can this account send this month?".
+export function effectiveMonthlyLimit(plan: string, monthlyEmailLimit: number): number {
+  return planSandboxMode(plan) ? SANDBOX_MONTHLY_ALLOWANCE : monthlyEmailLimit;
+}
+
+// Shown when a sandbox account has burned its monthly allowance. One sentence,
+// one action — the same copy wherever the allowance runs out (campaign gate,
+// transactional API, test send), so a user who hits it on two surfaces isn't
+// left wondering whether they're two different limits. They aren't.
+export const SANDBOX_EXHAUSTED_MESSAGE = `You've used all ${SANDBOX_MONTHLY_ALLOWANCE} sandbox emails for this month. Upgrade to a paid plan to keep sending.`;
+
 // Whether the AI writing assistant is available on a tier. Every paid tier has
 // it; only the free tier (and an unknown/legacy value) does not.
 export function planHasAI(plan: string): boolean {

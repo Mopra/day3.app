@@ -3,6 +3,7 @@ import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount, type AccountContext } from "@/api/context";
 import { generateApiKey } from "@/api/v1/auth";
+import { API_SCOPES, parseScopes, serializeScopes, type ApiScope } from "@/api/v1/scopes";
 import { apiKeys } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 
@@ -22,6 +23,7 @@ function serializeKey(k: typeof apiKeys.$inferSelect) {
     id: k.id,
     name: k.name,
     keyPrefix: k.keyPrefix,
+    scopes: parseScopes(k.scopes),
     createdBy: k.createdBy,
     lastUsedAt: k.lastUsedAt,
     revokedAt: k.revokedAt,
@@ -42,7 +44,13 @@ export const GET = route(async () => {
   return json({ keys: rows.map(serializeKey) });
 });
 
-const CreateKeySchema = z.object({ name: z.string().trim().min(1).max(60) });
+// Scopes are chosen at creation and never edited: a key's powers stay visible in
+// the key list instead of drifting behind an edit. Granting `campaigns:send`
+// later means minting a new key and revoking the old one — deliberately.
+const CreateKeySchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  scopes: z.array(z.enum(API_SCOPES)).max(API_SCOPES.length).optional(),
+});
 const MAX_ACTIVE_KEYS = 10;
 
 // POST /api/api-keys — mint a key. The full key appears ONCE in this response;
@@ -50,7 +58,7 @@ const MAX_ACTIVE_KEYS = 10;
 export const POST = route(async (req) => {
   const ctx = await requireAccount();
   requireOrgAdmin(ctx);
-  const { name } = await parseJson(req, CreateKeySchema);
+  const { name, scopes } = await parseJson(req, CreateKeySchema);
 
   const existing = await ctx.db
     .select({ revokedAt: apiKeys.revokedAt })
@@ -70,6 +78,7 @@ export const POST = route(async (req) => {
       name,
       keyHash,
       keyPrefix,
+      scopes: serializeScopes((scopes ?? []) as ApiScope[]),
       createdBy: ctx.auth.userId,
       createdAt: now,
       updatedAt: now,

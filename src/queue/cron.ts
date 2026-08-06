@@ -427,9 +427,23 @@ export async function releaseDueCampaigns(
   let released = 0;
   for (const campaign of due) {
     try {
+      // Account eligibility is re-checked here, not just the campaign-level
+      // gates: this is the moment the send starts, and the plan/billing state
+      // may have moved since scheduling. It also resolves the send *mode* —
+      // an org that dropped to the free tier while its campaign sat scheduled
+      // releases as a sandbox send rather than failing at the first batch.
+      const account = await db.query.accounts.findFirst({
+        where: eq(accounts.id, campaign.accountId),
+      });
+      const eligibility = account ? checkSendEligibility(account) : null;
+      const sandbox = eligibility?.allowed ? eligibility.sandbox : false;
       const gateError =
-        campaignContentError(campaign) ??
-        (await campaignSendGateError(db, campaign.accountId, campaign));
+        !account
+          ? "the account no longer exists"
+          : !eligibility?.allowed
+            ? eligibility?.reason ?? "sending is not available on this account"
+            : (campaignContentError(campaign) ??
+              (await campaignSendGateError(db, campaign.accountId, campaign, { sandbox })));
       if (gateError) {
         const reverted = await db
           .update(campaigns)
@@ -446,9 +460,6 @@ export async function releaseDueCampaigns(
         // change above is the source of truth. Only notify if we actually claimed
         // the transition (a concurrent sweep may have handled it).
         if (reverted.length > 0) {
-          const account = await db.query.accounts.findFirst({
-            where: eq(accounts.id, campaign.accountId),
-          });
           if (account) {
             await notifyAccount(db, account, {
               kind: "scheduled_send_failed",
@@ -465,7 +476,7 @@ export async function releaseDueCampaigns(
       // Claim the transition atomically so a concurrent sweep can't double-enqueue.
       const claimed = await db
         .update(campaigns)
-        .set({ status: "pending_review", scheduledAt: null, pausedReason: null, pausedCode: null, updatedAt: nowIso() })
+        .set({ status: "pending_review", sandbox, scheduledAt: null, pausedReason: null, pausedCode: null, updatedAt: nowIso() })
         .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "scheduled")))
         .returning({ id: campaigns.id });
       if (claimed.length === 0) continue;

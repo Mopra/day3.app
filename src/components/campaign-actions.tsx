@@ -83,6 +83,9 @@ export function CampaignActions({
     name: string;
     subscribed: number;
   } | null>(null);
+  // How many people a sandbox (free-tier) send would actually reach — teammates
+  // in the audience, not the whole audience. null = not a sandbox account.
+  const [sandboxRecipients, setSandboxRecipients] = useState<number | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleAt, setScheduleAt] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -93,8 +96,13 @@ export function CampaignActions({
   // in with only an id.
   const load = useCallback(() => {
     api
-      .get<{ campaign: Campaign }>(`/api/campaigns/${campaignId}`)
-      .then((res) => setCampaign(res.campaign))
+      .get<{ campaign: Campaign; sandboxRecipients: number | null }>(
+        `/api/campaigns/${campaignId}`,
+      )
+      .then((res) => {
+        setCampaign(res.campaign);
+        setSandboxRecipients(res.sandboxRecipients ?? null);
+      })
       .catch((err) => toast.error(err instanceof Error ? err.message : "Couldn't load campaign"));
     api
       .get<{ onboarding: OnboardingState }>("/api/account/onboarding")
@@ -257,11 +265,15 @@ export function CampaignActions({
             <p className="text-sm text-muted-foreground">
               You&apos;re about to email{" "}
               <strong className="text-foreground">
-                {audienceSummary
-                  ? `${audienceSummary.subscribed.toLocaleString()} ${
-                      audienceSummary.subscribed === 1 ? "subscriber" : "subscribers"
+                {sandboxRecipients !== null
+                  ? `${sandboxRecipients.toLocaleString()} ${
+                      sandboxRecipients === 1 ? "teammate" : "teammates"
                     }`
-                  : "your audience"}
+                  : audienceSummary
+                    ? `${audienceSummary.subscribed.toLocaleString()} ${
+                        audienceSummary.subscribed === 1 ? "subscriber" : "subscribers"
+                      }`
+                    : "your audience"}
               </strong>
               {audienceSummary ? (
                 <>
@@ -271,6 +283,14 @@ export function CampaignActions({
               ) : null}
               . After a quick safety review it sends right away — this can&apos;t be undone.
             </p>
+            {/* Mirrors the campaign detail page's dialog: on the free tier the
+                audience count isn't who receives it, so name the real reach. */}
+            {sandboxRecipients !== null && (
+              <p className="text-sm text-muted-foreground">
+                Sandbox mode — only members of your organization receive this send, even if the
+                audience is larger.
+              </p>
+            )}
             <dl className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
               <div className="flex gap-2">
                 <dt className="w-16 shrink-0 text-muted-foreground">From</dt>
@@ -317,6 +337,8 @@ export function CampaignActions({
                     <SendDots />
                     Sending…
                   </>
+                ) : sandboxRecipients !== null ? (
+                  `Send to ${sandboxRecipients.toLocaleString()}`
                 ) : audienceSummary ? (
                   `Send to ${audienceSummary.subscribed.toLocaleString()}`
                 ) : (

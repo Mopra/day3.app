@@ -34,6 +34,7 @@ import {
   rowLinkProps,
 } from "@/components/ui/data-list";
 import { ApiPanel } from "@/components/api-panel";
+import { SandboxBadge, SandboxBanner } from "@/components/sandbox-notice";
 import { buildEmailsPanelContent } from "@/lib/api-docs";
 import { useApi } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
@@ -281,19 +282,7 @@ export default function EmailsPage() {
         </div>
       </div>
 
-      {sandbox && (
-        <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
-          <span className="font-medium">Sandbox mode.</span>{" "}
-          <span className="text-muted-foreground">
-            On the free plan the API sends for real, but only to members of your organization —
-            perfect for integrating and testing.{" "}
-            <Link href="/billing" className="underline underline-offset-2 hover:text-foreground">
-              Upgrade
-            </Link>{" "}
-            to send to anyone.
-          </span>
-        </div>
-      )}
+      {sandbox && <SandboxBanner surface="transactional" />}
 
       <ListToolbar>
         <ListSearch
@@ -350,7 +339,7 @@ export default function EmailsPage() {
                         <TableCell>
                           <div className="flex items-center gap-1.5">
                             <Badge variant={meta.variant}>{meta.label}</Badge>
-                            {e.sandbox && <Badge variant="outline">Sandbox</Badge>}
+                            {e.sandbox && <SandboxBadge />}
                           </div>
                         </TableCell>
                         <TableCell className="max-w-56 truncate font-medium">
@@ -394,7 +383,7 @@ export default function EmailsPage() {
                   <Badge variant={statusMeta(email.status).variant}>
                     {statusMeta(email.status).label}
                   </Badge>
-                  {email.sandbox && <Badge variant="outline">Sandbox</Badge>}
+                  {email.sandbox && <SandboxBadge />}
                 </SheetTitle>
                 <SheetDescription>{statusMeta(email.status).explain}</SheetDescription>
               </SheetHeader>

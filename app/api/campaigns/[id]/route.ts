@@ -8,12 +8,14 @@ import {
   campaignPersonalizationGaps,
   campaignStats,
   campaignThemeJson,
+  sandboxRecipientCount,
   validateDraftOwnership,
 } from "@/api/campaigns";
 import { campaignRecipients, campaigns, riskReviews } from "@/db/schema";
 import { safeParseSections } from "@/lib/sections";
 import { safeParseTheme } from "@/lib/theme";
 import { nowIso } from "@/lib/ids";
+import { accountSandboxMode } from "@/services/sandbox";
 
 export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
   const { id } = await params;
@@ -40,6 +42,13 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
     personalization: submittable
       ? await campaignPersonalizationGaps(db, account.id, campaign)
       : [],
+    // How many people this send would actually reach in sandbox mode, so the
+    // confirmation dialog can name the real number. null = not a sandbox account
+    // (or nothing left to confirm), and the audience count applies as usual.
+    sandboxRecipients:
+      submittable && accountSandboxMode(account)
+        ? await sandboxRecipientCount(db, account.id, campaign)
+        : null,
   });
 });
 

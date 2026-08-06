@@ -11,6 +11,8 @@
 //      reference, so an assistant with no knowledge of Day3 writes working code
 //      on the first try instead of inventing endpoints.
 
+import { MARKDOWN_DIALECT_REFERENCE } from "./campaign-markdown-docs";
+
 export const PLACEHOLDER_KEY = "day3_live_xxxxxxxxxxxxxxxxxxxx";
 export const PLACEHOLDER_AUDIENCE = "aud_YOUR_AUDIENCE_ID";
 export const PLACEHOLDER_FROM_DOMAIN = "yourdomain.com";
@@ -42,6 +44,69 @@ function fromDomain(ctx: ApiDocsContext): string {
 
 export function apiBaseUrl(origin: string): string {
   return `${origin.replace(/\/$/, "")}/api/v1`;
+}
+
+// ── MCP ──────────────────────────────────────────────────────────────────────
+
+/** The Model Context Protocol endpoint — one URL, same bearer key as REST. */
+export function mcpUrl(origin: string): string {
+  return `${origin.replace(/\/$/, "")}/api/mcp`;
+}
+
+export type McpSetup = { id: string; label: string; blurb: string; code: string };
+
+/**
+ * Per-editor install snippets. All three do the same thing — point the editor at
+ * one HTTP endpoint and attach the key as a header — they just disagree about
+ * where that gets written down.
+ */
+export function buildMcpSetups(ctx: ApiDocsContext, key: string | null): McpSetup[] {
+  const url = mcpUrl(ctx.origin);
+  const bearer = key ?? PLACEHOLDER_KEY;
+  return [
+    {
+      id: "claude-code",
+      label: "Claude Code",
+      blurb: "Run this in your project, then ask Claude to write you an email.",
+      code: `claude mcp add --transport http day3 ${url} \\
+  --header "Authorization: Bearer ${bearer}"`,
+    },
+    {
+      id: "cursor",
+      label: "Cursor",
+      blurb: "Add to .cursor/mcp.json in your project (or ~/.cursor/mcp.json for every project).",
+      code: JSON.stringify(
+        {
+          mcpServers: {
+            day3: { url, headers: { Authorization: `Bearer ${bearer}` } },
+          },
+        },
+        null,
+        2,
+      ),
+    },
+    {
+      id: "vscode",
+      label: "VS Code",
+      blurb: "Add to .vscode/mcp.json. The input prompt keeps the key out of the file.",
+      code: JSON.stringify(
+        {
+          inputs: [
+            { type: "promptString", id: "day3-key", description: "Day3 API key", password: true },
+          ],
+          servers: {
+            day3: {
+              type: "http",
+              url,
+              headers: { Authorization: "Bearer ${input:day3-key}" },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+    },
+  ];
 }
 
 // ── Quickstart ───────────────────────────────────────────────────────────────
@@ -529,6 +594,36 @@ one:
                               { "field": "company", "op": "is_set" } ] } }
 \`\`\`
 
+Campaigns (newsletters — one email to a whole audience)
+- \`GET    /campaigns\` — list, newest first. Filter with \`?status=\`.
+- \`POST   /campaigns\` — create a draft. Every field is optional; a draft can be
+  incomplete, exactly as in the app. Body:
+  \`\`\`json
+  { "subject": "...", "markdown": "# Hello\\n\\nBody copy.",
+    "name": "internal name", "preview_text": "...",
+    "audience_id": "${PLACEHOLDER_AUDIENCE}", "segment_id": null, "topic_id": null,
+    "sender_id": "snd_...", "from_name": "...", "reply_to": "...", "footer_text": "..." }
+  \`\`\`
+  Give the body as exactly ONE of \`markdown\` (Day3 Markdown — preferred),
+  \`sections\` (the composer's own structure), or \`html\` (sanitized, stored
+  without structure). \`audience_id\` defaults to the only audience when there is
+  one; the From identity defaults to the account's default sender.
+- \`GET    /campaigns/{id}\` — the campaign plus its body as \`markdown\`,
+  \`sections\` and \`html\`. Read before editing so composer changes aren't lost.
+- \`PATCH  /campaigns/{id}\` — same body as create; only fields you send change.
+  \`409\` once the campaign has left \`draft\`/\`scheduled\`.
+- \`DELETE /campaigns/{id}\` — drafts and scheduled campaigns only.
+- \`GET    /campaigns/{id}/preview\` — the rendered email (theme, merge tags and
+  compliance footer applied). Add \`?format=html\` to get the document itself.
+- \`POST   /campaigns/{id}/test\` — body \`{ "to": "you@example.com" }\` (or an array,
+  max 5). Goes only to the addresses you name, never the audience.
+- \`POST   /campaigns/{id}/send\` — **send to the whole audience, now.** Requires a
+  key with the \`campaigns:send\` scope. Irreversible: it starts the automated
+  risk review and delivery follows if that passes. There is no confirmation step.
+- \`POST   /campaigns/{id}/schedule\` — body \`{ "send_at": "2026-09-01T09:00:00Z" }\`,
+  at least a minute ahead. Same scope, same consequences, just later.
+- \`DELETE /campaigns/{id}/schedule\` — back to draft. Needs no scope.
+
 Suppressions (account-wide, not per audience)
 - \`GET  /suppressions\` — list
 - \`GET  /suppressions/{email}\` — 200 with the reason, or 404 if not suppressed
@@ -606,11 +701,13 @@ Suppressions (account-wide, not per audience)
     suppressions.** A contact who unsubscribed from newsletters still gets
     their password reset; an address that hard-bounced or complained is
     rejected with \`400 email_suppressed\` and must not be retried.
-16. **Free (set-up-only) plans send in sandbox mode**: recipients must be
+16. **Free plans send in sandbox mode**: recipients must be
     members of the caller's own organization (anything else is \`403
     sandbox_recipient_not_allowed\`) and there is a small monthly allowance —
     enough to integrate and test, not to run production email. Responses carry
     \`"sandbox": true\`. Upgrading lifts both restrictions with no code change.
+    The allowance is shared with the app's own sandbox sends (campaigns and test
+    sends), so a free org draws all three from one monthly pool.
 17. **Transactional sends have their own rate bucket** (default 120/min per
     account) inside the general limit — a \`429\` still carries \`Retry-After\`.
 
@@ -629,7 +726,7 @@ Every failure uses one envelope. Branch on \`code\`, never on \`message\`:
 |------|-------|
 | 400 | \`invalid_request\`, \`invalid_email\`, \`invalid_filter\`, \`batch_too_large\`, \`email_suppressed\` |
 | 401 | \`invalid_api_key\`, \`revoked_api_key\` |
-| 403 | \`plan_limit_reached\`, \`sending_disabled\`, \`domain_not_verified\`, \`sandbox_recipient_not_allowed\`, \`test_keys_not_supported\`, \`forbidden\` |
+| 403 | \`plan_limit_reached\`, \`sending_disabled\`, \`domain_not_verified\`, \`sandbox_recipient_not_allowed\`, \`insufficient_scope\`, \`test_keys_not_supported\`, \`forbidden\` |
 | 404 | \`not_found\` (also returned for another account's ids — existence is never leaked) |
 | 409 | \`contact_already_exists\`, \`email_suppressed\`, \`idempotency_conflict\` |
 | 422 | \`immutable_field\` (e.g. changing a field's \`key\`) |
@@ -638,10 +735,14 @@ Every failure uses one envelope. Branch on \`code\`, never on \`message\`:
 
 Include \`request_id\` when reporting a problem to Day3 support.
 
+## Campaign bodies: Day3 Markdown
+
+${MARKDOWN_DIALECT_REFERENCE}
+
 ## Not in v1
 
-Campaign (newsletter) sending, domains and senders, webhooks, and OAuth have no
-endpoints yet. Don't invent them — if a task needs one, say so instead.
+Domains and senders, webhooks, and OAuth have no endpoints yet. Don't invent
+them — if a task needs one, say so instead.
 `;
 }
 

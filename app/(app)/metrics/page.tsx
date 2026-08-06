@@ -41,6 +41,7 @@ import {
   rowLinkProps,
   useListController,
 } from "@/components/ui/data-list";
+import { SandboxBadge } from "@/components/sandbox-notice";
 import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { formatDate, statusLabel, statusVariant } from "@/lib/format";
@@ -480,6 +481,7 @@ export default function MetricsPage() {
                             {r.name || "Untitled campaign"}
                           </Link>
                           <Badge variant={statusVariant(r.status)}>{statusLabel(r.status)}</Badge>
+                          {r.sandbox && <SandboxBadge />}
                         </div>
                         <span className="text-xs text-muted-foreground">
                           {r.sentAt ? formatDate(r.sentAt) : "Not sent"}

@@ -102,19 +102,21 @@ export default function DashboardPage() {
 
   // Derived, once, so the value and footer of each card stay in sync.
   const canSend = account ? planCanSend(account.plan) : false;
-  const usage = account && canSend ? usageInfo(account) : null;
+  // Free accounts have a real allowance now (the sandbox one), so they get a real
+  // meter instead of a dash — usageInfo resolves the right ceiling per plan.
+  const usage = account ? usageInfo(account) : null;
   const sendingDegraded = !!health && health.status !== "normal";
-  // A brand-new free account is *set-up mode*, not "broken" — reserve the red/
+  // A free account is in *sandbox* mode, not "broken" — reserve the red/
   // "Disabled" treatment for a real fault (risk pause, or a paid account whose
-  // sending is off). Free reads as an informational blue, so day one never looks
-  // like something failed.
-  const sendingState: "loading" | "paused" | "setup" | "disabled" | "degraded" | "normal" =
+  // sending is off). Sandbox reads as an informational blue, so day one never
+  // looks like something failed.
+  const sendingState: "loading" | "paused" | "sandbox" | "disabled" | "degraded" | "normal" =
     !account
       ? "loading"
       : account.riskStatus === "paused"
         ? "paused"
         : !canSend
-          ? "setup"
+          ? "sandbox"
           : !account.sendingEnabled
             ? "disabled"
             : sendingDegraded
@@ -123,7 +125,7 @@ export default function DashboardPage() {
   const statusDot = {
     loading: "bg-muted-foreground/40",
     paused: "bg-destructive",
-    setup: "bg-blue-500",
+    sandbox: "bg-blue-500",
     disabled: "bg-destructive",
     degraded: "bg-amber-500",
     normal: "bg-emerald-500",
@@ -131,7 +133,7 @@ export default function DashboardPage() {
   const sendingValue = {
     loading: "",
     paused: "Paused",
-    setup: "Set-up mode",
+    sandbox: "Sandbox",
     disabled: "Disabled",
     degraded: "Enabled",
     normal: "Enabled",
@@ -195,7 +197,7 @@ export default function DashboardPage() {
               {/* On free, "active" reads as contradictory next to "Sending: set-up
                   mode" — say what free actually is. Reserve the status word for paid. */}
               {!canSend ? (
-                <Badge variant="secondary">Set-up &amp; drafts</Badge>
+                <Badge variant="secondary">Sandbox</Badge>
               ) : (
                 <Badge
                   variant={
@@ -219,39 +221,37 @@ export default function DashboardPage() {
           label="Emails this month"
           icon={Send}
           footer={
-            !account ? (
+            !account || !usage ? (
               <Skeleton className="h-4 w-20" />
-            ) : usage ? (
-              <span className="text-muted-foreground tabular-nums">
-                {usage.state === "over"
-                  ? "Limit reached"
-                  : `${Math.max(0, usage.limit - usage.used).toLocaleString()} left`}
-              </span>
-            ) : (
+            ) : usage.state === "over" && !canSend ? (
               <Link
                 href="/billing"
                 className="text-primary underline-offset-4 hover:underline"
               >
-                Subscribe to start sending
+                Subscribe to keep sending
               </Link>
+            ) : (
+              <span className="text-muted-foreground tabular-nums">
+                {usage.state === "over"
+                  ? "Limit reached"
+                  : `${Math.max(0, usage.limit - usage.used).toLocaleString()} ${canSend ? "left" : "sandbox emails left"}`}
+              </span>
             )
           }
         >
-          {!account ? (
+          {!account || !usage ? (
             <Skeleton className="h-8 w-32" />
-          ) : usage ? (
+          ) : (
             <div className="space-y-2">
               <div className="text-2xl font-semibold tabular-nums">
-                {account.monthlyEmailSentCount.toLocaleString()}
+                {usage.used.toLocaleString()}
                 <span className="text-base font-normal text-muted-foreground">
                   {" "}
-                  / {account.monthlyEmailLimit.toLocaleString()}
+                  / {usage.limit.toLocaleString()}
                 </span>
               </div>
               <UsageBar info={usage} />
             </div>
-          ) : (
-            <span className="text-2xl font-semibold text-muted-foreground">—</span>
           )}
         </StatCard>
 
@@ -261,10 +261,8 @@ export default function DashboardPage() {
           footer={
             !account ? (
               <Skeleton className="h-4 w-24" />
-            ) : sendingState === "setup" ? (
-              <Link href="/billing" className="text-primary underline-offset-4 hover:underline">
-                Subscribe to unlock sending
-              </Link>
+            ) : sendingState === "sandbox" ? (
+              <span className="text-muted-foreground">Real sends, your team only</span>
             ) : sendingState === "paused" ? (
               <span className="text-muted-foreground">Paused — contact support</span>
             ) : sendingState === "disabled" ? (

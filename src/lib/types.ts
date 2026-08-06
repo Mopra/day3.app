@@ -47,6 +47,7 @@ export type OnboardingState = {
   hasMailingAddress: boolean;
   accountPaused: boolean;
   canSend: boolean;
+  sandbox: boolean;
   sendBlockedReason: string | null;
 };
 
@@ -233,6 +234,7 @@ export type CampaignListItem = {
   name: string;
   subject: string;
   status: string;
+  sandbox: boolean;
   riskLevel: string | null;
   scheduledAt: string | null;
   sentAt: string | null;
@@ -268,6 +270,9 @@ export type Campaign = {
   textBody: string | null;
   footerText: string | null;
   status: string;
+  // True when this campaign went out (or will go out) in the free tier's sandbox
+  // mode: real delivery, restricted to the org's own members.
+  sandbox: boolean;
   riskLevel: string | null;
   riskScore: number | null;
   riskSummary: string | null;
@@ -329,6 +334,9 @@ export type CampaignMetricsRow = {
   campaignId: string;
   name: string;
   status: string;
+  // A sandbox (free-tier) send: real numbers, but from a send that only reached
+  // the org's own team. Counted in the totals, labelled in the table.
+  sandbox: boolean;
   sentAt: string | null;
   counts: CampaignMetricCounts;
 };

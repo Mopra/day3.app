@@ -36,6 +36,7 @@ import { NextSteps } from "@/components/next-steps";
 import { useApi } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { CampaignStatusBadge } from "@/components/ui/campaign-status-badge";
+import { SandboxBadge } from "@/components/sandbox-notice";
 import { campaignStatusLabel } from "@/lib/format";
 import type { CampaignListItem, OnboardingState } from "@/lib/types";
 
@@ -204,7 +205,10 @@ export default function CampaignsPage() {
                       {c.subject}
                     </TableCell>
                     <TableCell>
-                      <CampaignStatusBadge status={c.status} scheduledAt={c.scheduledAt} />
+                      <div className="flex items-center gap-1.5">
+                        <CampaignStatusBadge status={c.status} scheduledAt={c.scheduledAt} />
+                        {c.sandbox && <SandboxBadge />}
+                      </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">{c.audienceName ?? "—"}</TableCell>
                     <TableCell className="text-right tabular-nums">

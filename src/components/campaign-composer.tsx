@@ -26,6 +26,7 @@ import {
   Lock,
   AlertTriangle,
   Palette,
+  LayoutTemplate,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OrbitLoader } from "@/components/ui/orbit-loader";
@@ -67,6 +68,8 @@ import {
   type CampaignSection,
 } from "@/lib/sections";
 import { useAiBudget } from "@/components/ai-budget-context";
+import { CampaignTemplatePicker } from "@/components/campaign-template-picker";
+import type { CampaignTemplate } from "@/lib/campaign-templates";
 import type {
   Account,
   Audience,
@@ -327,6 +330,15 @@ export function CampaignComposer({
   // panel is opt-in via the prominent "Draft with AI" button, never a forced choice.
   const [mode, setMode] = useState<"ai" | "manual">("manual");
 
+  // The template gallery — a peer to the AI panel, not a step in front of the canvas.
+  // Open by default for a brand-new campaign (structure to start from beats a blank
+  // canvas, and it's the one "this already looks good" moment available on the free
+  // tier, which carries no AI allowance); dismissible, and reopenable from the toolbar.
+  const [templatesOpen, setTemplatesOpen] = useState(!initial);
+  // A template picked while the body already had content — held until the user
+  // confirms, since applying one replaces the whole body and theme.
+  const [pendingTemplate, setPendingTemplate] = useState<CampaignTemplate | null>(null);
+
   // AI draft panel state.
   const [brief, setBrief] = useState("");
   const [drafting, setDrafting] = useState(false);
@@ -487,6 +499,41 @@ export function CampaignComposer({
   // autosave) the stored themeJson. shouldDirty so it counts as an edit to persist.
   function applyTheme(next: CampaignTheme) {
     setValue("theme", next, { shouldDirty: true });
+  }
+
+  // Applies a template: its layout AND its look (the styling is half of what makes a
+  // template a choice rather than a variant). The body and theme are replaced — that's
+  // what picking a template means — but the suggested subject, preview text, and name
+  // only fill fields the user hasn't written in, so choosing a layout never overwrites
+  // their words. Everything lands as a normal edit, so autosave persists it like any other.
+  function applyTemplate(template: CampaignTemplate) {
+    applySections(template.build());
+    applyTheme(resolveTheme(template.theme));
+    if (!getValues("subject")?.trim()) {
+      setValue("subject", template.subject, { shouldDirty: true });
+    }
+    if (!getValues("previewText")?.trim()) {
+      setValue("previewText", template.previewText, { shouldDirty: true });
+    }
+    // Same convention as the AI draft path: an unnamed campaign takes its title from
+    // the subject line rather than staying "Untitled campaign".
+    if (!getValues("name")?.trim()) {
+      setValue("name", getValues("subject") || template.name, { shouldDirty: true });
+    }
+    setTemplatesOpen(false);
+    setPendingTemplate(null);
+    toast.success(`${template.name} applied — now make it yours`);
+  }
+
+  // Picking from the gallery. Replacing a body the user has already written is
+  // destructive and there's no undo, so that case confirms first; an untouched draft
+  // (the common one) applies immediately.
+  function pickTemplate(template: CampaignTemplate) {
+    if (getValues("htmlBody")?.trim()) {
+      setPendingTemplate(template);
+      return;
+    }
+    applyTemplate(template);
   }
   const senderId = watch("senderId");
   const audienceId = watch("audienceId");
@@ -885,6 +932,10 @@ export function CampaignComposer({
         </Alert>
       )}
 
+      {templatesOpen && (
+        <CampaignTemplatePicker onPick={pickTemplate} onClose={() => setTemplatesOpen(false)} />
+      )}
+
       {aiEnabled && mode === "ai" && (
         <Card className="border-primary/20 bg-primary/5">
           <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
@@ -944,6 +995,16 @@ export function CampaignComposer({
       {/* Action bar — preview & AI, sitting above the message like an email
           client's toolbar. */}
       <div className="flex items-center justify-end gap-2">
+        <Button
+          type="button"
+          variant={templatesOpen ? "secondary" : "ghost"}
+          size="sm"
+          onClick={() => setTemplatesOpen((o) => !o)}
+          aria-pressed={templatesOpen}
+        >
+          <LayoutTemplate />
+          Templates
+        </Button>
         <Button
           type="button"
           variant={stylesOpen ? "secondary" : "ghost"}
@@ -1578,6 +1639,37 @@ export function CampaignComposer({
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Applying a template replaces the body and the theme, and there's no undo — so
+          when the user has already written something, they get to say yes first. */}
+      <Dialog
+        open={!!pendingTemplate}
+        onOpenChange={(open) => !open && setPendingTemplate(null)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Replace what you&apos;ve written?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              The <span className="font-medium text-foreground">{pendingTemplate?.name}</span>{" "}
+              template replaces this email&apos;s content and styling. Your subject line and
+              preview text are kept.
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="ghost" onClick={() => setPendingTemplate(null)}>
+                Keep my draft
+              </Button>
+              <Button
+                type="button"
+                onClick={() => pendingTemplate && applyTemplate(pendingTemplate)}
+              >
+                Use the template
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

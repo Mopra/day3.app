@@ -24,9 +24,9 @@ export const accounts = pgTable(
     clerkOrgId: text("clerk_org_id").notNull().unique(),
     name: text("name").notNull(),
 
-    // Bandwidth pricing: every org starts on the always-active free tier (set-up
-    // + drafts only, no sending) and buys a monthly send allowance by subscribing
-    // to a paid plan. See lib/plans-catalog.ts.
+    // Bandwidth pricing: every org starts on the always-active free tier (set-up,
+    // drafts, and sandbox sends to its own team) and buys a monthly send
+    // allowance by subscribing to a paid plan. See lib/plans-catalog.ts.
     plan: text("plan").notNull().default("free_org"),
     subscriptionStatus: text("subscription_status").notNull().default("active"),
     monthlyEmailLimit: integer("monthly_email_limit").notNull().default(0),
@@ -498,6 +498,14 @@ export const campaigns = pgTable(
 
     status: text("status").$type<CampaignStatus>().notNull().default("draft"),
 
+    // True when this campaign entered the send pipeline under the free tier's
+    // sandbox carve-out: a real send through the real pipeline, but restricted
+    // to the org's own members and metered against SANDBOX_MONTHLY_ALLOWANCE
+    // instead of the (zero) plan limit. Stamped once, when the campaign leaves
+    // draft — never re-evaluated mid-flight, so an upgrade or downgrade during a
+    // send can't change how the in-flight campaign is metered or targeted.
+    sandbox: boolean("sandbox").notNull().default(false),
+
     riskLevel: text("risk_level"),
     riskScore: integer("risk_score"),
     riskSummary: text("risk_summary"),
@@ -672,8 +680,9 @@ export const transactionalEmails = pgTable(
     textBody: text("text_body"),
     headers: jsonb("headers").$type<Record<string, string>>(),
     tags: jsonb("tags").$type<Record<string, string>>(),
-    // True when sent by a free (set-up-only) org under the sandbox carve-out:
-    // recipients restricted to the org's own members, small monthly allowance.
+    // True when sent by a free org in sandbox mode: recipients restricted to the
+    // org's own members, on the shared monthly sandbox allowance (see
+    // services/sandbox.ts — campaigns carry the same flag).
     sandbox: boolean("sandbox").notNull().default(false),
 
     status: text("status").$type<TransactionalEmailStatus>().notNull().default("queued"),
@@ -798,6 +807,13 @@ export const apiKeys = pgTable(
     name: text("name").notNull(),
     keyHash: text("key_hash").notNull(),
     keyPrefix: text("key_prefix").notNull(),
+    // Elevated scopes this key carries, as a JSON string array. NULL/[] is the
+    // norm: every key can already read and write content (audiences, contacts,
+    // campaign drafts) — that's the base grant, and it is what the column's
+    // absence meant for every key minted before this existed. A scope is only
+    // required for an action that *spends real sending reputation*, which today
+    // is exactly one: `campaigns:send`. See api/v1/scopes.ts.
+    scopes: text("scopes"),
     createdBy: text("created_by").notNull(),
     // Updated at most once per minute on use (write-amplification guard).
     lastUsedAt: tstz("last_used_at"),

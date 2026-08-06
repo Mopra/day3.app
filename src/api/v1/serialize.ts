@@ -23,7 +23,7 @@ import { safeParseSegmentFilter, type SegmentFilter } from "../../lib/segment-fi
 //
 // Cursors deliberately keep the raw column value (see pagination.ts): they are
 // compared against the column, not handed to a client as a timestamp.
-function toIso(value: string | null): string | null {
+export function toIso(value: string | null): string | null {
   if (!value) return value;
   let parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {

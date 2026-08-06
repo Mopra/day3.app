@@ -435,6 +435,16 @@ function wrapSectionLayout(body: string, bg: string | undefined): string {
 // The shared 1/2/3-column table used by text, image, and button sections. Each
 // cell's inner content is built per kind; everything else (equal widths, valign) is
 // identical, so multi-column layouts stay byte-identical to what the old code emit.
+//
+// Returns "" when EVERY cell came out empty — an all-placeholder section (a button with
+// no link yet, an image section with no upload yet, an untouched text block). Such a
+// section is invisible in the inbox but a table is not free: serializeSections would
+// still count it as a part and put a 16px spacer on each side of it, so an unfilled
+// placeholder would punch a ~32px hole into the delivered email. Dropping it here lets
+// the emptiness filter in serializeSections remove it entirely, which is what makes
+// placeholders safe: they occupy space in the *builder* and contribute nothing to the
+// *email* until the user fills them in. A section with only SOME empty cells keeps them
+// all — those cells carry the column layout.
 function serializeColumns(section: CampaignSection): string {
   const widths = COLUMN_WIDTHS[section.columns];
   const pixelWidth = COLUMN_PIXEL_WIDTHS[section.columns];
@@ -443,6 +453,7 @@ function serializeColumns(section: CampaignSection): string {
   // column already fills the row, so it gets no hook — keeping single-column output
   // byte-identical to before responsive stacking existed.
   const colClass = section.columns > 1 ? ' class="d3-col"' : "";
+  let anyContent = false;
   const cells = Array.from({ length: section.columns }, (_, i) => {
     const width = widths[i];
     const widthAttr = width ? ` width="${width}"` : "";
@@ -462,8 +473,10 @@ function serializeColumns(section: CampaignSection): string {
         alignAttr = ` align="${section.align}"`;
       }
     }
+    if (inner !== "") anyContent = true;
     return `<td${colClass} valign="top"${widthAttr}${alignAttr}>${inner}</td>`;
   }).join("");
+  if (!anyContent) return "";
   return `<table role="presentation" width="100%"><tbody><tr>${cells}</tr></tbody></table>`;
 }
 

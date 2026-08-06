@@ -210,6 +210,7 @@ export default function AudienceDetailPage() {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [addOpen, setAddOpen] = useState(false);
+  const [addingTeam, setAddingTeam] = useState(false);
 
   // Audience rename + delete.
   const [renameOpen, setRenameOpen] = useState(false);
@@ -387,6 +388,30 @@ export default function AudienceDetailPage() {
       toastApiError(err, "Failed");
     }
   });
+
+  // One-click "put my own team on this list". The addresses come from the org
+  // roster server-side — this sends no payload. It's the fix for the free tier's
+  // sandbox sends (which reach teammates only), and a convenience everywhere else.
+  async function onAddTeam() {
+    setAddingTeam(true);
+    try {
+      const res = await api.post<{ added: number; teamSize: number }>(
+        `/api/audiences/${id}/subscribers/team`,
+        {},
+      );
+      toast.success(
+        res.added === 0
+          ? "Your team is already in this audience"
+          : `Added ${res.added.toLocaleString()} ${res.added === 1 ? "teammate" : "teammates"}`,
+      );
+      loadSubscribers();
+      loadAudience();
+    } catch (err) {
+      toastApiError(err, "Couldn't add your team");
+    } finally {
+      setAddingTeam(false);
+    }
+  }
 
   async function onUpload(file: File) {
     const form = new FormData();
@@ -589,6 +614,10 @@ export default function AudienceDetailPage() {
                 Export CSV
               </Button>
             )}
+            <Button variant="outline" disabled={addingTeam} onClick={onAddTeam}>
+              {addingTeam && <OrbitLoader size={16} />}
+              Add your team
+            </Button>
             <Button variant="outline" onClick={() => fileRef.current?.click()}>
               Import CSV
             </Button>

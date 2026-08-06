@@ -18,8 +18,9 @@ export default function TermsPage() {
       <h2>1. The Service</h2>
       <p>
         Day3 lets small teams import contacts, compose, and send product-update emails. The
-        free tier is set-up-only (you can configure everything and draft, but not send, and
-        are limited to 500 subscribers); paid tiers unlock sending under a bandwidth-based
+        free tier lets you configure everything, draft, and send in sandbox mode (up to 100
+        emails a month, to members of your own organization only), and is limited to 500
+        subscribers; paid tiers unlock sending to your full audience under a bandwidth-based
         pricing model.
       </p>
 

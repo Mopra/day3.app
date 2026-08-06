@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import type { Db } from "../src/db/client";
-import type { Account } from "../src/db/schema";
+import { accounts, type Account } from "../src/db/schema";
 import type { SendEmailInput, SendEmailResult } from "../src/email/provider";
+import { SANDBOX_MONTHLY_ALLOWANCE } from "../src/lib/plans-catalog";
 import { seedAccount, seedAudience, seedCampaign, seedDomain, testDb } from "./helpers";
 
 // Drive the test-email route handler directly against a hermetic pglite DB.
@@ -166,6 +168,26 @@ describe("POST /api/campaigns/[id]/test-email", () => {
     expect(sends).toEqual([]);
   });
 
+  it("does not meter a paid account's test sends", async () => {
+    await call(campaignId, { toEmails: ["me@example.com", "colleague@example.com"] });
+    const acct = await currentDb.query.accounts.findFirst({
+      where: (t, { eq }) => eq(t.id, currentAccount.id),
+    });
+    expect(acct?.monthlyEmailSentCount).toBe(0);
+  });
+
+  it("refuses to send a test from a risk-paused account", async () => {
+    await currentDb
+      .update(accounts)
+      .set({ riskStatus: "paused", pausedReason: "High bounce rate" })
+      .where(eq(accounts.id, currentAccount.id));
+    currentAccount = { ...currentAccount, riskStatus: "paused", pausedReason: "High bounce rate" };
+
+    const res = await call(campaignId, { toEmails: ["me@example.com"] });
+    expect(res.status).toBe(403);
+    expect(sends).toEqual([]);
+  });
+
   it("404s for a campaign owned by another account", async () => {
     const other = await seedAccount(currentDb);
     const otherAudience = await seedAudience(currentDb, other.id);
@@ -177,6 +199,66 @@ describe("POST /api/campaigns/[id]/test-email", () => {
     });
     const res = await call(foreign.id, { toEmails: ["me@example.com"] });
     expect(res.status).toBe(404);
+    expect(sends).toEqual([]);
+  });
+});
+
+// A test send is a real SES send. On the free tier it therefore costs one unit
+// of the sandbox allowance — the same ledger a sandbox campaign draws on — which
+// is what stops "send test" from being an unmetered sending channel. Recipients
+// stay unrestricted here on purpose: previewing into a rendering-check inbox is
+// the point of the feature.
+describe("POST /api/campaigns/[id]/test-email — free tier metering", () => {
+  let campaignId: string;
+
+  beforeEach(async () => {
+    currentDb = await testDb();
+    currentAccount = await seedAccount(currentDb, {
+      plan: "free_org",
+      monthlyEmailLimit: 0,
+      sendingEnabled: false,
+    });
+    const audience = await seedAudience(currentDb, currentAccount.id);
+    const domain = await seedDomain(currentDb, currentAccount.id);
+    const campaign = await seedCampaign(currentDb, {
+      accountId: currentAccount.id,
+      audienceId: audience.id,
+      sendingDomainId: domain.id,
+    });
+    campaignId = campaign.id;
+    sends = [];
+    failFor = new Set();
+    rateLimitCharges = 0;
+  });
+
+  it("charges the sandbox allowance once per recipient", async () => {
+    const res = await call(campaignId, {
+      toEmails: ["me@example.com", "colleague@example.com"],
+    });
+    expect(res.status).toBe(200);
+    const acct = await currentDb.query.accounts.findFirst({
+      where: (t, { eq }) => eq(t.id, currentAccount.id),
+    });
+    expect(acct?.monthlyEmailSentCount).toBe(2);
+  });
+
+  it("gives back the allowance for recipients the provider rejected", async () => {
+    failFor = new Set(["bad@example.com"]);
+    await call(campaignId, { toEmails: ["good@example.com", "bad@example.com"] });
+    const acct = await currentDb.query.accounts.findFirst({
+      where: (t, { eq }) => eq(t.id, currentAccount.id),
+    });
+    expect(acct?.monthlyEmailSentCount).toBe(1);
+  });
+
+  it("403s once the sandbox allowance is used up, without sending", async () => {
+    await currentDb
+      .update(accounts)
+      .set({ monthlyEmailSentCount: SANDBOX_MONTHLY_ALLOWANCE })
+      .where(eq(accounts.id, currentAccount.id));
+
+    const res = await call(campaignId, { toEmails: ["me@example.com"] });
+    expect(res.status).toBe(403);
     expect(sends).toEqual([]);
   });
 });

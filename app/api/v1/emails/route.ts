@@ -6,7 +6,6 @@ import { withIdempotency } from "@/api/v1/idempotency";
 import { cursorCondition, pageResponse, parsePageQuery } from "@/api/v1/pagination";
 import { serializeEmail } from "@/api/v1/serialize";
 import {
-  accountUsers,
   idempotencyKeys,
   sendingDomains,
   transactionalEmails,
@@ -15,10 +14,14 @@ import {
 import { canonicalizeEmail } from "@/lib/csv";
 import { newId, nowIso } from "@/lib/ids";
 import { logger } from "@/lib/logger";
-import { planCanSend } from "@/lib/plans-catalog";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getQueue } from "@/queue/producer";
 import { releaseReservation, reserveQuota } from "@/services/quota";
+import {
+  accountSandboxMode,
+  orgMemberEmails,
+  SANDBOX_EXHAUSTED_MESSAGE,
+} from "@/services/sandbox";
 import { getSuppressedEmails } from "@/services/suppression";
 import {
   MAX_CUSTOM_HEADERS,
@@ -182,7 +185,7 @@ export const POST = apiRoute(async (req, ctx) => {
   if (account.riskStatus === "paused") {
     throw new ApiError(403, "sending_disabled", account.pausedReason ?? "Sending is paused for this account.");
   }
-  const sandbox = !planCanSend(account.plan);
+  const sandbox = accountSandboxMode(account);
   if (!sandbox && (!account.sendingEnabled || account.subscriptionStatus !== "active")) {
     throw new ApiError(
       403,
@@ -212,11 +215,7 @@ export const POST = apiRoute(async (req, ctx) => {
   // Sandbox recipients must be the org's own members (the local roster synced
   // from Clerk) — real sends, but only to yourself and your teammates.
   if (sandbox) {
-    const members = await db
-      .select({ email: accountUsers.email })
-      .from(accountUsers)
-      .where(eq(accountUsers.accountId, account.id));
-    const memberEmails = new Set(members.map((m) => canonicalizeEmail(m.email)));
+    const memberEmails = await orgMemberEmails(db, account.id);
     const outside = to.filter((email) => !memberEmails.has(email));
     if (outside.length > 0) {
       throw new ApiError(
@@ -268,9 +267,7 @@ export const POST = apiRoute(async (req, ctx) => {
     throw new ApiError(
       403,
       "plan_limit_reached",
-      sandbox
-        ? `Sandbox allowance (${SANDBOX_MONTHLY_ALLOWANCE} emails/month) is used up. Upgrade to a paid plan to keep sending.`
-        : "Monthly email limit reached. Upgrade your plan to send more.",
+      sandbox ? SANDBOX_EXHAUSTED_MESSAGE : "Monthly email limit reached. Upgrade your plan to send more.",
     );
   }
 

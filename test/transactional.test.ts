@@ -422,7 +422,7 @@ describe("POST /v1/emails — sandbox (free tier)", () => {
     expect(res.status).toBe(403);
     const error = (await body(res)).error;
     expect(error.code).toBe("plan_limit_reached");
-    expect(error.message).toContain("Sandbox");
+    expect(error.message).toMatch(/sandbox/i);
   });
 });
 

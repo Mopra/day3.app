@@ -269,7 +269,11 @@ function decodeHtmlEntities(value: string): string {
 // Protocol-relative ("//host") and relative URLs are allowed. The value is
 // HTML-entity-decoded first so entity-encoded schemes (e.g. &#106;avascript:)
 // are evaluated as the client will see them, not as a harmless relative URL.
-function isSafeUrl(value: string): boolean {
+// Exported so the markdown codec (lib/campaign-markdown.ts) applies the EXACT
+// same scheme check when it turns `[label](url)` into an <a href>. That output is
+// safe by construction and never re-sanitized (a second pass would double-escape
+// `&` in URLs), so it has to make the same call the sanitizer would.
+export function isSafeUrl(value: string): boolean {
   const decoded = decodeHtmlEntities(value).trim();
   // eslint-disable-next-line no-control-regex
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(decoded.replace(/[\x00-\x20]/g, ""));

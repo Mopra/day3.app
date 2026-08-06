@@ -17,6 +17,7 @@ import {
   MAX_AI_MONTHLY_CREDITS,
   PLANS,
   PLAN_ORDER,
+  SANDBOX_MONTHLY_ALLOWANCE,
   TOP_PLAN,
   aiAllowanceForPlan,
   checkSendEligibility,
@@ -819,7 +820,7 @@ describe("send eligibility", () => {
     ).toBe(false);
   });
 
-  it("tells a free-tier account to upgrade (vs a risk pause)", () => {
+  it("puts a free-tier account in sandbox mode rather than blocking it", () => {
     const free = checkSendEligibility({
       ...account,
       plan: "free_org",
@@ -827,9 +828,24 @@ describe("send eligibility", () => {
       riskStatus: "normal",
       monthlyEmailLimit: 0,
     } as Account);
-    expect(free.allowed).toBe(false);
-    if (!free.allowed) expect(free.reason).toMatch(/free plan/i);
+    expect(free.allowed).toBe(true);
+    if (free.allowed) expect(free.sandbox).toBe(true);
+  });
 
+  it("blocks a free-tier account that has burned its sandbox allowance", () => {
+    const free = checkSendEligibility({
+      ...account,
+      plan: "free_org",
+      sendingEnabled: false,
+      riskStatus: "normal",
+      monthlyEmailLimit: 0,
+      monthlyEmailSentCount: SANDBOX_MONTHLY_ALLOWANCE,
+    } as Account);
+    expect(free.allowed).toBe(false);
+    if (!free.allowed) expect(free.reason).toMatch(/sandbox/i);
+  });
+
+  it("a risk pause outranks the sandbox carve-out", () => {
     const paused = checkSendEligibility({
       ...account,
       plan: "10k_plan",
@@ -839,6 +855,29 @@ describe("send eligibility", () => {
     } as Account);
     expect(paused.allowed).toBe(false);
     if (!paused.allowed) expect(paused.reason).toMatch(/paused/i);
+
+    // Same for a free account: sandbox must not be a way around a risk pause.
+    const pausedFree = checkSendEligibility({
+      ...account,
+      plan: "free_org",
+      sendingEnabled: false,
+      riskStatus: "paused",
+      pausedReason: "High bounce rate",
+      monthlyEmailLimit: 0,
+    } as Account);
+    expect(pausedFree.allowed).toBe(false);
+    if (!pausedFree.allowed) expect(pausedFree.reason).toMatch(/paused/i);
+  });
+
+  it("an unrecognized plan fails closed instead of getting a sandbox", () => {
+    const unknown = checkSendEligibility({
+      ...account,
+      plan: "legacy_mystery_plan",
+      sendingEnabled: false,
+      riskStatus: "normal",
+      monthlyEmailLimit: 0,
+    } as Account);
+    expect(unknown.allowed).toBe(false);
   });
 
   it("over-limit reason points at upgrading", () => {

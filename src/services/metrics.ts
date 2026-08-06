@@ -25,6 +25,11 @@ export async function accountCampaignMetrics(
       campaignId: campaignRecipients.campaignId,
       name: campaigns.name,
       status: campaigns.status,
+      // Sandbox sends are real sends and belong in the numbers — they bounce,
+      // open and click like anything else, and hiding them would make a free
+      // account's metrics page look broken. Surfaced so the row can say what it
+      // is rather than passing a team-of-five send off as audience reach.
+      sandbox: campaigns.sandbox,
       sentAt: campaigns.sentAt,
       recipients: sql<number>`count(*)`,
       sent: sql<number>`count(*) filter (where ${campaignRecipients.sentAt} is not null)`,
@@ -40,7 +45,13 @@ export async function accountCampaignMetrics(
     .from(campaignRecipients)
     .innerJoin(campaigns, eq(campaigns.id, campaignRecipients.campaignId))
     .where(eq(campaignRecipients.accountId, accountId))
-    .groupBy(campaignRecipients.campaignId, campaigns.name, campaigns.status, campaigns.sentAt)
+    .groupBy(
+      campaignRecipients.campaignId,
+      campaigns.name,
+      campaigns.status,
+      campaigns.sandbox,
+      campaigns.sentAt,
+    )
     // Most recently sent first; campaigns mid-send (no sent_at yet) sort last.
     .orderBy(sql`${campaigns.sentAt} desc nulls last`);
 
@@ -48,6 +59,7 @@ export async function accountCampaignMetrics(
     campaignId: r.campaignId,
     name: r.name,
     status: r.status,
+    sandbox: r.sandbox,
     sentAt: r.sentAt,
     counts: {
       recipients: Number(r.recipients),

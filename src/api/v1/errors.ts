@@ -13,6 +13,7 @@ export type ApiErrorCode =
   | "revoked_api_key"
   | "plan_limit_reached"
   | "test_keys_not_supported"
+  | "insufficient_scope"
   | "forbidden"
   | "not_found"
   | "contact_already_exists"

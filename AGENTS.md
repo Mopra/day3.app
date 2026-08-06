@@ -37,14 +37,31 @@ serves the UI and the API routes; a separate long-running Node worker
 4. **Email goes through the `EmailProvider` interface** (`src/email/`).
    `EMAIL_PROVIDER=mock` logs instead of sending; `ses` uses AWS SES (sesv2).
 5. **Pricing is bandwidth-based — you meter emails, never contacts.** The free
-   tier (`free_org`) is set-up-only: it can configure everything and draft, but
-   **cannot send** and is capped at 500 subscribers. Paid tiers (`1k_plan` →
-   `1m_plan`) unlock sending and **all include the AI assistant** — 1k/5k on a
-   smaller credit allowance, 10k+ on the full one. Gating lives in
-   `src/lib/plans-catalog.ts` (`planCanSend` / `planHasAI` / `aiAllowanceForPlan` /
-   `maxSubscribersForPlan`) and `src/services/subscriber-limit.ts`. See `PRODUCT.md §4`.
+   tier (`free_org`) can configure everything, draft, and **send in sandbox mode**
+   — 100 emails/month to the org's own members only — and is capped at 500
+   subscribers. Paid tiers (`1k_plan` → `1m_plan`) unlock sending to anyone and
+   **all include the AI assistant** — 1k/5k on a smaller credit allowance, 10k+ on
+   the full one. Gating lives in `src/lib/plans-catalog.ts` (`planCanSend` /
+   `planSandboxMode` / `planHasAI` / `aiAllowanceForPlan` / `maxSubscribersForPlan`),
+   `src/services/sandbox.ts` (the roster restriction) and
+   `src/services/subscriber-limit.ts`. See `PRODUCT.md §4`.
    When adding a feature, gate it on the plan's *send* allowance where it sends
    mail, and leave it unmetered where it doesn't — don't invent a second meter.
+   **Every real send belongs on the one ledger**: sandbox surfaces reserve against
+   `monthly_email_sent_count` via `reserveQuota`'s `limitOverride`, never a
+   separate counter. Note `planSandboxMode` is deliberately NOT `!planCanSend` —
+   an unrecognized plan string must fail closed rather than earn a sandbox.
+
+5. **There are two front doors to every campaign action, and they must not
+   diverge.** The app's session routes and the public v1 API (which the MCP
+   server drives) both go through `src/services/campaign-send.ts` for
+   test/submit/schedule and `src/api/v1/campaigns.ts` for create/update. Add a
+   gate in the service, never in a route handler — "which checks ran before this
+   email went out" may not have two answers.
+6. **Sending over the API needs the `campaigns:send` scope**
+   (`src/api/v1/scopes.ts`). Everything else a key can do is the base grant.
+   When you add a public endpoint, ask whether it puts mail in a stranger's
+   inbox: if so it is scoped, if not it isn't. Test sends deliberately are not.
 
 ## Gotchas
 
@@ -92,6 +109,23 @@ serves the UI and the API routes; a separate long-running Node worker
   `withDeadline` (`src/lib/deadline.ts`) and call `resetDb()` when one trips —
   abandoning a query does not free its connection. This caused weeks of phantom
   `/api/health` "outages"; see `docs/health-monitoring.md`.
+- **`pending_review` is not a human review.** Submitting a campaign runs the
+  automated AI risk review and, if it passes, delivery starts — there is no
+  approval step in between. Anything described as "submit for review" in a UI or
+  an API is a send; treat it as irreversible.
+- The MCP server (`app/api/mcp`, `src/mcp/`) speaks the protocol directly rather
+  than via the reference SDK — it is tools-only, so every exchange is one
+  JSON-RPC request in, one JSON response out, and the SDK's transport wants
+  Node req/res plus a session store. It is stateless: no session id, every
+  request re-authenticates with the same bearer key the REST API uses.
+- Campaign bodies written over the API arrive as **Day3 Markdown**
+  (`src/lib/campaign-markdown.ts`) and are converted to real builder sections,
+  so an externally-authored email stays editable in the composer.
+  `markdownToSections` output is email-safe *by construction* (text is
+  `escapeHtml`'d, only allowlisted tags are emitted) and must NOT be passed
+  through `sanitizeHtml` — that pass double-escapes `&` in URLs. The one
+  exception is the `:::html` passthrough, which is author-supplied and is
+  sanitized.
 - Liveness: `GET /api/health` (200 healthy / 503 if DB down) reports DB, cron-sweep
   freshness, and the worker's Redis heartbeat (`day3:worker:heartbeat`, written every
   30s by `worker/index.ts`). Wire monitors/supervisor per `docs/health-monitoring.md`.

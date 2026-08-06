@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import * as schema from "../src/db/schema";
 import type { Db } from "../src/db/client";
 import {
+  accountUsers,
   accounts,
   audiences,
   campaigns,
@@ -149,6 +150,26 @@ export async function seedSender(
   return (await db.query.senders.findFirst({ where: (t, { eq }) => eq(t.id, id) }))!;
 }
 
+// A member of the org's local roster (synced from Clerk). Sandbox sends may only
+// reach these addresses, so any sandbox test needs at least one.
+export async function seedMember(
+  db: Db,
+  accountId: string,
+  email: string,
+  role: "admin" | "member" = "admin",
+): Promise<void> {
+  const now = nowIso();
+  await db.insert(accountUsers).values({
+    id: newId("usr"),
+    accountId,
+    clerkUserId: `user_${newId("u")}`,
+    email: email.toLowerCase(),
+    role,
+    createdAt: now,
+    updatedAt: now,
+  });
+}
+
 export async function seedAudience(db: Db, accountId: string): Promise<Audience> {
   const now = nowIso();
   const id = newId("aud");
@@ -195,6 +216,7 @@ export async function seedCampaign(
     status?: Campaign["status"];
     subject?: string;
     htmlBody?: string;
+    sandbox?: boolean;
   },
 ): Promise<Campaign> {
   const now = nowIso();
@@ -210,6 +232,7 @@ export async function seedCampaign(
     fromEmail: "news@updates.test.co",
     htmlBody: input.htmlBody ?? "<p>Hi {{first_name}}, we shipped a new dashboard.</p>",
     status: input.status ?? "draft",
+    sandbox: input.sandbox ?? false,
     createdAt: now,
     updatedAt: now,
   });
