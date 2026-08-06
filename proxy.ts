@@ -31,6 +31,10 @@ const isPublicRoute = createRouteMatcher([
   "/api/public(.*)",
   // Public API (bearer keys, not Clerk sessions) — requireApiKey() is the gate.
   "/api/v1(.*)",
+  // The MCP endpoint authenticates with the same bearer keys, from an AI editor
+  // that has no Clerk session at all. Left off this list, auth.protect() answers
+  // every call with a 404 and the server looks like it was never deployed.
+  "/api/mcp",
   "/api/webhooks(.*)",
   // Open-tracking pixel — loaded by the recipient's mail client with no session.
   "/api/track(.*)",
