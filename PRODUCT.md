@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-08-06**.
+> Last verified against the codebase: **2026-08-15**.
 
 ---
 
@@ -340,6 +340,14 @@ guards make that observable:
   recipients in the chosen audience are missing a field the email uses (e.g. "312 of
   1,200 recipients have no first name — they'll see 'there'"), so a generic greeting
   to a large slice is a deliberate choice, not a surprise.
+- **The page-top notices minimize, they never dismiss.** The campaign page's warnings
+  — "this campaign can't be sent yet", the personalization check, a paused send, a
+  failed safety review — each collapse to their title line with one click and expand
+  again the same way, so a standing warning can be moved out of the email's way
+  without being thrown away. The choice is remembered for next time. The one blocker
+  that can be cleared in place — a missing business mailing address — carries an **Add
+  business address** button that saves it without leaving the draft (the same dialog
+  the composer's footer preview offers).
 - **Footer:** shown in the message and editable — you control the wording (the
   "you're receiving this because…" line, which can use merge tags). The physical
   mailing address and the per-recipient one-click unsubscribe link are appended
@@ -584,7 +592,9 @@ the same "Saving… / Saved" indicator as the campaign composer.
   header flow is always the full unsubscribe — mail clients present no choice UI).
 - **Mailing address required to send:** a campaign cannot be submitted or scheduled
   until the account has a company mailing address (it's rendered into every footer
-  for CAN-SPAM); the send gate blocks it with an actionable message otherwise.
+  for CAN-SPAM); the send gate blocks it with a message that fixes it on the spot —
+  an **Add business address** button on the campaign page and in the composer's
+  footer preview, no trip to Settings.
 - **Automatic suppression** of bounced/complained/unsubscribed addresses (per-account
   and global scopes).
 - **A Suppressions page** (its own item in the sidebar) is the account's blocklist made
