@@ -786,10 +786,15 @@ export function buildAgentPrompts(ctx: ApiDocsContext): AgentPrompt[] {
     ctx.audienceId === PLACEHOLDER_AUDIENCE
       ? `- My audience id: I don't have one yet — create one with \`POST /audiences\` first, or ask me for it.`
       : `- My audience id: \`${aud}\`${ctx.audienceName ? ` ("${ctx.audienceName}")` : ""}`;
+  // Same fact the panel context pack carries: without it an assistant writing a
+  // `POST /emails` call has to invent a from-address, and every send 403s.
+  const domainLine = ctx.sendingDomain
+    ? `\n- My verified sending domain: \`${ctx.sendingDomain}\` — any local-part works as \`from\` on \`POST /emails\` (e.g. \`notifications@${ctx.sendingDomain}\`).`
+    : `\n- I have no verified sending domain yet — \`POST /emails\` will be rejected until one is verified under Domains in the app.`;
 
   const shared = `
 Ground rules:
-${audLine}${subscriberLimitLine(ctx.subscriberLimit)}
+${audLine}${domainLine}${subscriberLimitLine(ctx.subscriberLimit)}
 ${KEY_AND_CONDUCT_RULES}
 
 ---
@@ -797,6 +802,29 @@ ${KEY_AND_CONDUCT_RULES}
 `;
 
   return [
+    {
+      id: "transactional",
+      label: "Send transactional email",
+      blurb:
+        "For wiring password resets, receipts, magic links and alerts into your own app — the `POST /emails` path, no audience involved.",
+      text: `I want my application to send its transactional email — password resets, email verification, receipts, magic links, alerts — through the Day3 API. Read the API reference at the end of this message before writing any code.
+
+Please:
+1. First look at my codebase and tell me what language, framework and HTTP client it already uses, and find every place that sends (or should send) operational email. Show me that list before you change anything.
+2. Write a small, typed Day3 mailer module wrapping \`POST /emails\`, with the key read from the environment and errors surfaced as real exceptions carrying \`error.code\` and \`request_id\`.
+3. Set an \`Idempotency-Key\` on every send, and **derive it from the thing that happened, not from a random UUID per call** — something like \`password-reset:{user_id}:{token_id}\`. A random key per attempt makes an application-level retry send twice, which is the exact failure the header exists to prevent.
+4. \`from\` must be an address on my verified sending domain (see the ground rules below); any local-part works and no sender needs creating first. Set \`reply_to\` where a human should be able to reply, and put a \`tags\` value like \`{"type": "password-reset"}\` on each kind so I can filter them later.
+5. Don't let email block the user: send outside the request's critical path (whatever my stack already has — background job, queue, after-response hook) and log failures rather than throwing into the user's request. \`POST /emails\` returns as soon as the send is accepted; delivery is asynchronous, so log the returned \`eml_…\` id and don't wait on it.
+6. Handle these by \`error.code\` rather than retrying blindly:
+   - \`email_suppressed\` — the address hard-bounced or complained before. Retrying will never work; surface it to me (or to the user as "we can't reach that address") instead.
+   - \`quota_exceeded\` — my monthly send allowance is used up.
+   - \`429\` — back off per \`Retry-After\`.
+7. Tell me exactly which environment variable to set and where, and add it to my \`.env.example\` (never the real key).
+8. Keep it simple — one readable module, no retry framework unless I ask.
+
+Two things to be clear about: this is for operational mail only — newsletters go through campaigns, not here — and every send is real, against my live account. There is no test mode, so ask me before sending anything to an address that isn't mine.
+${shared}${buildReferenceMarkdown(ctx)}`,
+    },
     {
       id: "integrate",
       label: "Integrate into my app",

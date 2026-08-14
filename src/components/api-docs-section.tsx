@@ -68,6 +68,15 @@ function Step({
 
 const ENDPOINT_GROUPS: Array<{ title: string; note: string; rows: [string, string][] }> = [
   {
+    title: "Emails",
+    note: "Transactional sending — password resets, receipts, magic links. No audience involved.",
+    rows: [
+      ["POST /emails", "Send one email to up to 50 recipients — set Idempotency-Key"],
+      ["GET /emails", "List sends, newest first; filter by ?status="],
+      ["GET /emails/{id}", "One email plus its delivery events timeline"],
+    ],
+  },
+  {
     title: "Audiences",
     note: "A list of contacts. Everything else lives inside one.",
     rows: [
@@ -150,6 +159,7 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
   const [audiences, setAudiences] = useState<AudienceOption[]>([]);
   const [audienceId, setAudienceId] = useState<string | null>(null);
   const [limit, setLimit] = useState<SubscriberLimit | null>(null);
+  const [sendingDomain, setSendingDomain] = useState<string | null>(null);
   const [lang, setLang] = useState("curl");
 
   useEffect(() => {
@@ -174,6 +184,21 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
         }
       })
       .catch(() => setLimit(null));
+    // The first verified domain seeds the transactional `from` examples, so the
+    // send snippet is paste-and-run instead of saying "yourdomain.com". Without
+    // one, POST /emails is rejected — the quickstart says so rather than
+    // handing over a call that cannot work.
+    api
+      .get<{ domains: { domain: string; verificationStatus: string; adminOverrideVerified: boolean }[] }>(
+        "/api/domains",
+      )
+      .then((res) => {
+        const verified = res.domains.find(
+          (d) => d.verificationStatus === "verified" || d.adminOverrideVerified,
+        );
+        setSendingDomain(verified?.domain ?? null);
+      })
+      .catch(() => setSendingDomain(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -185,11 +210,15 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
       audienceId: selected?.id ?? PLACEHOLDER_AUDIENCE,
       audienceName: selected?.name ?? null,
       subscriberLimit: limit,
+      sendingDomain,
     }),
-    [origin, selected, limit],
+    [origin, selected, limit, sendingDomain],
   );
 
   const tasks = useMemo(() => buildSnippetTasks(ctx), [ctx]);
+  // The quickstart ends on a real send rather than a read, because that is what
+  // someone integrating transactional email came here to do.
+  const firstSend = useMemo(() => tasks.find((t) => t.id === "send-email") ?? null, [tasks]);
   const prompts = useMemo(() => buildAgentPrompts(ctx), [ctx]);
   const reference = useMemo(() => buildReferenceMarkdown(ctx), [ctx]);
   const mcpSetups = useMemo(() => buildMcpSetups(ctx, freshKey), [ctx, freshKey]);
@@ -301,10 +330,48 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
             <div className="flex items-center gap-3">
               <CopyButton value={verifyCurl(ctx)} label="Copy" variant="outline" />
               <span className="text-xs text-muted-foreground">
-                You should get back a JSON list of your audiences.
+                A JSON list of your audiences comes back — that proves the key, without
+                sending anything.
               </span>
             </div>
           </Step>
+
+          {firstSend && (
+            <Step n={4} title="Send your first email">
+              {sendingDomain ? (
+                <p className="text-xs text-muted-foreground">
+                  Transactional mail — password resets, receipts, magic links. Any local-part
+                  on{" "}
+                  <code className="font-mono text-[11px] text-foreground">{sendingDomain}</code>{" "}
+                  works as <code className="font-mono text-[11px] text-foreground">from</code>;
+                  no sender needs creating first. This one is real, so point{" "}
+                  <code className="font-mono text-[11px] text-foreground">to</code> at yourself.
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Transactional mail — password resets, receipts, magic links. Sends are
+                  rejected until you have a verified sending domain:{" "}
+                  <Link href="/domains" className="underline underline-offset-2">
+                    set one up under Domains
+                  </Link>{" "}
+                  first, then any local-part on it works as{" "}
+                  <code className="font-mono text-[11px] text-foreground">from</code>.
+                </p>
+              )}
+              <Snippet code={firstSend.curl} />
+              <div className="flex items-center gap-3">
+                <CopyButton value={firstSend.curl} label="Copy" variant="outline" />
+                <span className="text-xs text-muted-foreground">
+                  Returns an <code className="font-mono text-[11px]">eml_…</code> id right away;
+                  watch it land on{" "}
+                  <Link href="/emails" className="underline underline-offset-2">
+                    Emails
+                  </Link>
+                  .
+                </span>
+              </div>
+            </Step>
+          )}
         </CardContent>
       </Card>
 

@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-08-06**.
+> Last verified against the codebase: **2026-08-15**.
 
 ---
 
@@ -742,9 +742,12 @@ Full reference spec: `docs/api-v1-spec.md`.
   everything needed to use the API sits below the key list, filled in with the
   account's real audience id:
   - a **quickstart** (base URL → `export DAY3_API_KEY=…`, prefilled with the key
-    just minted → a verification request),
-  - **copy-paste prompts for an AI coding assistant** — *integrate into my app*,
-    *migrate from another provider*, *keep my users in sync* — each carrying the
+    just minted → a verification request → a first transactional send, seeded with
+    the account's verified sending domain, or pointed at Domains when there isn't
+    one yet),
+  - **copy-paste prompts for an AI coding assistant** — *send transactional email*,
+    *integrate into my app*, *migrate from another provider*, *keep my users in
+    sync* — each carrying the
     complete API reference inline, so an assistant writes working code without
     looking anything up. The reference is also copyable on its own, as Markdown to
     drop into a repo's `AGENTS.md` / `CLAUDE.md`. Prompts never contain a live key:
