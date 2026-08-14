@@ -8,8 +8,17 @@ import { accounts } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 import { computeAccountHealth } from "@/services/health";
 
-export const GET = route(async () => {
+// Reputation is deliberately OPT-IN (`?health=1`). computeAccountHealth runs two
+// aggregate scans (campaign_recipients + transactional_emails over the trailing
+// window), and almost every caller of this endpoint — the sidebar's plan pill, the
+// composer, billing, settings — wants nothing but the account row. Computing it
+// unconditionally meant every one of those paid for two aggregates to render a
+// word. Callers that need the rates ask for them.
+export const GET = route(async (req: NextRequest) => {
   const { db, account } = await requireAccount();
+  if (new URL(req.url).searchParams.get("health") !== "1") {
+    return json({ account });
+  }
   const health = await computeAccountHealth(db, account.id);
   return json({ account, health });
 });

@@ -31,30 +31,35 @@ export type OnboardingState = {
 };
 
 export async function computeOnboardingState(db: Db, account: Account): Promise<OnboardingState> {
-  const [verifiedDomain] = await db
-    .select({ id: sendingDomains.id })
-    .from(sendingDomains)
-    .where(
-      and(
-        eq(sendingDomains.accountId, account.id),
-        sql`(${sendingDomains.verificationStatus} = 'verified' OR ${sendingDomains.adminOverrideVerified} = true)`,
-      ),
-    )
-    .limit(1);
-
-  const [{ subscriberCount }] = await db
-    .select({ subscriberCount: sql<number>`count(*)`.as("subscriberCount") })
-    .from(subscribers)
-    .innerJoin(audiences, eq(subscribers.audienceId, audiences.id))
-    .where(and(eq(audiences.accountId, account.id), eq(subscribers.status, "subscribed")));
-
-  const [campaignCounts] = await db
-    .select({
-      total: sql<number>`count(*)`.as("total"),
-      sent: sql<number>`count(*) FILTER (WHERE ${campaigns.status} = 'sent')`.as("sent"),
-    })
-    .from(campaigns)
-    .where(eq(campaigns.accountId, account.id));
+  // The three reads are independent, so they go out together rather than in
+  // series. postgres.js pipelines on a single connection, so this is one network
+  // wait instead of three even on the web tier's `max: 1` pool — and this runs on
+  // nearly every page (the checklist and the "next step" strip), which made those
+  // three serial round trips one of the more expensive things in a navigation.
+  const [[verifiedDomain], [{ subscriberCount }], [campaignCounts]] = await Promise.all([
+    db
+      .select({ id: sendingDomains.id })
+      .from(sendingDomains)
+      .where(
+        and(
+          eq(sendingDomains.accountId, account.id),
+          sql`(${sendingDomains.verificationStatus} = 'verified' OR ${sendingDomains.adminOverrideVerified} = true)`,
+        ),
+      )
+      .limit(1),
+    db
+      .select({ subscriberCount: sql<number>`count(*)`.as("subscriberCount") })
+      .from(subscribers)
+      .innerJoin(audiences, eq(subscribers.audienceId, audiences.id))
+      .where(and(eq(audiences.accountId, account.id), eq(subscribers.status, "subscribed"))),
+    db
+      .select({
+        total: sql<number>`count(*)`.as("total"),
+        sent: sql<number>`count(*) FILTER (WHERE ${campaigns.status} = 'sent')`.as("sent"),
+      })
+      .from(campaigns)
+      .where(eq(campaigns.accountId, account.id)),
+  ]);
 
   const eligibility = checkSendEligibility(account);
   const sandbox = accountSandboxMode(account);

@@ -410,22 +410,53 @@ function compare(a: Primitive, b: Primitive): number {
   return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
 }
 
+type ListControllerConfig<T> = {
+  /** Text matched against the search box (compared case-insensitively). */
+  searchText?: (item: T) => string;
+  /** Extra filtering driven by the page's filter selects. */
+  predicate?: (item: T) => boolean;
+  /** Accessors for each sortable column key. */
+  sortAccessors?: Record<string, (item: T) => Primitive>;
+  initialSort?: SortState;
+};
+
+type ListController<T, View extends T[] | null> = {
+  search: string;
+  setSearch: React.Dispatch<React.SetStateAction<string>>;
+  sort: SortState;
+  setSort: React.Dispatch<React.SetStateAction<SortState>>;
+  toggleSort: (key: string) => void;
+  /** Filtered + sorted rows (null only when the source is still loading). */
+  view: View;
+  total: number;
+  shown: number;
+  /** Source resolved and genuinely has no rows. */
+  isEmpty: boolean;
+  /** Source has rows, but the current search/filters hide them all. */
+  isFilteredEmpty: boolean;
+};
+
 /**
  * Client-side search + filter + sort for in-memory lists (the small datasets the
  * app loads whole). Server-paginated lists (subscribers, recipients) manage their
  * own query and don't use this.
+ *
+ * `null` items mean "still loading" and make `view` null too — the state a page
+ * that fetches on mount starts in. Pages whose rows are server-rendered pass a real
+ * array and get a non-null `view` back, so they don't carry a skeleton branch that
+ * can never render.
  */
 export function useListController<T>(
+  items: T[],
+  config?: ListControllerConfig<T>,
+): ListController<T, T[]>;
+export function useListController<T>(
   items: T[] | null,
-  config: {
-    /** Text matched against the search box (compared case-insensitively). */
-    searchText?: (item: T) => string;
-    /** Extra filtering driven by the page's filter selects. */
-    predicate?: (item: T) => boolean;
-    /** Accessors for each sortable column key. */
-    sortAccessors?: Record<string, (item: T) => Primitive>;
-    initialSort?: SortState;
-  } = {},
+  config?: ListControllerConfig<T>,
+): ListController<T, T[] | null>;
+export function useListController<T>(
+  items: T[] | null,
+  config: ListControllerConfig<T> = {},
 ) {
   const [search, setSearch] = React.useState("");
   const [sort, setSort] = React.useState<SortState>(config.initialSort ?? null);

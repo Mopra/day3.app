@@ -1,6 +1,6 @@
-import { desc, eq, sql } from "drizzle-orm";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
+import { listCampaigns } from "@/api/lists";
 import {
   CampaignDraftSchema,
   campaignBodyFields,
@@ -13,32 +13,7 @@ import { enforceRateLimit } from "@/lib/rate-limit";
 
 export const GET = route(async () => {
   const { db, account } = await requireAccount();
-  const rows = await db
-    .select({
-      id: campaigns.id,
-      name: campaigns.name,
-      subject: campaigns.subject,
-      status: campaigns.status,
-      sandbox: campaigns.sandbox,
-      riskLevel: campaigns.riskLevel,
-      scheduledAt: campaigns.scheduledAt,
-      sentAt: campaigns.sentAt,
-      createdAt: campaigns.createdAt,
-      // Outer columns are written literally: an interpolated Drizzle column
-      // renders UNQUALIFIED in single-table selects, so inside the subquery it
-      // resolves against the subquery's own table and the correlation is lost.
-      audienceName: sql<string>`(
-        SELECT name FROM audiences a WHERE a.id = campaigns.audience_id
-      )`.as("audienceName"),
-      sentCount: sql<number>`(
-        SELECT count(*)::int FROM campaign_recipients r
-        WHERE r.campaign_id = campaigns.id AND r.status IN ('sent', 'delivered')
-      )`.as("sentCount"),
-    })
-    .from(campaigns)
-    .where(eq(campaigns.accountId, account.id))
-    .orderBy(desc(campaigns.createdAt));
-  return json({ campaigns: rows });
+  return json({ campaigns: await listCampaigns(db, account.id) });
 });
 
 export const POST = route(async (req) => {
