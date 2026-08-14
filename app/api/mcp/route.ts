@@ -12,8 +12,11 @@ import { logger, newCorrelationId } from "@/lib/logger";
 // Authentication is the same bearer key the REST API uses, so there is one
 // credential and one revocation path. Editors attach it as a header:
 //
-//   claude mcp add --transport http day3 https://<app>/api/mcp \
-//     --header "Authorization: Bearer day3_live_..."
+//   claude mcp add --transport http day3 https://<app>/api/mcp --header "Authorization: Bearer day3_live_..."
+//
+// One line on purpose — see the note in src/lib/api-docs.ts. A `\` continuation
+// is bash-only, and on Windows it drops the header, which lands the user in an
+// OAuth-discovery error that never mentions authentication.
 //
 // Stateless by construction — no session id is issued, every request
 // re-authenticates, and any instance can serve any request.
