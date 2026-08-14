@@ -68,8 +68,14 @@ export function buildMcpSetups(ctx: ApiDocsContext, key: string | null): McpSetu
       id: "claude-code",
       label: "Claude Code",
       blurb: "Run this in your project, then ask Claude to write you an email.",
-      code: `claude mcp add --transport http day3 ${url} \\
-  --header "Authorization: Bearer ${bearer}"`,
+      // Deliberately ONE line, however long it gets. A `\` continuation is bash
+      // syntax; CMD wants `^` and PowerShell a backtick, so on Windows the second
+      // line runs as its own command and the --header never arrives. That fails
+      // *silently* in the worst way: the server is added without a credential, so
+      // it 401s, the client falls back to OAuth discovery, hits our HTML 404, and
+      // reports "Invalid OAuth error response: Unrecognized token '<'" — which
+      // says nothing about the missing header. One line runs everywhere.
+      code: `claude mcp add --transport http day3 ${url} --header "Authorization: Bearer ${bearer}"`,
     },
     {
       id: "cursor",
