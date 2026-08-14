@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { getDb, type Db } from "../db/client";
 import type { Account } from "../db/schema";
@@ -17,17 +18,26 @@ export type AuthState = {
 
 // Cookie-based Clerk session (clerkMiddleware in proxy.ts populates it). Replaces
 // the Hono `requireAuth` Bearer-token middleware.
-export async function requireAuth(): Promise<AuthState> {
+export const requireAuth = cache(async function requireAuth(): Promise<AuthState> {
   const { userId, orgId, orgRole, has } = await auth();
   if (!userId) throw new HttpError(401, "Unauthorized");
   return { userId, orgId: orgId ?? null, orgRole: orgRole ?? null, has: has as AuthState["has"] };
-}
+});
 
 export type AccountContext = { db: Db; account: Account; auth: AuthState };
 
 // INVARIANT: the account is always resolved server-side from the Clerk org —
 // never from a client-supplied id. Created lazily on first sight.
-export async function requireAccount(): Promise<AccountContext> {
+//
+// Wrapped in React `cache()`, so the account lookup happens ONCE per request no
+// matter how many callers ask for it. This is load-bearing for the server-rendered
+// pages: a page and the components it renders each call requireAccount() to get
+// their own scoped `db`/`account`, and without memoization that is one
+// `SELECT … FROM accounts WHERE clerk_org_id = $1` per caller — a round trip to
+// Postgres each time, before any real work starts. The cache is per-request, so
+// there is no cross-tenant leak and no staleness beyond a single render: a plan
+// change is visible on the very next request.
+export const requireAccount = cache(async function requireAccount(): Promise<AccountContext> {
   const authState = await requireAuth();
   if (!authState.orgId) {
     throw new HttpError(403, "No active organization. Create or select one first.");
@@ -39,7 +49,7 @@ export async function requireAccount(): Promise<AccountContext> {
     account = await syncCurrentOrganization(db, clerk, authState);
   }
   return { db, account, auth: authState };
-}
+});
 
 export type AdminContext = { db: Db; auth: AuthState; userEmail: string };
 

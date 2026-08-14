@@ -151,18 +151,22 @@ function useReloadOnOrgChange() {
 let meCache: { orgId: string; promise: Promise<{ isAdmin: boolean }> } | null = null;
 const sessionSynced = new Set<string>();
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+// `plan` is resolved by the server layout and passed in — it rides along on the
+// account lookup the page already does, so the pill costs no request of its own.
+export function AppShell({ children, plan }: { children: React.ReactNode; plan: string }) {
   const api = useApi();
   const pathname = usePathname();
   const { orgId } = useAuth();
   const [isAdmin, setIsAdmin] = useState(false);
-  const [plan, setPlan] = useState<string | null>(null);
   useReloadOnOrgChange();
 
   useEffect(() => {
     if (!orgId) return;
     // isAdmin (ADMIN_EMAILS membership) is stable within a session — cache the
     // Clerk getUser behind /api/account/me so it isn't repeated per navigation.
+    // Deliberately left on the client, AFTER paint: resolving it in the server
+    // layout instead would put a Clerk API round trip in front of every render of
+    // every page, to decide whether one nav item appears.
     if (!meCache || meCache.orgId !== orgId) {
       meCache = {
         orgId,
@@ -173,19 +177,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
     void meCache.promise.then((me) => setIsAdmin(!!me.isAdmin));
 
-    // Plan pill — orients the user on every screen (Free reads as set-up mode).
-    // A plain DB read (no Clerk call), fetched fresh each navigation so a plan
-    // change on the billing page shows here without a reload.
-    api
-      .get<{ account: { plan: string } }>("/api/account")
-      .then((res) => setPlan(res.account.plan))
-      .catch(() => setPlan(null));
-
     // Once per session, off the critical path: refresh entitlements from the
     // session billing claims and pick up a tester publicMetadata override /
     // lazily seed the account where the Clerk webhook isn't delivered. This is
-    // the ONLY place the (Clerk-API-heavy) sync still runs — pages read the
-    // webhook-maintained row via GET /api/account instead.
+    // the ONLY place the (Clerk-API-heavy) sync still runs — everything else reads
+    // the webhook-maintained row.
     if (!sessionSynced.has(orgId)) {
       sessionSynced.add(orgId);
       void api.post("/api/account/sync").catch(() => {});
@@ -298,22 +294,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             {/* Plan pill — a persistent reminder of the tier. Free links to
                 billing (its whole value is the upgrade path); paid plans just
                 show the tier. */}
-            {plan && (
-              <div className="px-4 pb-1">
-                {planCanSend(plan) ? (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                    {planLabel(plan)} plan
-                  </span>
-                ) : (
-                  <Link
-                    href="/billing"
-                    className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
-                  >
-                    {planLabel(plan)} plan · Upgrade
-                  </Link>
-                )}
-              </div>
-            )}
+            <div className="px-4 pb-1">
+              {planCanSend(plan) ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                  {planLabel(plan)} plan
+                </span>
+              ) : (
+                <Link
+                  href="/billing"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
+                >
+                  {planLabel(plan)} plan · Upgrade
+                </Link>
+              )}
+            </div>
             <SidebarAiBudget />
             {/* Account control, bottom-left of the sidebar — the conventional
                 placement for the personal profile/sign-out menu. px-5 (20px)

@@ -1,38 +1,18 @@
-import { desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
-import { audiences, forms } from "@/db/schema";
+import { listForms } from "@/api/lists";
+import { forms } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { ensureAccountSlug, uniqueFormSlug } from "@/lib/slug";
 import { FORM_FIELD_TYPES, isReservedFieldKey, normalizeFields } from "@/lib/form-fields";
-import { resolveFormDesign } from "@/lib/form-design";
 import { formFieldTypeToAudienceType, registerAudienceFields } from "@/services/audience-fields";
 
 // GET /api/forms — list this account's signup forms with their audience name.
 export const GET = route(async () => {
   const { db, account } = await requireAccount();
-  const rows = await db
-    .select()
-    .from(forms)
-    .where(eq(forms.accountId, account.id))
-    .orderBy(desc(forms.createdAt));
-
-  const audienceIds = [...new Set(rows.map((f) => f.audienceId))];
-  const audienceRows =
-    audienceIds.length > 0
-      ? await db.select().from(audiences).where(inArray(audiences.id, audienceIds))
-      : [];
-  const audienceName = new Map(audienceRows.map((a) => [a.id, a.name]));
-
-  return json({
-    forms: rows.map((f) => ({
-      ...f,
-      design: resolveFormDesign(f.design),
-      audienceName: audienceName.get(f.audienceId) ?? null,
-    })),
-  });
+  return json({ forms: await listForms(db, account.id) });
 });
 
 const CreateFormSchema = z.object({

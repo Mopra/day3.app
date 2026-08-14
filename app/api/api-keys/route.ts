@@ -1,9 +1,10 @@
-import { desc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount, type AccountContext } from "@/api/context";
+import { listApiKeys, serializeApiKey } from "@/api/lists";
 import { generateApiKey } from "@/api/v1/auth";
-import { API_SCOPES, parseScopes, serializeScopes, type ApiScope } from "@/api/v1/scopes";
+import { API_SCOPES, serializeScopes, type ApiScope } from "@/api/v1/scopes";
 import { apiKeys } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 
@@ -18,30 +19,12 @@ function requireOrgAdmin(ctx: AccountContext): void {
   }
 }
 
-function serializeKey(k: typeof apiKeys.$inferSelect) {
-  return {
-    id: k.id,
-    name: k.name,
-    keyPrefix: k.keyPrefix,
-    scopes: parseScopes(k.scopes),
-    createdBy: k.createdBy,
-    lastUsedAt: k.lastUsedAt,
-    revokedAt: k.revokedAt,
-    createdAt: k.createdAt,
-  };
-}
-
 // GET /api/api-keys — every key on the account, newest first (revoked included
 // so the history stays auditable).
 export const GET = route(async () => {
   const ctx = await requireAccount();
   requireOrgAdmin(ctx);
-  const rows = await ctx.db
-    .select()
-    .from(apiKeys)
-    .where(eq(apiKeys.accountId, ctx.account.id))
-    .orderBy(desc(apiKeys.createdAt));
-  return json({ keys: rows.map(serializeKey) });
+  return json({ keys: await listApiKeys(ctx.db, ctx.account.id) });
 });
 
 // Scopes are chosen at creation and never edited: a key's powers stay visible in
@@ -85,5 +68,5 @@ export const POST = route(async (req) => {
     })
     .returning();
 
-  return json({ key, apiKey: serializeKey(created) }, 201);
+  return json({ key, apiKey: serializeApiKey(created) }, 201);
 });

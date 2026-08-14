@@ -1,9 +1,10 @@
 import type { NextRequest } from "next/server";
-import { desc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findDomain } from "@/api/finders";
+import { listDomains } from "@/api/lists";
 import { sendingDomains, senders } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { isDomainClaimed } from "@/services/domain-ownership";
@@ -11,12 +12,7 @@ import { createDomainIdentity } from "@/services/ses-identity";
 
 export const GET = route(async () => {
   const { db, account } = await requireAccount();
-  const rows = await db
-    .select()
-    .from(sendingDomains)
-    .where(eq(sendingDomains.accountId, account.id))
-    .orderBy(desc(sendingDomains.createdAt));
-  return json({ domains: rows });
+  return json({ domains: await listDomains(db, account.id) });
 });
 
 const DOMAIN_RE = /^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$/;

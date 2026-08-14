@@ -63,8 +63,51 @@ serves the UI and the API routes; a separate long-running Node worker
    When you add a public endpoint, ask whether it puts mail in a stranger's
    inbox: if so it is scoped, if not it isn't. Test sends deliberately are not.
 
+## Page data loading
+
+**A page reads its data on the server, not in a mount effect.** Each page under
+`app/(app)/` is a small server component that resolves the account, runs its reads
+concurrently, and hands the result to a `*-view.tsx` client component as props:
+
+```tsx
+export default async function CampaignsPage() {
+  const { db, account } = await requireAccount();
+  const [campaigns, onboarding] = await Promise.all([
+    listCampaigns(db, account.id),
+    computeOnboardingState(db, account),
+  ]);
+  return <CampaignsView initialCampaigns={campaigns} onboarding={onboarding} />;
+}
+```
+
+Why: a client component that fetches on mount cannot start until the RSC navigation
+has already finished — two serial round trips before anything the user came for
+appears, on a DB that is a network hop away. Reading on the server collapses that to
+one, and `requireAccount` is memoized with React `cache()`, so the layout and the
+page share a single account lookup instead of one per caller.
+
+- The view keeps its rows in `useState` seeded from the prop, with a
+  `useEffect(() => setRows(initial), [initial])` resync. Mutations update locally and
+  then call `router.refresh()` to re-run the server component.
+- **List queries live in `src/api/lists.ts`** and are called by BOTH the server page
+  and the `/api/*` route handler the view re-reads after a mutation — same rule as
+  the campaign send path: one implementation, two front doors.
+- Timestamps are `mode: "string"` (`tstz` in `schema.ts`), so rows are plain
+  JSON-serializable values and cross the server/client boundary as-is. Do not
+  introduce a `Date`-mode column without converting at the boundary.
+- `app/(app)/loading.tsx` is what the router shows during the server read. Without
+  it, a navigation leaves the *previous* page on screen and reads as a dead click.
+- Still on client fetch, deliberately: the server-paginated views (suppressions,
+  activity, emails) and the `[id]` detail pages, which own a `load(offset)` machine
+  that server-rendering page 1 would duplicate.
+
 ## Gotchas
 
+- **Function region is pinned to `fra1` (`vercel.json`)** to sit next to the Supabase
+  pooler in `aws-1-eu-central-1`. Unpinned, Vercel defaults to `iad1`, which puts the
+  Atlantic between the web tier and Postgres — ~90–100 ms on *every* query, and with
+  the web tier's `max: 1` pool those waits serialize rather than overlap. If the DB
+  ever moves, move this with it.
 - Postgres allows max **65535 bound parameters per statement** — chunk multi-row
   inserts when the row count is large.
 - Clerk: the React SDK is `@clerk/nextjs`; `@clerk/backend` is used server-side.
