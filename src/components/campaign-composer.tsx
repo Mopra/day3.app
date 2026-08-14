@@ -68,6 +68,11 @@ import {
   type CampaignSection,
 } from "@/lib/sections";
 import { useAiBudget } from "@/components/ai-budget-context";
+import {
+  ACCOUNT_UPDATED_EVENT,
+  BusinessAddressDialog,
+  type AccountUpdatedDetail,
+} from "@/components/business-address-dialog";
 import { CampaignTemplatePicker } from "@/components/campaign-template-picker";
 import type { CampaignTemplate } from "@/lib/campaign-templates";
 import type {
@@ -309,8 +314,6 @@ export function CampaignComposer({
   // Inline "add your business address" dialog, so a missing address can be fixed
   // without leaving the composer.
   const [addressOpen, setAddressOpen] = useState(false);
-  const [addressDraft, setAddressDraft] = useState("");
-  const [savingAddress, setSavingAddress] = useState(false);
 
   // Inline "rename your organization" dialog — the company name shows in every
   // footer via {{company_name}}, and the default ("My Organization") needs fixing.
@@ -439,6 +442,18 @@ export function CampaignComposer({
       .then((res) => setAccount(res.account))
       .catch((err) => toast.error(err.message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The address can also be saved from outside the composer — the campaign page's
+  // "can't be sent yet" notice opens the same dialog. Follow that save so the footer
+  // preview below stops asking for an address the user has already given.
+  useEffect(() => {
+    function onAccountUpdated(e: Event) {
+      const { companyAddress } = (e as CustomEvent<AccountUpdatedDetail>).detail;
+      setAccount((prev) => (prev ? { ...prev, companyAddress } : prev));
+    }
+    window.addEventListener(ACCOUNT_UPDATED_EVENT, onAccountUpdated);
+    return () => window.removeEventListener(ACCOUNT_UPDATED_EVENT, onAccountUpdated);
   }, []);
 
   // True only when AI is configured but the org's budget is spent — gates the
@@ -790,30 +805,6 @@ export function CampaignComposer({
     setQaEmail(only ? `news@${only.domain}` : "");
     setQaEmailEdited(false);
     setQuickAddOpen(true);
-  }
-
-  function openAddress() {
-    setAddressDraft(account?.companyAddress ?? "");
-    setAddressOpen(true);
-  }
-
-  async function handleSaveAddress() {
-    const value = addressDraft.trim();
-    if (!value) {
-      toast.error("Enter your business address");
-      return;
-    }
-    setSavingAddress(true);
-    try {
-      await api.patch("/api/account", { companyAddress: value });
-      setAccount((prev) => (prev ? { ...prev, companyAddress: value } : prev));
-      setAddressOpen(false);
-      toast.success("Address saved");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't save address");
-    } finally {
-      setSavingAddress(false);
-    }
   }
 
   function openName() {
@@ -1407,7 +1398,7 @@ export function CampaignComposer({
                 Add your business address — it&apos;s required by law in every email.
                 <button
                   type="button"
-                  onClick={openAddress}
+                  onClick={() => setAddressOpen(true)}
                   className="font-medium underline underline-offset-2 hover:text-foreground"
                 >
                   Add it now
@@ -1420,7 +1411,7 @@ export function CampaignComposer({
                 {companyAddress && (
                   <button
                     type="button"
-                    onClick={openAddress}
+                    onClick={() => setAddressOpen(true)}
                     className="text-muted-foreground/50 underline underline-offset-2 hover:text-foreground"
                   >
                     edit
@@ -1673,38 +1664,11 @@ export function CampaignComposer({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={addressOpen} onOpenChange={setAddressOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Your business address</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Anti-spam laws (CAN-SPAM, GDPR) require a physical mailing address in every
-              email. It&apos;s added to the footer of all your campaigns.
-            </p>
-            <div className="space-y-1.5">
-              <Label htmlFor="companyAddress">Address</Label>
-              <Textarea
-                id="companyAddress"
-                rows={3}
-                placeholder="Acme Inc, 123 Main St, Copenhagen, DK"
-                value={addressDraft}
-                onChange={(e) => setAddressDraft(e.target.value)}
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-1">
-              <Button type="button" variant="ghost" onClick={() => setAddressOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="button" onClick={handleSaveAddress} disabled={savingAddress}>
-                {savingAddress && <OrbitLoader size={16} />}
-                Save address
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <BusinessAddressDialog
+        open={addressOpen}
+        onOpenChange={setAddressOpen}
+        initialValue={account?.companyAddress}
+      />
 
       <Dialog open={nameOpen} onOpenChange={setNameOpen}>
         <DialogContent className="sm:max-w-md">

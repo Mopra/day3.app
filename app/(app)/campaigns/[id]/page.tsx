@@ -18,7 +18,7 @@ import {
 import { OrbitLoader } from "@/components/ui/orbit-loader";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LaunchStream, SendDots } from "@/components/ui/send-loader";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { CollapsibleNotice } from "@/components/ui/notice";
 import {
   Table,
   TableBody,
@@ -47,6 +47,7 @@ import { CampaignStatusBadge } from "@/components/ui/campaign-status-badge";
 import { sanitizeHtml } from "@/services/render";
 import { CampaignComposer, type CampaignFormValues } from "@/components/campaign-composer";
 import { SendTestButton } from "@/components/send-test-button";
+import { BusinessAddressDialog } from "@/components/business-address-dialog";
 import { SandboxBadge, SandboxBanner } from "@/components/sandbox-notice";
 import type {
   Campaign,
@@ -81,7 +82,10 @@ function riskGuidance(review: RiskReview | null): string[] {
 }
 
 // Maps a send-blocking condition to the page that fixes it, so the user gets a
-// link rather than a dead-end message.
+// link rather than a dead-end message. No entry for the missing mailing address on
+// purpose: that one is fixed in place by BusinessAddressDialog (see
+// `addressBlocked` below), so sending the user to Settings would be the worse of
+// the two paths.
 function fixLinkFor(reason: string): { href: string; label: string } | null {
   const r = reason.toLowerCase();
   if (
@@ -244,6 +248,8 @@ export default function CampaignDetailPage() {
   } | null>(null);
   const [recipientStatus, setRecipientStatus] = useState("all");
   const [loadingMoreRec, setLoadingMoreRec] = useState(false);
+  // Inline fix for the one send gate that doesn't need a trip to Settings.
+  const [addressOpen, setAddressOpen] = useState(false);
 
   const load = useCallback(() => {
     api
@@ -444,6 +450,12 @@ export default function CampaignDetailPage() {
   const blockFix = sendBlocked?.sendBlockedReason
     ? fixLinkFor(sendBlocked.sendBlockedReason)
     : null;
+  // The missing mailing address is the only blocker with an in-place fix, so it
+  // gets a button (the shared dialog) instead of a link out to Settings.
+  const addressBlocked =
+    !!sendBlocked &&
+    !sendBlocked.hasMailingAddress &&
+    !!sendBlocked.sendBlockedReason?.toLowerCase().includes("address");
 
   // Sandbox applies to this campaign once it's stamped (submitted onwards); for a
   // draft it's the account's current mode that decides how the send will run.
@@ -582,24 +594,42 @@ export default function CampaignDetailPage() {
       )}
 
       {campaign.pausedReason && campaign.status !== "sent" && (
-        <Alert variant="destructive">
-          <AlertTitle>
-            {campaign.status === "draft"
+        <CollapsibleNotice
+          noticeKey="campaign-paused"
+          variant="destructive"
+          title={
+            campaign.status === "draft"
               ? "Your scheduled send didn't go out"
               : campaign.status === "paused"
                 ? "Sending is paused"
-                : campaignStatusLabel(campaign.status)}
-          </AlertTitle>
-          <AlertDescription>{campaign.pausedReason}</AlertDescription>
-        </Alert>
+                : campaignStatusLabel(campaign.status)
+          }
+        >
+          {campaign.pausedReason}
+        </CollapsibleNotice>
       )}
 
       {sandbox && submittable && <SandboxBanner surface="campaign" />}
 
       {sendBlocked && (
-        <Alert>
-          <AlertTitle>This campaign can&apos;t be sent yet</AlertTitle>
-          <AlertDescription>
+        <CollapsibleNotice
+          noticeKey="campaign-send-blocked"
+          title="This campaign can't be sent yet"
+        >
+          {addressBlocked ? (
+            // The one send gate that's fixable without leaving the page — same
+            // dialog the composer's footer opens, so the fix is one click from
+            // where the problem is reported.
+            <div className="space-y-3">
+              <p>
+                Anti-spam laws require a physical mailing address in every email. Add
+                it once and it goes in the footer of everything you send.
+              </p>
+              <Button variant="outline" size="sm" onClick={() => setAddressOpen(true)}>
+                Add business address
+              </Button>
+            </div>
+          ) : (
             <p>
               {sendBlocked.sendBlockedReason}
               {blockFix && (
@@ -612,60 +642,61 @@ export default function CampaignDetailPage() {
                 </>
               )}
             </p>
-          </AlertDescription>
-        </Alert>
+          )}
+        </CollapsibleNotice>
       )}
 
       {submittable && personalization.length > 0 && (
-        <Alert>
-          <AlertTitle>Some recipients are missing personalization</AlertTitle>
-          <AlertDescription>
-            <ul className="list-disc space-y-1 pl-4">
-              {personalization.map((g) => (
-                <li key={g.field}>{personalizationMessage(g)}</li>
-              ))}
-            </ul>
-          </AlertDescription>
-        </Alert>
+        <CollapsibleNotice
+          noticeKey="campaign-personalization"
+          title="Some recipients are missing personalization"
+        >
+          <ul className="list-disc space-y-1 pl-4">
+            {personalization.map((g) => (
+              <li key={g.field}>{personalizationMessage(g)}</li>
+            ))}
+          </ul>
+        </CollapsibleNotice>
       )}
 
       {campaign.status === "blocked" && (
-        <Alert variant="destructive">
-          <AlertTitle>This campaign didn&apos;t pass the safety review</AlertTitle>
-          <AlertDescription>
-            <div className="space-y-3">
-              <p>
-                Our automated review flagged content that mailbox providers punish with
-                spam-folder placement — and that damages deliverability for every email
-                you send after this one. Here&apos;s what to change:
-              </p>
-              {riskGuidance(riskReview).length > 0 ? (
-                <ul className="list-disc space-y-1 pl-4">
-                  {riskGuidance(riskReview).map((g) => (
-                    <li key={g}>{g}</li>
-                  ))}
-                </ul>
-              ) : (
-                riskReview && <p>{riskReview.summary}</p>
-              )}
-              <p>
-                A blocked campaign can&apos;t be edited or sent again — create a copy,
-                make the changes there, and send that instead. Flagged campaigns also get
-                a second look from our team, so a genuine false alarm can be released
-                without changes.
-              </p>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={duplicating}
-                onClick={duplicateAndFix}
-              >
-                {duplicating && <OrbitLoader size={16} />}
-                Duplicate &amp; fix
-              </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
+        <CollapsibleNotice
+          noticeKey="campaign-risk-blocked"
+          variant="destructive"
+          title="This campaign didn't pass the safety review"
+        >
+          <div className="space-y-3">
+            <p>
+              Our automated review flagged content that mailbox providers punish with
+              spam-folder placement — and that damages deliverability for every email
+              you send after this one. Here&apos;s what to change:
+            </p>
+            {riskGuidance(riskReview).length > 0 ? (
+              <ul className="list-disc space-y-1 pl-4">
+                {riskGuidance(riskReview).map((g) => (
+                  <li key={g}>{g}</li>
+                ))}
+              </ul>
+            ) : (
+              riskReview && <p>{riskReview.summary}</p>
+            )}
+            <p>
+              A blocked campaign can&apos;t be edited or sent again — create a copy,
+              make the changes there, and send that instead. Flagged campaigns also get
+              a second look from our team, so a genuine false alarm can be released
+              without changes.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={duplicating}
+              onClick={duplicateAndFix}
+            >
+              {duplicating && <OrbitLoader size={16} />}
+              Duplicate &amp; fix
+            </Button>
+          </div>
+        </CollapsibleNotice>
       )}
 
       {riskReview && campaign.status !== "blocked" && (
@@ -884,6 +915,14 @@ export default function CampaignDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Opened from the "can't be sent yet" notice. Saving re-runs the send gates,
+          so the notice clears itself the moment the address lands. */}
+      <BusinessAddressDialog
+        open={addressOpen}
+        onOpenChange={setAddressOpen}
+        onSaved={load}
+      />
 
       <Dialog open={submitOpen} onOpenChange={setSubmitOpen}>
         <DialogContent className="sm:max-w-md">
