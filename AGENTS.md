@@ -199,6 +199,23 @@ page share a single account lookup instead of one per caller.
   through `sanitizeHtml` — that pass double-escapes `&` in URLs. The one
   exception is the `:::html` passthrough, which is author-supplied and is
   sanitized.
+- **Outbound webhooks emit from the choke point, not next to it.** `webhook_endpoints` /
+  `webhook_deliveries` push delivery/bounce/complaint/suppression events to the
+  tenant's own app (`src/services/webhook-events.ts`, `docs/webhooks.md`). Every
+  emission sits INSIDE the guard that already makes its write idempotent — an
+  `email_events` insert whose `onConflictDoNothing` actually returned a row, a
+  status `UPDATE` whose `WHERE` actually matched — because SNS is at-least-once
+  and jobs retry, so emitting *beside* that guard replays the event at the
+  customer's endpoint on every redelivery. `addSuppression` is the single writer
+  for `suppression.created`; don't add a second. Emission never throws (the real
+  work already committed) and delivery rows are written before anything is
+  enqueued, so Redis is a latency optimization over a Postgres outbox — the cron
+  sweep recovers anything whose job was lost. Endpoint URLs are tenant-supplied
+  and fetched by our worker: `src/lib/webhook-url.ts` is an SSRF boundary
+  (public https only, validated at the socket's own DNS lookup, no redirects
+  followed) — treat changes to it as security changes. Webhook config is
+  app-UI-only on purpose; a leaked API key must not be able to attach a silent
+  feed of every address the account mails.
 - Liveness: `GET /api/health` (200 healthy / 503 if DB down) reports DB, cron-sweep
   freshness, and the worker's Redis heartbeat (`day3:worker:heartbeat`, written every
   30s by `worker/index.ts`). Wire monitors/supervisor per `docs/health-monitoring.md`.

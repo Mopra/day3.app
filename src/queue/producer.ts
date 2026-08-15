@@ -69,8 +69,11 @@ function getBullQueue(): Queue {
 export function getQueue(): JobQueue {
   const q = getBullQueue();
   return {
-    async send(message: QueueMessage) {
-      await q.add(message.type, message, { priority: jobPriorityFor(message.type) });
+    async send(message: QueueMessage, opts?: { delayMs?: number }) {
+      await q.add(message.type, message, {
+        priority: jobPriorityFor(message.type),
+        ...(opts?.delayMs ? { delay: opts.delayMs } : {}),
+      });
     },
   };
 }

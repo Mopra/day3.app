@@ -8,6 +8,7 @@ import {
 } from "../db/schema";
 import { canonicalizeEmail, isValidEmail } from "../lib/csv";
 import { newId, nowIso } from "../lib/ids";
+import { emitWebhookEvent } from "./webhook-events";
 
 // Emails suppressed for this account (account scope) or globally. Returned set
 // members and the optional `emails` filter are compared in canonical form
@@ -78,18 +79,42 @@ export async function addSuppression(
     scope?: "account" | "global";
   },
 ): Promise<void> {
-  await db
+  const email = canonicalizeEmail(input.email);
+  const id = newId("sup");
+  const inserted = await db
     .insert(suppressionEntries)
     .values({
-      id: newId("sup"),
+      id,
       accountId: input.accountId,
-      email: canonicalizeEmail(input.email),
+      email,
       scope: input.scope ?? "account",
       reason: input.reason,
       source: input.source,
       createdAt: nowIso(),
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning({ id: suppressionEntries.id });
+
+  // `suppression.created` fires here, and only when the insert actually
+  // inserted — this is the single writer for account suppressions, so every
+  // path that can suppress an address (bounce, complaint, unsubscribe, manual,
+  // CSV, API) emits exactly once and a re-suppression of an already-suppressed
+  // address is silent. That is what lets a downstream app treat the event
+  // stream as the authoritative feed for its own suppression table.
+  //
+  // Global-scope entries are deliberately not emitted: they belong to no tenant
+  // and listing them to one would leak other accounts' recipients (see the
+  // suppression rules in AGENTS.md).
+  if (inserted.length > 0 && input.accountId) {
+    await emitWebhookEvent(db, {
+      type: "suppression.created",
+      accountId: input.accountId,
+      eventId: id,
+      email,
+      reason: input.reason,
+      source: input.source ?? null,
+    });
+  }
 }
 
 // Postgres caps a statement at 65535 bound params; suppression rows are 7 columns,
@@ -143,6 +168,7 @@ export async function addSuppressions(
   // onConflictDoNothing on (account, email, reason): an already-suppressed entry
   // is counted, not duplicated.
   let added = 0;
+  const insertedIds = new Set<string>();
   for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
     const inserted = await db
       .insert(suppressionEntries)
@@ -150,6 +176,23 @@ export async function addSuppressions(
       .onConflictDoNothing()
       .returning({ id: suppressionEntries.id });
     added += inserted.length;
+    for (const r of inserted) insertedIds.add(r.id);
+  }
+
+  // Same contract as the single-address path: one event per address that was
+  // genuinely newly suppressed, so a re-import of the same CSV is silent rather
+  // than replaying thousands of events at the receiver. Emitted after the whole
+  // insert so a partially-failed bulk add can't announce rows that rolled back.
+  for (const row of rows) {
+    if (!insertedIds.has(row.id)) continue;
+    await emitWebhookEvent(db, {
+      type: "suppression.created",
+      accountId: input.accountId,
+      eventId: row.id,
+      email: row.email,
+      reason: input.reason,
+      source: input.source,
+    });
   }
 
   return { added, alreadySuppressed: rows.length - added, invalid };

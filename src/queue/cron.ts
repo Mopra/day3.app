@@ -7,6 +7,7 @@ import {
   jobLogs,
   sendingDomains,
   transactionalEmails,
+  webhookDeliveries,
 } from "../db/schema";
 import { campaignContentError, campaignSendGateError } from "../api/campaigns";
 import { nowIso } from "../lib/ids";
@@ -18,6 +19,7 @@ import { checkSendEligibility } from "../services/plans";
 import { releaseReservation } from "../services/quota";
 import { getDomainIdentity, type DomainIdentityState } from "../services/ses-identity";
 import { TRANSACTIONAL_BODY_RETENTION_DAYS } from "../services/transactional";
+import { WEBHOOK_STUCK_LOCK_MS } from "../services/webhooks";
 import { laneCountFor, SEND_BATCH_SIZE, type JobQueue } from "./messages";
 
 const STUCK_LOCK_MINUTES = 15;
@@ -182,6 +184,85 @@ export async function pruneTransactionalBodies(db: Db, now: Date): Promise<numbe
 // marker), which only ever want the newest row per job_type, plus the admin
 // overview's recent-failures list. Keeping ~30 days satisfies all three and keeps
 // the table small enough that a mistuned query can't become an outage.
+// Webhook deliveries examined per sweep. Ordered oldest-due-first so a backlog
+// drains in order and nothing starves.
+const WEBHOOK_SWEEP_PAGE = 200;
+
+/**
+ * Recovers outbound webhook deliveries the queue lost track of. Two cases, and
+ * both are why webhook_deliveries is a Postgres outbox rather than "whatever is
+ * in Redis":
+ *
+ *   1. `pending` with nextAttemptAt in the past — the enqueue never landed
+ *      (Redis blip at emission, or the retry enqueue failed), so no job exists
+ *      to run it. Emission is deliberately best-effort for this reason: the row
+ *      is the durable part.
+ *   2. `delivering` with a stale lock — a worker claimed the row and died
+ *      mid-POST. Unlike a campaign send, this is safe to return to `pending`:
+ *      the receiver is contractually idempotent on the event id (we send that
+ *      header precisely so a redelivery is a no-op), and the alternative —
+ *      dropping the event — is the failure this system exists to prevent.
+ */
+export async function sweepWebhookDeliveries(
+  db: Db,
+  queue: JobQueue,
+  now: Date = new Date(),
+): Promise<number> {
+  const nowStr = now.toISOString();
+  const lockCutoff = new Date(now.getTime() - WEBHOOK_STUCK_LOCK_MS).toISOString();
+
+  // Reclaim stuck locks first so they're eligible for the due-scan below.
+  await db
+    .update(webhookDeliveries)
+    .set({ status: "pending", lockedAt: null, nextAttemptAt: nowStr, updatedAt: nowStr })
+    .where(
+      and(
+        eq(webhookDeliveries.status, "delivering"),
+        lt(webhookDeliveries.lockedAt, lockCutoff),
+      ),
+    );
+
+  const due = await db
+    .select({ id: webhookDeliveries.id, accountId: webhookDeliveries.accountId })
+    .from(webhookDeliveries)
+    .where(
+      and(
+        eq(webhookDeliveries.status, "pending"),
+        lte(webhookDeliveries.nextAttemptAt, nowStr),
+      ),
+    )
+    .orderBy(asc(webhookDeliveries.nextAttemptAt))
+    .limit(WEBHOOK_SWEEP_PAGE);
+
+  for (const row of due) {
+    // A duplicate enqueue is harmless — the handler's guarded claim means only
+    // one of the two jobs does any work.
+    await queue.send({ type: "deliver_webhook", deliveryId: row.id, accountId: row.accountId });
+  }
+  return due.length;
+}
+
+// Delivery rows are a debugging log, not a ledger anything depends on, and they
+// accumulate at roughly (events × endpoints). Pruned on the same daily cadence
+// as job_logs.
+export const WEBHOOK_DELIVERY_RETENTION_DAYS = 30;
+
+export async function pruneWebhookDeliveries(db: Db, now: Date): Promise<number> {
+  const cutoff = new Date(
+    now.getTime() - WEBHOOK_DELIVERY_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const deleted = await db
+    .delete(webhookDeliveries)
+    .where(
+      and(
+        lt(webhookDeliveries.createdAt, cutoff),
+        inArray(webhookDeliveries.status, ["succeeded", "failed"]),
+      ),
+    )
+    .returning({ id: webhookDeliveries.id });
+  return deleted.length;
+}
+
 export const JOB_LOG_RETENTION_DAYS = 30;
 
 export async function pruneJobLogs(db: Db, now: Date): Promise<number> {
@@ -658,6 +739,7 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
   const resumed = (await stage("resume_paused", () => resumePausedCampaigns(db, queue, now))) ?? 0;
   await stage("reconcile", () => reconcileSendingCampaigns(db, queue));
   const rescued = (await stage("rescue_pipeline", () => rescueStuckPipelineCampaigns(db, queue, now))) ?? 0;
+  const webhooks = (await stage("webhook_deliveries", () => sweepWebhookDeliveries(db, queue, now))) ?? 0;
 
   // SES re-check only when this process has SES configured.
   const region = process.env.AWS_REGION;
@@ -669,6 +751,7 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
       if (!(await dailyChecksDue(db, now))) return false;
       await dailyHealthChecks(db);
       await pruneTransactionalBodies(db, now);
+      await pruneWebhookDeliveries(db, now);
       await pruneJobLogs(db, now);
       await logJob(db, { jobType: "cron_daily", status: "completed" });
       return true;
@@ -687,6 +770,7 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
       rescued,
       usageReset,
       domainsVerified,
+      webhooks,
       daily: isDaily,
     },
   });

@@ -32,6 +32,7 @@ import {
   clickTrackingUrl,
 } from "../../services/open-tracking";
 import { getSuppressedEmails, addSuppression } from "../../services/suppression";
+import { emitWebhookEvent } from "../../services/webhook-events";
 import { getAudienceFieldFallbacks } from "../../services/audience-fields";
 import { enforceAccountHealth } from "../../services/health";
 import { notifyCampaignPaused, notifyCampaignSent } from "../../services/notifications";
@@ -344,16 +345,60 @@ async function flushBatchWrites(
   reservedCount: number,
   sentCount: number,
   events: (typeof emailEvents.$inferInsert)[],
+  subscriberIdByRecipient: Map<string, string | null>,
 ): Promise<void> {
   await releaseReservation(db, accountId, reservedCount - sentCount);
+  const inserted: (typeof emailEvents.$inferInsert)[] = [];
   for (let i = 0; i < events.length; i += EVENT_INSERT_CHUNK) {
     // Dedupe-safe like the SNS-webhook insert: the unique index on
     // (providerMessageId, eventType) turns any replayed event into a no-op
     // instead of failing the whole flush.
-    await db
+    const chunk = events.slice(i, i + EVENT_INSERT_CHUNK);
+    const rows = await db
       .insert(emailEvents)
-      .values(events.slice(i, i + EVENT_INSERT_CHUNK))
-      .onConflictDoNothing();
+      .values(chunk)
+      .onConflictDoNothing()
+      .returning({ id: emailEvents.id });
+    // RETURNING only yields the rows that actually inserted, so a replayed
+    // flush emits nothing — same exactly-once rule as every other emission site.
+    const ids = new Set(rows.map((r) => r.id));
+    for (const e of chunk) if (e.id && ids.has(e.id)) inserted.push(e);
+  }
+
+  // Emitted after the flush, not per email: the events are already buffered per
+  // batch for exactly this reason (a hot-row write per email is what this
+  // function exists to avoid), and the customer's endpoint would rather receive
+  // 100 events after a batch than have each send wait on an HTTP enqueue.
+  for (const e of inserted) {
+    await emitWebhookEvent(db, {
+      type: e.eventType === "failed" ? "email.failed" : "email.sent",
+      accountId,
+      eventId: e.id!,
+      source: {
+        kind: "campaign",
+        campaignId: e.campaignId!,
+        recipientId: e.campaignRecipientId!,
+        subscriberId: subscriberIdByRecipient.get(e.campaignRecipientId!) ?? null,
+        email: e.email!,
+      },
+      subject: null,
+      providerMessageId: e.providerMessageId ?? null,
+      ...(e.eventType === "failed" ? { error: parseEventError(e.payloadJson) } : {}),
+    } as Parameters<typeof emitWebhookEvent>[1]);
+  }
+}
+
+// The failed-event row stores its reason as JSON in payloadJson; the webhook
+// payload carries it as a plain string. Never throws — a malformed payload must
+// not take down the flush.
+function parseEventError(payloadJson: string | null | undefined): string | null {
+  if (!payloadJson) return null;
+  try {
+    const parsed: unknown = JSON.parse(payloadJson);
+    const error = (parsed as { error?: unknown })?.error;
+    return typeof error === "string" ? error : null;
+  } catch {
+    return null;
   }
 }
 
@@ -694,7 +739,14 @@ async function sendToClaimed(
     // flush itself fails while another error is already propagating, keep the
     // original error (the quota over-count is the designed safe side).
     try {
-      await flushBatchWrites(db, account.id, claimed.length, sent, pendingEvents);
+      await flushBatchWrites(
+        db,
+        account.id,
+        claimed.length,
+        sent,
+        pendingEvents,
+        new Map(claimed.map((r) => [r.id, r.subscriberId])),
+      );
     } catch (flushErr) {
       // The `threw` guard means this only surfaces the flush failure when no
       // error is already propagating — it can never mask the loop's exception.

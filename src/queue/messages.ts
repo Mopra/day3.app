@@ -33,6 +33,10 @@ export const queueMessageSchema = z.discriminatedUnion("type", [
   // every account-scoped row (see services/account-purge.ts) plus best-effort
   // external teardown. Idempotent: a retry after a partial run re-purges cleanly.
   z.object({ type: z.literal("purge_account"), accountId: id }),
+  // One outbound webhook delivery attempt. ID-only: the worker re-reads the
+  // stored row (endpoint, signed payload, attempt count) from Postgres.
+  // Idempotent via the row's status ledger — only a `pending` row is delivered.
+  z.object({ type: z.literal("deliver_webhook"), deliveryId: id, accountId: id }),
 ]);
 export type QueueMessage = z.infer<typeof queueMessageSchema>;
 
@@ -130,5 +134,12 @@ export const DEFAULT_JOB_OPTIONS = {
 // (Phase 4); the test FakeQueue implements it directly — so the handlers never
 // change when the underlying transport does.
 export interface JobQueue {
-  send(message: QueueMessage): Promise<void>;
+  /**
+   * `delayMs` defers the job rather than running it as soon as a worker is free.
+   * Used by the webhook retry schedule, which needs backoff measured in minutes
+   * and hours — far longer than BullMQ's own per-job retry backoff, and owned by
+   * the handler rather than the queue because the schedule is a product-visible
+   * promise ("we retry for ~7 hours"), not a transport detail.
+   */
+  send(message: QueueMessage, opts?: { delayMs?: number }): Promise<void>;
 }

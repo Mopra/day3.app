@@ -51,10 +51,12 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
 
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
-  // Off by default, and deliberately so: a key that can mail the whole list is
-  // a different thing from a key that can edit a draft, and the difference
-  // should be a decision someone made rather than one they inherited.
+  // Both off by default, and deliberately so: a key that can mail the whole
+  // list — or subscribe a URL to every address you mail — is a different thing
+  // from a key that can edit a draft, and the difference should be a decision
+  // someone made rather than one they inherited.
   const [canSend, setCanSend] = useState(false);
+  const [canManageWebhooks, setCanManageWebhooks] = useState(false);
   const [creating, setCreating] = useState(false);
   // The one-time reveal: set right after create, cleared when dismissed.
   const [freshKey, setFreshKey] = useState<string | null>(null);
@@ -123,6 +125,11 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
                       Can send
                     </Badge>
                   )}
+                  {k.scopes?.includes("webhooks:manage") && (
+                    <Badge variant="secondary" className="text-xs">
+                      Can manage webhooks
+                    </Badge>
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Created {formatDate(k.createdAt)} · Last used {formatDate(k.lastUsedAt)}
@@ -145,6 +152,7 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
             setFreshKey(null);
             setName("");
             setCanSend(false);
+            setCanManageWebhooks(false);
           }
         }}
       >
@@ -177,6 +185,7 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
                     setFreshKey(null);
                     setName("");
                     setCanSend(false);
+                    setCanManageWebhooks(false);
                   }}
                 >
                   Done
@@ -222,6 +231,22 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
                     </span>
                   </span>
                 </label>
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2.5 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 size-4 accent-primary"
+                    checked={canManageWebhooks}
+                    onChange={(e) => setCanManageWebhooks(e.target.checked)}
+                  />
+                  <span>
+                    <span className="font-medium">Allow managing webhooks</span>
+                    <span className="block text-muted-foreground">
+                      Lets this key add and remove webhook endpoints, so you can set them up from
+                      your deploy scripts. A webhook endpoint receives every address you email, so
+                      only turn this on for keys you control.
+                    </span>
+                  </span>
+                </label>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setCreateOpen(false)}>
@@ -234,7 +259,10 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
                     try {
                       const res = await api.post<{ key: string }>("/api/api-keys", {
                         name: name.trim(),
-                        scopes: canSend ? ["campaigns:send"] : [],
+                        scopes: [
+                          ...(canSend ? ["campaigns:send"] : []),
+                          ...(canManageWebhooks ? ["webhooks:manage"] : []),
+                        ],
                       });
                       setFreshKey(res.key);
                       onKeyCreated?.(res.key);

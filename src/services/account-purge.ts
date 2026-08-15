@@ -20,6 +20,8 @@ import {
   suppressionEntries,
   topicSubscriptions,
   topics,
+  webhookDeliveries,
+  webhookEndpoints,
 } from "../db/schema";
 
 // Hard-deletes every row an account owns, then the account itself — the DB half of
@@ -46,6 +48,12 @@ export async function purgeAccountData(db: Db, accountId: string): Promise<void>
   await db.transaction(async (tx) => {
     await tx.delete(campaignRecipients).where(eq(campaignRecipients.accountId, accountId));
     await tx.delete(emailEvents).where(eq(emailEvents.accountId, accountId));
+    // Webhook deliveries hold recipient addresses in their stored payloads, and
+    // endpoints hold an encrypted signing secret — both are account data.
+    // Deliveries first: a pending one whose endpoint vanished would be swept
+    // forever by the cron rescue.
+    await tx.delete(webhookDeliveries).where(eq(webhookDeliveries.accountId, accountId));
+    await tx.delete(webhookEndpoints).where(eq(webhookEndpoints.accountId, accountId));
     await tx.delete(riskReviews).where(eq(riskReviews.accountId, accountId));
     await tx.delete(notifications).where(eq(notifications.accountId, accountId));
     await tx.delete(topicSubscriptions).where(eq(topicSubscriptions.accountId, accountId));

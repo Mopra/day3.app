@@ -32,8 +32,11 @@ export async function testDb(): Promise<Db> {
 
 export class FakeQueue implements JobQueue {
   messages: QueueMessage[] = [];
-  async send(message: QueueMessage): Promise<void> {
+  /** Delays requested per message, positionally aligned with `messages`. */
+  delays: (number | undefined)[] = [];
+  async send(message: QueueMessage, opts?: { delayMs?: number }): Promise<void> {
     this.messages.push(message);
+    this.delays.push(opts?.delayMs);
   }
 }
 

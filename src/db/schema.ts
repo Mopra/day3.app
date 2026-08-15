@@ -881,6 +881,127 @@ export const jobLogs = pgTable(
   ],
 );
 
+// --- Outbound webhooks ------------------------------------------------------
+//
+// The mirror image of app/api/webhooks/ses (inbound, provider → us): these push
+// what we learned about a message out to the customer's own app. The gap they
+// close is concrete — an app that sends its operational mail through Day3 has
+// no way to learn that an address hard-bounced, so it cannot maintain its own
+// suppression state or stop mailing a dead address from its own side.
+//
+// Event types are deliberately few and all derived from facts we already store.
+// Every one of them is emitted at the exact point the underlying row changes
+// state, never on a poll — see services/webhook-events.ts.
+export const WEBHOOK_EVENT_TYPES = [
+  // Provider accepted the message (campaign recipient or transactional send).
+  "email.sent",
+  // SES delivery notification.
+  "email.delivered",
+  // SES bounce. `data.bounce_type` distinguishes Permanent (suppressing) from
+  // Transient (recorded only) — both are emitted, because an app may want to
+  // surface a soft bounce without acting on it.
+  "email.bounced",
+  "email.complained",
+  // We never handed the message to the provider (bad address, rejected content,
+  // swept stuck lock). Terminal.
+  "email.failed",
+  // An address was added to the account's suppression list, whatever put it
+  // there — bounce, complaint, unsubscribe, manual, or API. This is the one
+  // that feeds a downstream app's own suppression table.
+  "suppression.created",
+] as const;
+export type WebhookEventType = (typeof WEBHOOK_EVENT_TYPES)[number];
+
+export const webhookEndpoints = pgTable(
+  "webhook_endpoints",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    // https:// only, and re-validated against the SSRF guard at delivery time —
+    // this is a URL a tenant supplies and our worker then fetches. See
+    // lib/webhook-url.ts.
+    url: text("url").notNull(),
+    description: text("description"),
+    // Subscribed event types. An empty array is legal and means "nothing" —
+    // the endpoint exists but is not wired up yet.
+    enabledEvents: jsonb("enabled_events").$type<WebhookEventType[]>().notNull(),
+    // The HMAC signing secret, AES-256-GCM encrypted at rest with the app's
+    // keyring (lib/crypto.ts). Encrypted rather than hashed because the user
+    // has to be able to read it back — it goes in their app's config — and the
+    // worker has to be able to sign with it.
+    secretEnc: text("secret_enc").notNull(),
+    status: text("status").$type<"enabled" | "disabled">().notNull().default("enabled"),
+    // Health, surfaced in the UI. We deliberately do NOT auto-disable an endpoint
+    // on repeated failure: for the suppression-sync use case a silently disabled
+    // endpoint is worse than a noisy failing one — it would look healthy while
+    // the downstream app quietly drifted out of sync. Retries are bounded
+    // per-delivery instead (see WEBHOOK_RETRY_DELAYS_MS), which already caps the
+    // work a dead endpoint can generate.
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    lastSuccessAt: tstz("last_success_at"),
+    lastFailureAt: tstz("last_failure_at"),
+    lastError: text("last_error"),
+    createdBy: text("created_by").notNull(),
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [index("idx_webhook_endpoints_account").on(t.accountId)],
+);
+
+// One row per (endpoint, event). Status is the ledger that makes delivery
+// idempotent, exactly like campaign_recipients for sends: a retried job only
+// picks up a row still in `pending`.
+//   pending    — queued, waiting for the worker (nextAttemptAt gates retries)
+//   delivering — claimed by a worker (lockedAt drives the stuck-lock sweep)
+//   succeeded  — endpoint answered 2xx
+//   failed     — terminal: retries exhausted, or the URL failed the SSRF guard
+export const WEBHOOK_DELIVERY_STATUSES = ["pending", "delivering", "succeeded", "failed"] as const;
+export type WebhookDeliveryStatus = (typeof WEBHOOK_DELIVERY_STATUSES)[number];
+
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    endpointId: text("endpoint_id").notNull(),
+    // The logical event id, shared across every endpoint subscribed to it and
+    // stable across retries — it is what the receiver dedupes on. Where the
+    // event came from an email_events row, this IS that row's id, so an event in
+    // the customer's logs can be found on the Activity page.
+    eventId: text("event_id").notNull(),
+    eventType: text("event_type").$type<WebhookEventType>().notNull(),
+    // The exact bytes we sign and POST. Stored rather than re-rendered so a
+    // retry (or a manual resend) reproduces a byte-identical, still-valid
+    // signature even if the underlying row has moved on since.
+    payloadJson: text("payload_json").notNull(),
+    status: text("status").$type<WebhookDeliveryStatus>().notNull().default("pending"),
+    attempt: integer("attempt").notNull().default(0),
+    nextAttemptAt: tstz("next_attempt_at"),
+    lockedAt: tstz("locked_at"),
+    responseStatus: integer("response_status"),
+    // Truncated to WEBHOOK_RESPONSE_SNIPPET_BYTES — enough to debug a 400 from
+    // the receiver, bounded so a misbehaving endpoint can't grow the table.
+    responseBody: text("response_body"),
+    error: text("error"),
+    durationMs: integer("duration_ms"),
+    deliveredAt: tstz("delivered_at"),
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    index("idx_webhook_deliveries_account_created").on(t.accountId, t.createdAt),
+    index("idx_webhook_deliveries_endpoint_created").on(t.endpointId, t.createdAt),
+    // The cron rescue sweep scans for due retries and stuck locks.
+    index("idx_webhook_deliveries_status_next").on(t.status, t.nextAttemptAt),
+    // Emission idempotency. The upstream choke points already only fire on a
+    // real state change (an email_events insert that actually inserted, a status
+    // UPDATE that actually flipped), so this is belt-and-braces — but it is the
+    // guarantee that makes "at least once, never twice for the same event" true
+    // even if a future call site is less careful.
+    uniqueIndex("uq_webhook_deliveries_endpoint_event").on(t.endpointId, t.eventId),
+  ],
+);
+
 export type Account = typeof accounts.$inferSelect;
 export type AccountUser = typeof accountUsers.$inferSelect;
 export type SendingDomain = typeof sendingDomains.$inferSelect;
@@ -903,3 +1024,5 @@ export type RiskReview = typeof riskReviews.$inferSelect;
 export type JobLog = typeof jobLogs.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type IdempotencyKey = typeof idempotencyKeys.$inferSelect;
+export type WebhookEndpoint = typeof webhookEndpoints.$inferSelect;
+export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;

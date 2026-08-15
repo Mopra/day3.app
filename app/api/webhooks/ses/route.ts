@@ -13,6 +13,7 @@ import {
 import { newId, nowIso } from "@/lib/ids";
 import { addSuppression } from "@/services/suppression";
 import { enforceAccountHealth } from "@/services/health";
+import { emitWebhookEvent } from "@/services/webhook-events";
 import { logger } from "@/lib/logger";
 
 // SES → configuration set → SNS topic → HTTPS subscription posts here. The
@@ -138,29 +139,75 @@ export async function POST(req: NextRequest) {
 
   const now = nowIso();
 
+  // Outbound webhooks ride on the recorded-event id, and only when the insert
+  // actually inserted: SNS is at-least-once, so emitting on every notification
+  // would replay the event at the customer's endpoint on each redelivery.
+  const campaignSource = {
+    kind: "campaign" as const,
+    campaignId: recipient.campaignId,
+    recipientId: recipient.id,
+    subscriberId: recipient.subscriberId,
+    email: recipient.email,
+  };
+
   if (eventType === "delivery") {
-    await recordEvent(db, recipient, "delivery", messageId, payload.Message, now);
+    const eventId = await recordEvent(db, recipient, "delivery", messageId, payload.Message, now);
     await db
       .update(campaignRecipients)
       .set({ status: "delivered", deliveredAt: now, updatedAt: now })
       .where(and(eq(campaignRecipients.id, recipient.id), eq(campaignRecipients.status, "sent")));
+    if (eventId) {
+      await emitWebhookEvent(db, {
+        type: "email.delivered",
+        accountId: recipient.accountId,
+        eventId,
+        source: campaignSource,
+        subject: null,
+        providerMessageId: messageId,
+      });
+    }
     return new Response("OK", { status: 200 });
   }
 
   if (eventType === "bounce") {
-    await recordEvent(db, recipient, "bounce", messageId, payload.Message, now);
+    const eventId = await recordEvent(db, recipient, "bounce", messageId, payload.Message, now);
     // Only permanent (hard) bounces suppress; transient (soft) bounces are
     // recorded but don't pull the address from the list.
-    const bounceType = str(rec(event.bounce).bounceType);
+    const bounce = rec(event.bounce);
+    const bounceType = str(bounce.bounceType);
     if (bounceType === "Permanent" || bounceType === "Undetermined") {
       await applyHardFailure(db, recipient, "bounced", "hard_bounce", now);
+    }
+    // Emitted for transient bounces too — the receiver gets bounce_type and
+    // decides. Suppressing on a soft bounce is our policy, not theirs.
+    if (eventId) {
+      await emitWebhookEvent(db, {
+        type: "email.bounced",
+        accountId: recipient.accountId,
+        eventId,
+        source: campaignSource,
+        subject: null,
+        providerMessageId: messageId,
+        bounceType: bounceType ?? null,
+        bounceSubType: str(bounce.bounceSubType) ?? null,
+      });
     }
     return new Response("OK", { status: 200 });
   }
 
   if (eventType === "complaint") {
-    await recordEvent(db, recipient, "complaint", messageId, payload.Message, now);
+    const eventId = await recordEvent(db, recipient, "complaint", messageId, payload.Message, now);
     await applyHardFailure(db, recipient, "complained", "complaint", now);
+    if (eventId) {
+      await emitWebhookEvent(db, {
+        type: "email.complained",
+        accountId: recipient.accountId,
+        eventId,
+        source: campaignSource,
+        subject: null,
+        providerMessageId: messageId,
+      });
+    }
     return new Response("OK", { status: 200 });
   }
 
@@ -195,9 +242,16 @@ async function handleTransactionalEvent(
 ): Promise<Response> {
   const now = nowIso();
 
-  const record = async (type: "delivery" | "bounce" | "complaint", addresses: string[]) => {
+  // Returns [address, newEventId] for the addresses this notification newly
+  // recorded — redeliveries yield nothing, which is what keeps the outbound
+  // webhook exactly-once per (address, event type).
+  const record = async (
+    type: "delivery" | "bounce" | "complaint",
+    addresses: string[],
+  ): Promise<Array<{ address: string; eventId: string }>> => {
+    const fresh: Array<{ address: string; eventId: string }> = [];
     for (const address of addresses) {
-      await db
+      const inserted = await db
         .insert(emailEvents)
         .values({
           id: newId("evt"),
@@ -210,24 +264,64 @@ async function handleTransactionalEvent(
           payloadJson: rawMessage,
           createdAt: now,
         })
-        .onConflictDoNothing();
+        .onConflictDoNothing()
+        .returning({ id: emailEvents.id });
+      if (inserted[0]) fresh.push({ address, eventId: inserted[0].id });
+    }
+    return fresh;
+  };
+
+  // One webhook event per affected address, matching how SES reports them: a
+  // 50-recipient message that bounces for three addresses is three events, not
+  // one with an array — the receiver almost always wants to act per address.
+  const emitPerAddress = async (
+    fresh: Array<{ address: string; eventId: string }>,
+    build: (address: string, eventId: string) => Parameters<typeof emitWebhookEvent>[1],
+  ) => {
+    for (const { address, eventId } of fresh) {
+      await emitWebhookEvent(db, build(address, eventId));
     }
   };
 
+  const txSource = (address: string) => ({
+    kind: "transactional" as const,
+    emailId: email.id,
+    to: email.to,
+    email: address,
+  });
+
   if (eventType === "delivery") {
-    await record("delivery", reportedAddresses(rec(event.delivery).recipients, email));
+    const fresh = await record("delivery", reportedAddresses(rec(event.delivery).recipients, email));
     await db
       .update(transactionalEmails)
       .set({ status: "delivered", deliveredAt: now, updatedAt: now })
       .where(and(eq(transactionalEmails.id, email.id), eq(transactionalEmails.status, "sent")));
+    await emitPerAddress(fresh, (address, eventId) => ({
+      type: "email.delivered",
+      accountId: email.accountId,
+      eventId,
+      source: txSource(address),
+      subject: email.subject,
+      providerMessageId: messageId,
+    }));
     return new Response("OK", { status: 200 });
   }
 
   if (eventType === "bounce") {
     const bounce = rec(event.bounce);
     const addresses = reportedAddresses(bounce.bouncedRecipients, email);
-    await record("bounce", addresses);
+    const fresh = await record("bounce", addresses);
     const bounceType = str(bounce.bounceType);
+    await emitPerAddress(fresh, (address, eventId) => ({
+      type: "email.bounced",
+      accountId: email.accountId,
+      eventId,
+      source: txSource(address),
+      subject: email.subject,
+      providerMessageId: messageId,
+      bounceType: bounceType ?? null,
+      bounceSubType: str(bounce.bounceSubType) ?? null,
+    }));
     if (bounceType === "Permanent" || bounceType === "Undetermined") {
       // Suppression FIRST and unconditionally: addSuppression is idempotent
       // (onConflictDoNothing), so a redelivery is free, and every notification's
@@ -259,7 +353,15 @@ async function handleTransactionalEvent(
 
   if (eventType === "complaint") {
     const addresses = reportedAddresses(rec(event.complaint).complainedRecipients, email);
-    await record("complaint", addresses);
+    const fresh = await record("complaint", addresses);
+    await emitPerAddress(fresh, (address, eventId) => ({
+      type: "email.complained",
+      accountId: email.accountId,
+      eventId,
+      source: txSource(address),
+      subject: email.subject,
+      providerMessageId: messageId,
+    }));
     for (const address of addresses) {
       await addSuppression(db, {
         accountId: email.accountId,
@@ -307,6 +409,9 @@ function reportedAddresses(reported: unknown, email: TransactionalEmail): string
   return fromPayload.length > 0 ? fromPayload : email.to;
 }
 
+// Returns the new event's id, or null when this notification was a redelivery
+// of one already recorded. That null is what keeps outbound webhooks
+// exactly-once per real event — callers emit only on a non-null result.
 async function recordEvent(
   db: Db,
   recipient: CampaignRecipient,
@@ -314,10 +419,10 @@ async function recordEvent(
   messageId: string,
   rawMessage: string,
   now: string,
-): Promise<void> {
+): Promise<string | null> {
   // SNS is at-least-once: a redelivered notification must not insert a second
   // row. The unique index on (providerMessageId, eventType) makes this a no-op.
-  await db
+  const inserted = await db
     .insert(emailEvents)
     .values({
       id: newId("evt"),
@@ -331,7 +436,9 @@ async function recordEvent(
       payloadJson: rawMessage,
       createdAt: now,
     })
-    .onConflictDoNothing();
+    .onConflictDoNothing()
+    .returning({ id: emailEvents.id });
+  return inserted[0]?.id ?? null;
 }
 
 // Mirrors the old provider webhook: mark the recipient + subscriber, suppress the

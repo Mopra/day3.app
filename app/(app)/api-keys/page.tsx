@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ApiKeysSection } from "@/components/api-keys-section";
 import { ApiDocsSection } from "@/components/api-docs-section";
+import { WebhooksSection } from "@/components/webhooks-section";
 
 // A page of its own rather than a Settings section: this is a developer surface
 // people arrive at with a task in hand ("import my list", "sync my users"), and
@@ -25,6 +26,8 @@ export default function ApiKeysPage() {
       </div>
 
       <ApiKeysSection onKeyCreated={setFreshKey} />
+
+      <WebhooksSection />
 
       <ApiDocsSection freshKey={freshKey} />
     </div>

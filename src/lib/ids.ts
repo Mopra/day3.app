@@ -24,7 +24,9 @@ export type IdPrefix =
   | "ntf"
   | "dnsint"
   | "key"
-  | "idem";
+  | "idem"
+  | "whe"
+  | "whd";
 
 export function newId(prefix: IdPrefix): string {
   const bytes = new Uint8Array(20);

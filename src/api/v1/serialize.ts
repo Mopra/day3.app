@@ -7,6 +7,8 @@ import type {
   SuppressionReason,
   Topic,
   TransactionalEmail,
+  WebhookDelivery,
+  WebhookEndpoint,
 } from "../../db/schema";
 import { safeParseSegmentFilter, type SegmentFilter } from "../../lib/segment-filter";
 
@@ -161,6 +163,44 @@ export function serializeEmail(
     ...(events
       ? { events: events.map((ev) => ({ type: ev.eventType, created_at: toIso(ev.createdAt) })) }
       : {}),
+  };
+}
+
+// Webhook endpoint → public shape. The signing secret is deliberately absent
+// and has no v1 representation at any scope: reveal/rotate live in the app UI
+// behind a session, because a key that could read the secret could forge our
+// events into the customer's own receiver. See api/v1/scopes.ts.
+export function serializeWebhookEndpoint(e: WebhookEndpoint): Record<string, unknown> {
+  return {
+    id: e.id,
+    object: "webhook_endpoint",
+    url: e.url,
+    description: e.description,
+    events: e.enabledEvents ?? [],
+    status: e.status,
+    consecutive_failures: e.consecutiveFailures,
+    last_success_at: toIso(e.lastSuccessAt),
+    last_failure_at: toIso(e.lastFailureAt),
+    last_error: e.lastError,
+    created_at: toIso(e.createdAt),
+  };
+}
+
+export function serializeWebhookDelivery(d: WebhookDelivery): Record<string, unknown> {
+  return {
+    id: d.id,
+    object: "webhook_delivery",
+    endpoint_id: d.endpointId,
+    event_id: d.eventId,
+    event_type: d.eventType,
+    status: d.status,
+    attempt: d.attempt,
+    response_status: d.responseStatus,
+    error: d.error,
+    duration_ms: d.durationMs,
+    next_attempt_at: toIso(d.nextAttemptAt),
+    delivered_at: toIso(d.deliveredAt),
+    created_at: toIso(d.createdAt),
   };
 }
 

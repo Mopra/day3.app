@@ -478,9 +478,9 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
           ))}
 
           <p className="text-xs text-muted-foreground">
-            Campaigns and sending, domains and senders, and webhooks have no endpoints yet — they
-            get their own version. Rate limit: 600 requests per minute per organization; batch
-            calls count as one.
+            Campaigns and sending, and domains and senders, have no endpoints yet — they get their
+            own version. Webhooks are set up above rather than over the API. Rate limit: 600
+            requests per minute per organization; batch calls count as one.
           </p>
         </CardContent>
       </Card>
