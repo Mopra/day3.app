@@ -2,6 +2,7 @@ import {
   SESv2Client,
   SendEmailCommand,
   DeleteEmailIdentityCommand,
+  GetAccountCommand,
 } from "@aws-sdk/client-sesv2";
 import type { EmailProvider, SendEmailInput, SendEmailResult } from "./provider";
 
@@ -64,6 +65,19 @@ export class SesEmailProvider implements EmailProvider {
     } catch (err) {
       return mapSesError(err);
     }
+  }
+
+  // The account's approved sends-per-second, which SES enforces separately from
+  // the 24-hour quota and which the pacer (src/email/send-rate.ts) targets. Read
+  // live rather than configured, because AWS raises the ceiling on its own as an
+  // account's reputation builds — a number pinned at setup would throttle a grown
+  // account to its first-day rate forever. Returns null when SES answers without
+  // one; errors propagate so the caller can distinguish "no ceiling reported"
+  // from "we could not ask" and fall back conservatively.
+  async maxSendRate(): Promise<number | null> {
+    const res = await this.client.send(new GetAccountCommand({}));
+    const rate = res.SendQuota?.MaxSendRate;
+    return typeof rate === "number" && Number.isFinite(rate) && rate > 0 ? rate : null;
   }
 
   // Deletes a verified domain identity on account purge. Idempotent: SES raises

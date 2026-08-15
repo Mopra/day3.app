@@ -18,6 +18,7 @@ import { recordDeadLetter } from "../src/lib/job-log";
 import { logger } from "../src/lib/logger";
 import { getDb } from "../src/db/client";
 import { emailProviderFromEnv } from "../src/email/factory";
+import { createSendPacer, withSendPacing } from "../src/email/send-rate";
 import { createSupabaseObjectStore } from "../src/lib/supabase-storage";
 import { requireAppUrl, requireUnsubscribeSecret, validateEnv } from "../src/lib/env";
 import { writeHeartbeat, HEARTBEAT_INTERVAL_MS } from "../src/lib/heartbeat";
@@ -65,16 +66,38 @@ const jobQueue: JobQueue = {
 // "failed" 15 minutes later.
 let draining = false;
 
+// Outbound mail is paced to the provider's approved sends-per-second before it
+// reaches the provider at all, so no send path can forget to opt in: the lanes of
+// one campaign, the lanes of a *concurrent* campaign, transactional sends and
+// form confirmations all draw down the one ceiling SES enforces per AWS account.
+// Without this the lanes send as fast as the socket allows (~50/s at the
+// defaults), which overruns a fresh account's 14/s within seconds and pauses the
+// campaign for 10+ minutes. Shares queueConnection: one Redis round-trip per
+// email on an already-open non-blocking connection, and the pacer bounds its own
+// waits so a Redis stall degrades to unpaced sending rather than to no sending.
+const baseEmailProvider = emailProviderFromEnv();
+const sendPacer = createSendPacer({
+  store: queueConnection,
+  discover: baseEmailProvider.maxSendRate
+    ? () => baseEmailProvider.maxSendRate!()
+    : undefined,
+});
+
 const deps: QueueDeps = {
   db: getDb(),
   queue: jobQueue,
-  emailProvider: emailProviderFromEnv(),
+  emailProvider: withSendPacing(baseEmailProvider, sendPacer),
   store: createSupabaseObjectStore(),
   appUrl: requireAppUrl(),
   unsubscribeSecret: requireUnsubscribeSecret(),
   aiReviewMode: process.env.AI_REVIEW_MODE,
   shouldAbort: () => draining,
 };
+
+// Resolve the rate before consuming, so the first campaign of a boot is paced
+// and the effective rate is in the startup logs. Best-effort by construction:
+// warmUp falls back to the conservative default rather than throwing.
+await sendPacer.warmUp();
 
 const workerConnection = makeConnection();
 const worker = new Worker(

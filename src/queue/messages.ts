@@ -64,9 +64,11 @@ export const SEND_BATCH_SIZE = envInt("SEND_BATCH_SIZE", 100, 1, MAX_SEND_BATCH_
 // slice of pending recipients via `FOR UPDATE SKIP LOCKED`, so N lanes drain a
 // campaign ~N× faster than the old single self-chaining batch. Effective
 // parallelism is min(SEND_LANES, WORKER_CONCURRENCY × worker replicas), so set
-// WORKER_CONCURRENCY to at least SEND_LANES to saturate it. Tune both to roughly
-// your approved SES max send rate (a serial lane sustains ~1 send / network RTT;
-// e.g. 8 lanes ≈ 50/s). Lane count is conserved — each batch enqueues at most one
+// WORKER_CONCURRENCY to at least SEND_LANES to saturate it. Lanes buy latency
+// hiding, NOT send rate: the provider's sends-per-second ceiling is enforced
+// separately by the pacer every lane shares (src/email/send-rate.ts), so more
+// lanes keep the paced slots taken but can never exceed them. Lane count is
+// conserved — each batch enqueues at most one
 // follow-up, and the cron sweep only re-fans-out when no batch is in flight —
 // so this never grows unbounded. The cap below is a safety ceiling.
 export const SEND_LANES = envInt("SEND_LANES", 8, 1, 64);

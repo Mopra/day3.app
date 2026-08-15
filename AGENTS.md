@@ -118,6 +118,20 @@ page share a single account lookup instead of one per caller.
   codes (`rate_limit` / `daily_limit` / `quota` — see `campaigns.paused_code`;
   user pauses never auto-resume), and re-enqueues the driving job for campaigns
   stranded in `pending_review` / `approved` / `generating_recipients`.
+- **Outbound mail is paced, and the pacer is the only thing that knows the rate.**
+  SES enforces a max send *rate* (emails/second) separately from the 24-hour quota,
+  and nothing else in the send path bounds it — the lanes send as fast as the
+  socket allows. So every send goes through `withSendPacing`
+  (`src/email/send-rate.ts`), a Redis-held GCRA limiter wrapped around the
+  `EmailProvider` in `worker/index.ts`. Wrapped at the *provider*, not in the send
+  loop, so campaign batches, transactional sends, and form confirmations are paced
+  by construction and a new send path can't forget to opt in; Redis-held because
+  the ceiling belongs to the AWS account, so every lane and replica draws down one
+  budget. The rate is read live (`GetAccount` → `SendQuota.MaxSendRate`, hourly)
+  because AWS raises it on its own as reputation builds; `SES_MAX_SEND_RATE`
+  overrides. It fails open (unpaced, logged once) rather than blocking mail, and
+  absorbs a stray throttle with a braked retry — but only a *plain* throttle.
+  Daily-quota/suspension/misconfig still reach the handler and pause the campaign.
 - The SES client deliberately runs with `maxAttempts: 1` — SDK-internal retries
   can silently double-send when a response is lost after SES accepted the
   message. Retry policy lives in the send-batch handler, where
