@@ -42,4 +42,10 @@ export interface EmailProvider {
   // deleting an already-absent identity is a success, not an error (the purge job
   // may retry). Best-effort at the call site; failures never block the purge.
   deleteIdentity?(identity: string): Promise<void>;
+  // The provider's current per-second send ceiling, used to configure the pacer
+  // (src/email/send-rate.ts). Returns null when the provider is reachable but
+  // reports no usable rate. Implement this ONLY on a provider that actually
+  // throttles: its absence is what tells the pacer to stay out of the way
+  // (the mock has no ceiling worth pacing against).
+  maxSendRate?(): Promise<number | null>;
 }
