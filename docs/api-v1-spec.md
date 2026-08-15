@@ -26,9 +26,19 @@ developers a Resend-grade DX with the migration gaps fixed (bulk upsert,
 custom fields, suppression-state import), and let an app send its operational
 email through the same verified domain as its newsletter.
 
-Out of scope for v1: campaign (newsletter) sending, domains/senders,
-customer-facing webhooks, OAuth. These get their own spec later; nothing below
-should paint us into a corner on them.
+Out of scope for v1: domains/senders, OAuth. These get their own spec later;
+nothing below should paint us into a corner on them.
+
+**Added 2026-08-15: customer-facing webhooks** — `/v1/webhooks` (+ `/{id}`,
+`/{id}/deliveries`) manage the endpoints Day3 POSTs delivery, bounce, complaint
+and suppression events to. Gated on a second scope, `webhooks:manage`, reads
+included: an endpoint is a standing feed of every address the account mails, and
+the delivery log names the recipient of every event. The signing secret is
+returned once by `POST` and has no other API representation — reveal and rotate
+stay in the app UI. Receiver contract and the signature algorithm:
+`docs/webhooks.md`; product description: `PRODUCT.md §6.16`. Tests:
+`test/webhooks.test.ts`, `test/v1-webhooks-route.test.ts`,
+`test/webhook-signature.test.ts`, `test/webhook-url.test.ts`.
 
 ---
 
@@ -37,8 +47,12 @@ should paint us into a corner on them.
 ### Base URL & versioning
 
 ```
-https://day3.app/api/v1
+https://go.day3.app/api/v1
 ```
+
+(The app — and therefore the API — is served from `go.day3.app`; the apex
+`day3.app` is the marketing site. The in-app docs derive this from the current
+origin, so they are always right; this line is the one that can go stale.)
 
 - Version in the path. `v1` is stable once shipped; breaking changes → `v2`.
 - Additive changes (new fields, new endpoints, new enum values on *output*) are

@@ -83,6 +83,10 @@ REDIS_URL=rediss://default:<password>@<vps-host>:6379
 # --- App (REQUIRED — worker refuses to boot without these) ---
 APP_URL=https://go.day3.app
 UNSUBSCRIBE_SECRET=<same 32+ char secret as the web tier>
+# At-rest encryption keyring. MUST be byte-identical to the web tier's value —
+# the worker decrypts outbound-webhook signing secrets that the web tier wrote,
+# and a mismatched key fails every delivery with "no key for id".
+DNS_TOKEN_ENC_KEY=<same base64 32-byte key as the web tier>
 
 # --- Supabase Storage (reads uploaded CSVs during imports) ---
 SUPABASE_URL=https://<ref>.supabase.co

@@ -745,10 +745,30 @@ Include \`request_id\` when reporting a problem to Day3 support.
 
 ${MARKDOWN_DIALECT_REFERENCE}
 
+## Webhooks
+
+\`GET|POST /v1/webhooks\`, \`GET|PATCH|DELETE /v1/webhooks/{id}\`,
+\`GET /v1/webhooks/{id}/deliveries\` — endpoints Day3 POSTs events to, so an app
+learns about delivery, bounces, complaints and suppressions without polling.
+
+Events: \`email.sent\`, \`email.delivered\`, \`email.bounced\`,
+\`email.complained\`, \`email.failed\`, \`suppression.created\`.
+
+Every route here — reads included — needs the \`webhooks:manage\` scope, which
+is off by default. If the key lacks it you get 403 \`insufficient_scope\`: tell
+the user to mint a key with webhooks enabled, don't work around it. The signing
+secret is in the \`POST\` response only and is never readable again over the API;
+if the user lost it, they rotate it in the app under API keys → Webhooks.
+
+Receivers must verify \`Day3-Signature: t=…,v1=…\` (HMAC-SHA256 over
+\`\${t}.\${rawBody}\`) against the **raw** body, return 2xx fast, and dedupe on
+the event \`id\`. Full receiver guide, with a reference verifier:
+\`docs/webhooks.md\`.
+
 ## Not in v1
 
-Domains and senders, webhooks, and OAuth have no endpoints yet. Don't invent
-them — if a task needs one, say so instead.
+Domains and senders, and OAuth have no endpoints yet. Don't invent them — if a
+task needs one, say so instead.
 `;
 }
 

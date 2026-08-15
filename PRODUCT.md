@@ -55,7 +55,7 @@ default path is the deliverable one.
   open; mailing a real audience needs a key you explicitly allowed to send. This
   is the deliberate counter-position to marketing suites that bolt a chat box
   onto their own editor: the email is one artifact, editable from both ends
-  (§6.16).
+  (§6.17).
 - **Simple by default, deep when you need it.** The common path — write an email,
   pick an audience, send — stays a few clicks. Open and click tracking and a
   deliverability/reputation/engagement dashboard are included (§6.10), and
@@ -731,7 +731,7 @@ A REST API at **`/api/v1`** does three jobs: it **sends transactional email**
 audiences, contacts, custom fields, segments, topics, and the suppression list —
 so teams can manage their lists from code and **migrate from another provider**
 (Resend, Mailchimp, …) with a short script (§10), and it exposes **campaigns**, so a
-newsletter can be written, previewed and sent from outside the app (see §6.16).
+newsletter can be written, previewed and sent from outside the app (see §6.17).
 Full reference spec: `docs/api-v1-spec.md`.
 
 - **Auth:** bearer API keys (`day3_live_…`), created and revoked on the **API keys**
@@ -745,7 +745,7 @@ Full reference spec: `docs/api-v1-spec.md`.
   audience. It is a checkbox at key creation ("Allow sending campaigns"), off by
   default, and cannot be added to an existing key — granting it means minting a
   new one, so a key's powers stay visible in the list rather than drifting. This
-  exists because of MCP (§6.16): a script does what its author wrote, but an
+  exists because of MCP (§6.17): a script does what its author wrote, but an
   agent holding the same key decides for itself, and "email everyone" is not a
   decision to hand over by default.
 - **The API keys page is also the documentation.** There is no separate docs site;
@@ -873,7 +873,68 @@ per-email, come free with the existing SES event pipeline.
 > `src/queue/handlers/send-transactional.ts`, sweeps in `src/queue/cron.ts`,
 > UI `app/(app)/emails/page.tsx`, docs content `src/lib/api-docs.ts`.
 
-### 6.16 MCP — write campaigns in your AI editor
+### 6.16 Webhooks — Day3 tells your app what happened
+
+The inverse of the API: your code calls Day3, **webhooks let Day3 call you**.
+An app that sends its operational mail through Day3 otherwise has no way to
+learn that an address hard-bounced — it would keep a dead address on file, keep
+showing "we emailed you", and have no suppression state of its own. Polling
+`GET /v1/suppressions` on a timer is the workaround nobody should have to write.
+
+Add an endpoint under **API keys → Webhooks**, choose the events, and Day3 POSTs
+each one as JSON.
+
+**Events.** All derived from facts Day3 already records, and all emitted at the
+moment the underlying row changes — never on a poll:
+
+| Event | When |
+| --- | --- |
+| `email.sent` | We handed the message to the provider |
+| `email.delivered` | The receiving server accepted it |
+| `email.bounced` | It came back — `bounce_type` says whether it's permanent |
+| `email.complained` | The recipient marked it as spam |
+| `email.failed` | It never left (bad address, blocked before sending) |
+| `suppression.created` | An address was added to the suppression list — **the one that feeds your own suppression table** |
+
+Email events cover **both** campaign sends and transactional (`POST /v1/emails`)
+sends; the payload's `data.object` says which, and carries the ids to join on.
+A transactional message with fifty recipients produces one event *per address*,
+matching how SES reports them.
+
+**Delivery guarantees.** At-least-once, and exactly-once in the normal case:
+every event is emitted from inside the same guard that makes the underlying
+write idempotent, so an SNS redelivery or a retried job does not replay it.
+Receivers still get a stable `id` (and `Day3-Event-Id` header) to dedupe on.
+Delivery is a Postgres-backed outbox, so a Redis outage delays events rather
+than losing them. A failing endpoint is retried six times over ~7 hours, then
+left in the log for a manual resend. Endpoints are never auto-disabled — a
+silently disabled webhook looks healthy while your data drifts.
+
+**Security.** Every request carries `Day3-Signature: t=…,v1=…` — HMAC-SHA256
+over `${timestamp}.${body}` with the endpoint's signing secret, so receivers can
+verify authenticity and bound replay. Endpoint URLs must be public https; we
+refuse loopback, private, and cloud-metadata addresses, validate at the socket's
+own DNS lookup (so a rebind can't slip past), and never follow redirects.
+
+**Setting them up.** In the app under API keys → Webhooks (org-admin only), or
+over the API at `/v1/webhooks` for deploy scripts and IaC. The API surface —
+reads included — requires the `webhooks:manage` scope, off by default: creating
+an endpoint is the one write in v1 that is an exfiltration primitive rather than
+a content edit, and the delivery log names the recipient of every event. The
+signing secret is returned once at creation and otherwise only readable in the
+app behind a session, because a key that could read it could forge our events
+into the customer's own receiver.
+
+> Source of truth in code: schema `webhook_endpoints` / `webhook_deliveries`,
+> emission `src/services/webhook-events.ts`, endpoint CRUD + retry policy
+> `src/services/webhooks.ts`, delivery job
+> `src/queue/handlers/deliver-webhook.ts`, signing
+> `src/lib/webhook-signature.ts`, SSRF guard `src/lib/webhook-url.ts`, routes
+> `app/api/webhook-endpoints/**` + `app/api/webhook-deliveries/**` (session) and
+> `app/api/v1/webhooks/**` (public, `webhooks:manage`), UI
+> `src/components/webhooks-section.tsx`, receiver guide `docs/webhooks.md`.
+
+### 6.17 MCP — write campaigns in your AI editor
 
 Day3 runs a **Model Context Protocol server at `/api/mcp`**, so an AI coding
 editor (Claude Code, Cursor, VS Code) becomes an external composer for Day3
@@ -920,7 +981,7 @@ the app.
 > `src/lib/campaign-markdown-docs.ts`), campaign endpoints
 > `app/api/v1/campaigns/**`, shared send gates `src/services/campaign-send.ts`.
 
-### 6.17 Dashboard & getting around
+### 6.18 Dashboard & getting around
 
 **The Dashboard** is the landing screen — a sending overview for the current
 organization, built to answer "what state am I in, and what should I do next?":
@@ -1057,7 +1118,7 @@ their crashed/lost sends.
 6. **Send transactional email from your app:** verify a domain → mint an API key →
    `POST /v1/emails` → watch each send on the Emails page (§6.15).
 7. **Draft an email from your editor:** point Claude Code / Cursor at `/api/mcp` with an
-   API key → describe the email → open the draft in the composer and send (§6.16).
+   API key → describe the email → open the draft in the composer and send (§6.17).
 
 ---
 
@@ -1098,7 +1159,7 @@ data is worse than one that says what it dropped.
 | **Original signup dates** | ❌ | `created_at` in a payload is ignored; there is no backdating. Keep the original date as a custom field (e.g. `signed_up_at`) if you need it — it's then usable in segments and merge tags |
 | Per-contact engagement history (opens/clicks) | ❌ | Starts fresh. Metrics (§6.10) measures Day3 sends only |
 | Past campaign archives & their stats | ❌ | Stay with the old provider; export anything you want to keep before closing that account |
-| Email templates / HTML | ⚠️ Manual | Rebuild from Day3's five built-in templates (§6.1), or paste HTML into a `:::html` block over the API / MCP (§6.16) — Day3's builder is section-based, so a foreign HTML template imported wholesale would not stay editable |
+| Email templates / HTML | ⚠️ Manual | Rebuild from Day3's five built-in templates (§6.1), or paste HTML into a `:::html` block over the API / MCP (§6.17) — Day3's builder is section-based, so a foreign HTML template imported wholesale would not stay editable |
 | Automations / drip flows | ❌ | Not shipped yet (§2, designed) |
 | **Domain sending reputation** | ⚠️ Partly | Domain-level reputation and recipient engagement history follow the **subdomain** — reuse it and it comes with you. IP reputation does not: Day3 sends on AWS SES shared IPs (§10.6) |
 
@@ -1230,7 +1291,7 @@ copy-paste, self-contained, and prefilled with the account's real audience id:
 
 The same content is reachable per-resource through the **`</>` API panel** (§6.14) as a
 copyable **AI context pack**: the ids in view plus the full reference. And once a list is
-in, **MCP** (§6.16) lets the same assistant write the first campaign against it.
+in, **MCP** (§6.17) lets the same assistant write the first campaign against it.
 
 ### 10.5 The migration checklist, end to end
 
@@ -1296,7 +1357,7 @@ Stated because it's a reason to trust the migration in: nothing here is a one-wa
   importer reads.
 - **The v1 API reads everything it writes** — contacts, fields, segments, topics, the
   suppression list, campaigns, and transactional email records, all cursor-paginated.
-- **Campaign bodies convert to Day3 Markdown** (§6.16), so an email's content is
+- **Campaign bodies convert to Day3 Markdown** (§6.17), so an email's content is
   portable text rather than trapped in a proprietary builder.
 - **Deleting the organization is real erasure** (§6.8) — the account, its data, and its
   SES identities go, with only global suppression records surviving by design.

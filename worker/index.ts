@@ -13,6 +13,7 @@ import {
   type QueueMessage,
 } from "../src/queue/messages";
 import { handleQueueMessage, type QueueDeps } from "../src/queue/consumer";
+import { setAmbientQueue } from "../src/queue/enqueue";
 import { runScheduledSweeps } from "../src/queue/cron";
 import { recordDeadLetter } from "../src/lib/job-log";
 import { logger } from "../src/lib/logger";
@@ -55,10 +56,19 @@ const queue = new Queue(QUEUE_NAME, {
 // The handlers enqueue follow-up jobs (next batch, recipient generation, …)
 // through this same queue.
 const jobQueue: JobQueue = {
-  async send(message: QueueMessage) {
-    await queue.add(message.type, message, { priority: jobPriorityFor(message.type) });
+  async send(message: QueueMessage, opts?: { delayMs?: number }) {
+    await queue.add(message.type, message, {
+      priority: jobPriorityFor(message.type),
+      ...(opts?.delayMs ? { delay: opts.delayMs } : {}),
+    });
   },
 };
+
+// Webhook emission happens deep inside services (addSuppression, the SES event
+// recorder) that have no queue in scope and no business growing one in their
+// signature. Register this tier's queue as the ambient one so those call sites
+// enqueue through the worker's existing connection instead of opening a second.
+setAmbientQueue(jobQueue);
 
 // Flipped by shutdown() before worker.close(). Long-running handlers (the send
 // batch loop) poll it between recipients and return their unsent remainder to

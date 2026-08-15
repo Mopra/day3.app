@@ -20,8 +20,9 @@ const VALID = {
   CLERK_WEBHOOK_SIGNING_SECRET: "whsec_".padEnd(32, "z"),
 };
 
-// The minimal valid set the worker profile needs (DB + app/queue/storage deps +
-// the shared unsubscribe secret). Reused by the worker-profile cases below.
+// The minimal valid set the worker profile needs (DB + app/queue/storage deps,
+// the shared unsubscribe secret, and the at-rest encryption keyring). Reused by
+// the worker-profile cases below.
 const WORKER_VALID = {
   DATABASE_URL: VALID.DATABASE_URL,
   APP_URL: VALID.APP_URL,
@@ -29,6 +30,9 @@ const WORKER_VALID = {
   SUPABASE_URL: VALID.SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY: VALID.SUPABASE_SERVICE_ROLE_KEY,
   UNSUBSCRIBE_SECRET: VALID.UNSUBSCRIBE_SECRET,
+  // The worker decrypts a webhook endpoint's signing secret on every outbound
+  // delivery, so the keyring is required on this tier too.
+  DNS_TOKEN_ENC_KEY: VALID.DNS_TOKEN_ENC_KEY,
 } as const;
 
 const SECRET_KEYS = [
@@ -168,12 +172,20 @@ describe("validateEnv", () => {
     expect(message).toMatch(/OAUTH_STATE_SECRET/);
   });
 
-  it("worker profile needs DB + app/queue/storage deps + UNSUBSCRIBE_SECRET, but not OAuth/Clerk/DNS secrets", () => {
-    // The worker does no OAuth / Clerk webhooks / DNS-token decryption, so it
-    // must not require those secrets — but it does send email and run imports,
-    // so APP_URL, REDIS_URL, and the Supabase storage creds are required.
+  it("worker profile needs DB + app/queue/storage deps + UNSUBSCRIBE_SECRET + the enc keyring, but not OAuth/Clerk secrets", () => {
+    // The worker serves no OAuth callback and no Clerk webhook, so it must not
+    // require those secrets — but it does send email, run imports, and sign
+    // outbound webhook deliveries, so APP_URL, REDIS_URL, the Supabase storage
+    // creds and the encryption keyring are all required.
     applyEnv({ ...WORKER_VALID });
     expect(() => validateEnv("worker")).not.toThrow();
+  });
+
+  it("worker profile fails fast without the encryption keyring (webhook signing secrets)", () => {
+    const env = { ...WORKER_VALID } as Record<string, string | undefined>;
+    delete env.DNS_TOKEN_ENC_KEY;
+    applyEnv(env);
+    expect(() => validateEnv("worker")).toThrow(/DNS_TOKEN_ENC_KEY/);
   });
 
   it("worker profile fails fast on a missing APP_URL (broken unsubscribe links)", () => {

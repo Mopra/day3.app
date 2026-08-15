@@ -97,6 +97,10 @@ const workerSchema = fullSchema.pick({
   AI_REVIEW_MODE: true,
   OPENROUTER_API_KEY: true,
   OPENROUTER_RISK_MODEL: true,
+  // Needed to decrypt webhook signing secrets on the delivery path.
+  DNS_TOKEN_ENC_KEY: true,
+  DNS_TOKEN_ENC_KEYS: true,
+  DNS_TOKEN_ENC_ACTIVE_KEY_ID: true,
 });
 
 function sesRegionRefinement(
@@ -128,9 +132,14 @@ function sesTopicRefinement(
   }
 }
 
-// The web tier must be able to decrypt DNS tokens, so it needs at least one of
-// the two key forms configured. (The exact key bytes and the active-id presence
-// are validated when the keyring is resolved — see src/lib/crypto.ts.)
+// The at-rest encryption keyring, needed by BOTH tiers and for more than DNS
+// tokens now (the name is historical): the web tier decrypts Cloudflare OAuth
+// tokens and reads back webhook signing secrets, and the worker decrypts a
+// webhook signing secret on every outbound delivery. A worker booting without
+// it would fail every webhook delivery with an unhelpful runtime error instead
+// of refusing to start. At least one of the two key forms must be configured.
+// (The exact key bytes and the active-id presence are validated when the
+// keyring is resolved — see src/lib/crypto.ts.)
 function dnsKeyRefinement(
   env: { DNS_TOKEN_ENC_KEY?: string; DNS_TOKEN_ENC_KEYS?: string },
   ctx: z.RefinementCtx,
@@ -165,7 +174,10 @@ const schemas = {
     .superRefine(sesRegionRefinement)
     .superRefine(sesTopicRefinement)
     .superRefine(dnsKeyRefinement),
-  worker: workerSchema.superRefine(sesRegionRefinement).superRefine(aiReviewRefinement),
+  worker: workerSchema
+    .superRefine(sesRegionRefinement)
+    .superRefine(aiReviewRefinement)
+    .superRefine(dnsKeyRefinement),
 } as const;
 
 let cached: Partial<Record<EnvProfile, Env>> = {};

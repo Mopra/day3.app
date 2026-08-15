@@ -11,6 +11,7 @@ import { sendCampaignBatch } from "./handlers/send-batch";
 import { sendFormConfirmation } from "./handlers/send-form-confirmation";
 import { sendTransactionalEmail } from "./handlers/send-transactional";
 import { purgeAccount } from "./handlers/purge-account";
+import { deliverWebhook } from "./handlers/deliver-webhook";
 
 // Everything a queue handler can need, injected by the caller. The BullMQ worker
 // process (worker/index.ts) builds this once and routes every job through
@@ -48,6 +49,12 @@ function jobContext(message: QueueMessage): { entityType: string; entityId: stri
       return { entityType: "transactional_email", entityId: message.emailId, accountId: message.accountId };
     case "purge_account":
       return { entityType: "account", entityId: message.accountId, accountId: message.accountId };
+    case "deliver_webhook":
+      return {
+        entityType: "webhook_delivery",
+        entityId: message.deliveryId,
+        accountId: message.accountId,
+      };
   }
 }
 
@@ -114,6 +121,8 @@ async function dispatchQueueMessage(message: QueueMessage, deps: QueueDeps): Pro
         emailProvider: deps.emailProvider,
         store: deps.store,
       });
+    case "deliver_webhook":
+      return deliverWebhook(message, { db, queue: deps.queue });
     case "process_email_event":
       // Provider event ingestion is webhook-driven for now; this exists so
       // the message type is routed when async event processing is added.

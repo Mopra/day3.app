@@ -19,6 +19,7 @@ import {
 import { addSuppression } from "../../services/suppression";
 import { releaseReservation } from "../../services/quota";
 import { PLATFORM_HEADERS, emailDomain, mergeSendHeaders } from "../../services/transactional";
+import { emitWebhookEvent } from "../../services/webhook-events";
 
 export type SendTransactionalDeps = {
   db: Db;
@@ -147,10 +148,11 @@ export async function sendTransactionalEmail(
       return;
     }
     // Dedupe-safe like every event insert: unique (providerMessageId, eventType).
+    const sentEventId = newId("evt");
     await db
       .insert(emailEvents)
       .values({
-        id: newId("evt"),
+        id: sentEventId,
         accountId: account.id,
         transactionalEmailId: email.id,
         eventType: "sent",
@@ -161,6 +163,16 @@ export async function sendTransactionalEmail(
         createdAt: now,
       })
       .onConflictDoNothing();
+    // Safe to emit unconditionally: the guarded UPDATE above already won the
+    // race, so this job is the one that transitioned the row to `sent`.
+    await emitWebhookEvent(db, {
+      type: "email.sent",
+      accountId: account.id,
+      eventId: sentEventId,
+      source: { kind: "transactional", emailId: email.id, to: email.to, email: email.to[0] },
+      subject: email.subject,
+      providerMessageId: result.messageId ?? null,
+    });
     await logJob(db, {
       jobType: "send_transactional",
       entityType: "transactional_email",
@@ -258,10 +270,11 @@ async function finishTerminal(
     .returning({ id: transactionalEmails.id });
   if (won.length === 0) return;
   await releaseReservation(db, email.accountId, email.to.length);
+  const failedEventId = newId("evt");
   await db
     .insert(emailEvents)
     .values({
-      id: newId("evt"),
+      id: failedEventId,
       accountId: email.accountId,
       transactionalEmailId: email.id,
       eventType: "failed",
@@ -271,4 +284,17 @@ async function finishTerminal(
       createdAt: now,
     })
     .onConflictDoNothing();
+  // Both outcomes are `email.failed` to the receiver — the message did not go
+  // out, and `error` says why. A separate `email.suppressed` type would make
+  // every receiver write a second branch for what is the same fact: don't
+  // expect this one to arrive.
+  await emitWebhookEvent(db, {
+    type: "email.failed",
+    accountId: email.accountId,
+    eventId: failedEventId,
+    source: { kind: "transactional", emailId: email.id, to: email.to, email: email.to[0] },
+    subject: email.subject,
+    providerMessageId: email.providerMessageId,
+    error,
+  });
 }
