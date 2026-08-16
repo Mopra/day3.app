@@ -133,9 +133,9 @@ export function AudiencesView({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1.5">
-          <h1 className="font-display text-3xl">Audiences</h1>
+          <h1 className="font-display text-2xl sm:text-3xl">Audiences</h1>
           <ApiPanel build={(origin) => buildAudiencesPanelContent({ origin, audiences })} />
         </div>
         <Dialog open={open} onOpenChange={setOpen}>

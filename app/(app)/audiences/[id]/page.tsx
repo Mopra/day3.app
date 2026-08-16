@@ -557,10 +557,12 @@ export default function AudienceDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-1.5">
-            <h1 className="font-display text-3xl">{audience?.name ?? "…"}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h1 className="min-w-0 break-words font-display text-2xl sm:text-3xl">
+              {audience?.name ?? "…"}
+            </h1>
             {audience && (
               <RowActions label="Audience actions" className="translate-y-[3px]">
                 <MenuItem
@@ -598,8 +600,10 @@ export default function AudienceDetailPage() {
           </p>
         </div>
         {tab === "contacts" && (
-        <div className="flex flex-col items-end gap-1.5">
-          <div className="flex gap-2">
+        <div className="flex w-full flex-col gap-1.5 sm:w-auto sm:items-end">
+          {/* Four actions in one row is ~450px of buttons — they wrap on a
+              phone rather than pushing the page sideways. */}
+          <div className="flex flex-wrap gap-2">
             <input
               ref={fileRef}
               type="file"
@@ -637,7 +641,7 @@ export default function AudienceDetailPage() {
                     <Label htmlFor="email">Email</Label>
                     <Input id="email" type="email" {...register("email", { required: true })} />
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="firstName">First name</Label>
                       <Input id="firstName" {...register("firstName")} />
@@ -978,7 +982,7 @@ export default function AudienceDetailPage() {
                 {...editForm.register("email", { required: true })}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="editFirstName">First name</Label>
                 <Input id="editFirstName" {...editForm.register("firstName")} />

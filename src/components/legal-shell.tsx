@@ -15,7 +15,7 @@ export function LegalShell({
   children: ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-dvh flex-col">
       <header className="border-b border-border/60 px-4 py-4">
         <div className="mx-auto max-w-3xl">
           <Link href="/" aria-label="Day3 home">

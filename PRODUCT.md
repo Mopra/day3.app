@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-08-15**.
+> Last verified against the codebase: **2026-08-16**.
 
 ---
 
@@ -1008,6 +1008,15 @@ Settings).
   from anywhere.
 - A **plan pill** in the sidebar shows the current tier on every screen; on the free
   plan it links to billing.
+
+**On a phone.** The whole app works down to a 320px-wide screen (iPhone SE). Below
+768px the sidebar becomes an off-canvas drawer opened from a top bar that carries the
+mark and the account menu, and it closes itself as soon as you navigate. Page headers,
+action rows, form fields and rule builders stack instead of overflowing; wide tables
+scroll sideways within their own panel rather than dragging the page with them; and the
+campaign builder's per-section controls (type, columns, alignment, background,
+duplicate, delete) are reachable by tapping into a section, since a touch screen has no
+hover.
 
 ---
 

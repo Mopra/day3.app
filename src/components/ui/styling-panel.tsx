@@ -188,11 +188,14 @@ export function FloatingStylingPanel({
             // so a collapsed (w-0) panel doesn't leave a shadow sliver by the grip.
             "overflow-hidden rounded-xl transition-[width] duration-300 ease-out",
             open
-              ? "w-72 shadow-[0_24px_60px_-12px_rgba(0,0,0,0.65),0_8px_24px_-8px_rgba(0,0,0,0.5)]"
+              ? "w-[min(18rem,calc(100vw-4rem))] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.65),0_8px_24px_-8px_rgba(0,0,0,0.5)]"
               : "w-0",
           )}
         >
-          <div className="max-h-[80vh] w-72 overflow-y-auto rounded-xl border border-border bg-card p-5">
+          {/* The inner body keeps a fixed width so its layout never reflows as
+              the clip animates — but that width is capped to the viewport on a
+              phone, where a flat 18rem card plus the grip runs off the screen. */}
+          <div className="max-h-[80dvh] w-[min(18rem,calc(100vw-4rem))] overflow-y-auto rounded-xl border border-border bg-card p-4 sm:p-5">
             <StylingPanel value={value} onChange={onChange} />
           </div>
         </div>

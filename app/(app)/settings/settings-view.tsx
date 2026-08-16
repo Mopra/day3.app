@@ -20,7 +20,7 @@ export function SettingsView({ account }: { account: Account }) {
 
   return (
     <div className="space-y-10">
-      <h1 className="font-display text-3xl">Settings</h1>
+      <h1 className="font-display text-2xl sm:text-3xl">Settings</h1>
 
       <section className="space-y-4">
         <h2 className="text-base font-medium">Sender identity</h2>

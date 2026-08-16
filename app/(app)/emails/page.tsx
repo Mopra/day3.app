@@ -268,7 +268,7 @@ export default function EmailsPage() {
       <div className="flex items-center justify-between">
         <div>
           <div className="flex items-center gap-1.5">
-            <h1 className="font-display text-3xl">Emails</h1>
+            <h1 className="font-display text-2xl sm:text-3xl">Emails</h1>
             <ApiPanel
               build={(origin) =>
                 buildEmailsPanelContent({ origin, verifiedDomains, sandbox })
@@ -371,7 +371,7 @@ export default function EmailsPage() {
 
       {/* Email detail drawer: status story first, content preview behind it. */}
       <Sheet open={!!selectedId} onOpenChange={(open) => !open && setSelectedId(null)}>
-        <SheetContent side="right" className="overflow-y-auto p-6 sm:max-w-lg">
+        <SheetContent side="right" className="overflow-y-auto p-4 sm:max-w-lg sm:p-6">
           {!email ? (
             <div className="pt-8">
               <ListSkeleton rows={6} />

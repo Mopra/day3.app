@@ -319,7 +319,7 @@ export function AudienceSegmentsTab({
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm">
+              <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span>Contacts matching</span>
                 <Select
                   items={[
@@ -344,13 +344,13 @@ export function AudienceSegmentsTab({
 
               <div className="space-y-2">
                 {draft.conditions.map((c, i) => (
-                  <div key={i} className="flex items-center gap-2">
+                  <div key={i} className="flex flex-wrap items-center gap-2">
                     <Select
                       items={Object.fromEntries(fieldOptions.map((f) => [f.key, f.label]))}
                       value={c.field}
                       onValueChange={(v) => v && setCondition(i, { field: v as string })}
                     >
-                      <SelectTrigger aria-label="Field" className="w-36 shrink-0">
+                      <SelectTrigger aria-label="Field" className="flex-1 basis-32 sm:w-36 sm:flex-none sm:shrink-0">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -366,7 +366,7 @@ export function AudienceSegmentsTab({
                       value={c.op}
                       onValueChange={(v) => v && setCondition(i, { op: v as string })}
                     >
-                      <SelectTrigger aria-label="Operator" className="w-40 shrink-0">
+                      <SelectTrigger aria-label="Operator" className="flex-1 basis-32 sm:w-40 sm:flex-none sm:shrink-0">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -380,7 +380,7 @@ export function AudienceSegmentsTab({
                     {!VALUELESS.has(c.op) && (
                       <Input
                         aria-label="Value"
-                        className="flex-1"
+                        className="flex-1 basis-40"
                         placeholder={NUMERIC.has(c.op) ? "e.g. 10" : "value"}
                         inputMode={NUMERIC.has(c.op) ? "decimal" : undefined}
                         value={c.value}

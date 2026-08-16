@@ -23,7 +23,7 @@ export default function Error({
   }, [error]);
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-4">
+    <main className="flex min-h-dvh flex-col items-center justify-center px-4">
       <div className="max-w-md space-y-6 text-center">
         <Image
           src="/day3-lockup-light.svg"
@@ -34,7 +34,7 @@ export default function Error({
           priority
         />
         <div className="space-y-2">
-          <h1 className="font-display text-3xl">Something went wrong</h1>
+          <h1 className="font-display text-2xl sm:text-3xl">Something went wrong</h1>
           <p className="text-muted-foreground">
             An unexpected error stopped this page from loading. It&apos;s usually temporary —
             try again, and if it keeps happening, let us know.

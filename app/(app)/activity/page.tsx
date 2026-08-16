@@ -298,7 +298,7 @@ export default function ActivityPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-display text-3xl">Activity</h1>
+        <h1 className="font-display text-2xl sm:text-3xl">Activity</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Every email event — sends, deliveries, opens, clicks, bounces and failures — in one
           place, for status and troubleshooting.
@@ -397,7 +397,7 @@ export default function ActivityPage() {
       {/* Event detail drawer: plain-language explanation first, raw provider
           payload behind "Technical details". */}
       <Sheet open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
-        <SheetContent side="right" className="overflow-y-auto p-6 sm:max-w-md">
+        <SheetContent side="right" className="overflow-y-auto p-4 sm:max-w-md sm:p-6">
           {selected && (
             <div className="space-y-5">
               <SheetHeader className="p-0">

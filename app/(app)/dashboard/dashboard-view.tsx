@@ -123,7 +123,7 @@ export function DashboardView({
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-display text-3xl">Dashboard</h1>
+          <h1 className="font-display text-2xl sm:text-3xl">Dashboard</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {organization?.name
               ? `Sending overview for ${organization.name}.`
@@ -165,7 +165,7 @@ export function DashboardView({
           }
         >
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-display text-3xl">{planLabel(account.plan)}</span>
+            <span className="font-display text-2xl sm:text-3xl">{planLabel(account.plan)}</span>
             {/* On free, "active" reads as contradictory next to "Sending: set-up
                 mode" — say what free actually is. Reserve the status word for paid. */}
             {!canSend ? (
@@ -207,7 +207,7 @@ export function DashboardView({
           }
         >
           <div className="space-y-2">
-            <div className="font-display text-3xl tabular-nums">
+            <div className="font-display text-2xl sm:text-3xl tabular-nums">
               {usage.used.toLocaleString()}
               <span className="text-lg text-muted-foreground">
                 {" "}
@@ -238,7 +238,7 @@ export function DashboardView({
             )
           }
         >
-          <span className="inline-flex items-center gap-2 font-display text-3xl">
+          <span className="inline-flex items-center gap-2 font-display text-2xl sm:text-3xl">
             <span className={cn("size-2.5 rounded-full", statusDot)} aria-hidden />
             {sendingValue}
           </span>

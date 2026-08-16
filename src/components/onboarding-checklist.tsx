@@ -64,7 +64,7 @@ export function OnboardingChecklist({ onboarding }: { onboarding: OnboardingStat
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center justify-between">
+        <CardTitle className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
           {/* Names the outcome the list leads to rather than the list itself;
               the count beside it already says how far along you are. */}
           <span>Before your first send</span>

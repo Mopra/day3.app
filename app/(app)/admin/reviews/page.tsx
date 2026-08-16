@@ -69,7 +69,7 @@ export default function AdminReviewsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="font-display text-3xl">Campaign reviews</h1>
+      <h1 className="font-display text-2xl sm:text-3xl">Campaign reviews</h1>
 
       {reviews !== null && reviews.length > 0 && (
         <ListToolbar>

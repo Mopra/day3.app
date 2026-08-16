@@ -24,11 +24,22 @@ function Tabs({
 }
 
 const tabsListVariants = cva(
-  "group/tabs-list inline-flex w-fit items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-8 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
+  "group/tabs-list inline-flex w-fit max-w-full items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-8 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
   {
     variants: {
       variant: {
-        default: "bg-muted",
+        // A horizontal pill strip scrolls sideways rather than pushing the page
+        // wider: four tabs ("Contacts / Fields / Segments / Topics") do not fit
+        // a 320px screen, and a w-fit inline-flex would otherwise force a
+        // horizontal scrollbar on the whole page. The bar itself is hidden —
+        // the strip is short, and a scrollbar under it reads as chrome.
+        //
+        // Deliberately NOT on the line variant: that one draws its active
+        // underline 5px BELOW each trigger, outside the list's padding box, so
+        // clipping overflow would cut the underline in half. Its strips are
+        // short (a handful of snippet tasks) and fit without scrolling.
+        default:
+          "bg-muted group-data-horizontal/tabs:overflow-x-auto group-data-horizontal/tabs:[scrollbar-width:none] group-data-horizontal/tabs:[&::-webkit-scrollbar]:hidden",
         line: "gap-1 bg-transparent",
       },
     },

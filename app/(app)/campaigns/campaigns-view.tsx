@@ -122,8 +122,8 @@ export function CampaignsView({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="font-display text-3xl">Campaigns</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="font-display text-2xl sm:text-3xl">Campaigns</h1>
         <Button render={<Link href="/campaigns/new">New campaign</Link>} />
       </div>
 

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 
 export default function NotFound() {
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center px-4">
+    <main className="flex min-h-dvh flex-col items-center justify-center px-4">
       <div className="max-w-md space-y-6 text-center">
         <Image
           src="/day3-lockup-light.svg"
@@ -18,7 +18,7 @@ export default function NotFound() {
         />
         <div className="space-y-2">
           <p className="text-sm font-medium text-muted-foreground">404</p>
-          <h1 className="font-display text-3xl">Page not found</h1>
+          <h1 className="font-display text-2xl sm:text-3xl">Page not found</h1>
           <p className="text-muted-foreground">
             The page you&apos;re looking for doesn&apos;t exist or may have moved.
           </p>

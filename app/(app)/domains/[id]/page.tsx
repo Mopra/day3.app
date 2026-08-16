@@ -85,9 +85,11 @@ export default function DomainDetailPage() {
       ) : (
         <>
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <h1 className="font-display text-3xl">{domain.domain}</h1>
+            <div className="min-w-0 space-y-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <h1 className="min-w-0 break-all font-display text-2xl sm:text-3xl">
+                  {domain.domain}
+                </h1>
                 <Badge
                   className="translate-y-[3px]"
                   variant={domainState(domain) === "verified" ? "default" : "secondary"}

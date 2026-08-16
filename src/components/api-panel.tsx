@@ -101,7 +101,7 @@ export function ApiPanel({
           </Button>
         }
       />
-      <SheetContent side="right" className="gap-0 overflow-y-auto p-6 sm:max-w-lg">
+      <SheetContent side="right" className="gap-0 overflow-y-auto p-4 sm:max-w-lg sm:p-6">
         {content && (
           <div className="space-y-6">
             <SheetHeader className="p-0 pr-8">
@@ -158,7 +158,9 @@ export function ApiPanel({
                       >
                         {row.label}
                       </span>
-                      <code className="max-w-52 truncate font-mono text-xs">{row.value}</code>
+                      <code className="max-w-28 truncate font-mono text-xs sm:max-w-52">
+                        {row.value}
+                      </code>
                       <CopyButton value={row.value} title={`Copy ${row.label}`} />
                     </div>
                   ))}

@@ -417,12 +417,12 @@ export function PlanSlider({
     <div className="space-y-7">
       {/* Big live readout of the focused tier — slide to change it. */}
       <div className="space-y-4">
-        <div className="flex items-end justify-between gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-sm text-muted-foreground">
               How many emails do you send per month?
             </p>
-            <p className="mt-0.5 font-display text-4xl tabular-nums">
+            <p className="mt-0.5 font-display text-3xl tabular-nums sm:text-4xl">
               {onContact ? (
                 <>
                   {TOP_EMAILS}+
@@ -482,7 +482,13 @@ export function PlanSlider({
           onScroll={onScroll}
           // Pad each side by half the leftover track width so the first and last
           // cards can sit centered (kept in lockstep with CARD_W_REM).
-          style={{ paddingInline: `max(1rem, calc(50% - ${CARD_W_REM / 2}rem))` }}
+          style={{
+            paddingInline: `max(1rem, calc(50% - min(${CARD_W_REM / 2}rem, (100vw - 5rem) / 2)))`,
+            // Below ~23rem of track there is no room to center an 18rem card, so
+            // the cards narrow with the viewport instead and centering survives.
+            // Kept as a CSS var so the cards and this padding stay in lockstep.
+            ["--plan-card-w" as string]: `min(${CARD_W_REM}rem, calc(100vw - 5rem))`,
+          }}
           className="flex snap-x snap-mandatory gap-4 overflow-x-auto overflow-y-hidden py-8 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {PLAN_ORDER.map((plan, i) => {
@@ -499,7 +505,7 @@ export function PlanSlider({
                   cardRefs.current[i] = el;
                 }}
                 onClick={() => !active && focusTo(i)}
-                style={{ width: `${CARD_W_REM}rem` }}
+                style={{ width: "var(--plan-card-w)" }}
                 className={cn(
                   // In Tailwind v4 the scale/lift use the standalone `scale` and
                   // `translate` properties, so they must be named in the transition
@@ -601,7 +607,7 @@ export function PlanSlider({
               cardRefs.current[CONTACT_INDEX] = el;
             }}
             onClick={() => !onContact && focusTo(CONTACT_INDEX)}
-            style={{ width: `${CARD_W_REM}rem` }}
+            style={{ width: "var(--plan-card-w)" }}
             className={cn(
               "relative flex shrink-0 snap-center flex-col rounded-2xl border border-dashed bg-card p-5 transition-[scale,translate,opacity,box-shadow,border-color] duration-[450ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-transform",
               onContact

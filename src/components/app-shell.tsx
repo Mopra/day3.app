@@ -6,8 +6,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { OrganizationSwitcher, UserButton, useAuth } from "@clerk/nextjs";
-import { Sparkles } from "lucide-react";
+import { Menu, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useApi } from "@/lib/api";
 import { formatDuration } from "@/lib/format";
 import { planCanSend, planLabel } from "@/lib/plans-catalog";
@@ -60,15 +61,24 @@ const NAV: NavEntry[] = [
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
-function NavItem({ to, label, icon: Icon, active }: NavEntry & { active: boolean }) {
+function NavItem({
+  to,
+  label,
+  icon: Icon,
+  active,
+  onNavigate,
+}: NavEntry & { active: boolean; onNavigate?: () => void }) {
   const iconRef = useRef<AnimatedIconHandle>(null);
   return (
     <Link
       href={to}
+      onClick={onNavigate}
       onMouseEnter={() => iconRef.current?.startAnimation()}
       onMouseLeave={() => iconRef.current?.stopAnimation()}
       className={cn(
-        "flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+        // py-2.5 below md keeps the row at a 44px touch target on a phone; the
+        // desktop rhythm (py-2) is restored from md up.
+        "flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground md:py-2",
         active && "bg-muted text-foreground",
       )}
     >
@@ -158,7 +168,22 @@ export function AppShell({ children, plan }: { children: React.ReactNode; plan: 
   const pathname = usePathname();
   const { orgId } = useAuth();
   const [isAdmin, setIsAdmin] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   useReloadOnOrgChange();
+
+  // Close the drawer when the viewport grows past the breakpoint where the
+  // sidebar becomes permanent. Its content is `md:hidden`, so a drawer left
+  // open across a rotate or a resize would otherwise leave the backdrop up with
+  // nothing visible inside it — a locked page with no way out.
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 48rem)");
+    const sync = () => {
+      if (mq.matches) setNavOpen(false);
+    };
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
   useEffect(() => {
     if (!orgId) return;
@@ -196,7 +221,11 @@ export function AppShell({ children, plan }: { children: React.ReactNode; plan: 
 
   return (
     <AiBudgetProvider>
-      <div className="relative flex h-screen flex-col bg-background">
+      {/* h-dvh, not h-screen: on iOS Safari `100vh` is the *largest* viewport
+          height (URL bar retracted), so a full-height shell puts its bottom
+          edge — and any content pinned to it — behind the browser chrome until
+          the user scrolls. dvh tracks the visible height instead. */}
+      <div className="relative flex h-dvh flex-col bg-background">
         {/*
           The desk. The sidebar carries no background of its own and the content
           panel floats inside a gutter, so everything outside the panel is one
@@ -239,94 +268,62 @@ export function AppShell({ children, plan }: { children: React.ReactNode; plan: 
           <div className="absolute -bottom-48 -left-24 size-[32rem] rounded-full bg-[radial-gradient(circle,color-mix(in_srgb,var(--olive)_11%,transparent),transparent_70%)] blur-3xl animate-desk-wash-2" />
           <div className="d3-desk-grain absolute inset-0" />
         </div>
+        {/* Mobile top bar. Below md the sidebar is off-canvas, so the shell needs
+            a persistent place to open it from — plus the mark (a way home) and
+            the account menu, the two sidebar controls worth keeping one tap
+            away. Everything else lives in the drawer. */}
+        <header className="flex h-14 shrink-0 items-center gap-1 px-3 md:hidden">
+          <button
+            type="button"
+            onClick={() => setNavOpen(true)}
+            aria-label="Open navigation"
+            className="-ml-1 flex size-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Menu className="size-5" />
+          </button>
+          <Link href="/dashboard" className="flex h-10 items-center px-1">
+            <Image src="/day3-mark-light.svg" alt="Day3" width={46} height={13} priority />
+          </Link>
+          <div className="ml-auto flex items-center gap-1">
+            <UserButton appearance={{ elements: { userButtonTrigger: { padding: 0 } } }} />
+          </div>
+        </header>
+
+        {/* The off-canvas nav. Same content as the desktop sidebar, so there is
+            one nav to maintain; it closes on navigation (see onNavigate) because
+            an App Router push doesn't unmount the shell. */}
+        <Sheet open={navOpen} onOpenChange={setNavOpen}>
+          <SheetContent
+            side="left"
+            showCloseButton={false}
+            className="w-[17rem] max-w-[85vw] overflow-y-auto p-0 md:hidden"
+          >
+            <SheetTitle className="sr-only">Navigation</SheetTitle>
+            <SidebarBody
+              plan={plan}
+              nav={[...NAV, ...adminNav]}
+              isActive={isActive}
+              onNavigate={() => setNavOpen(false)}
+            />
+          </SheetContent>
+        </Sheet>
+
         <div className="flex min-h-0 flex-1">
-          <aside className="flex w-56 shrink-0 flex-col">
-            <Link href="/dashboard" className="flex h-14 items-center px-4">
-              <Image
-                src="/day3-mark-light.svg"
-                alt="Day3"
-                width={46}
-                height={13}
-                priority
-              />
-            </Link>
-            {/* Workspace switcher — top of the sidebar, directly under the mark
-                and above the nav: the org scopes everything below it, so it
-                reads as the context for the whole list. px-5 (20px) matches the
-                nav/Help/AI gutter; the switcher's own left padding is zeroed so
-                its avatar sits flush at that gutter rather than a few px right.
-                min-w-0 lets a long org name truncate (ellipsis) instead of
-                pushing the chevron out of the fixed-width sidebar. */}
-            <div className="min-w-0 px-5 pb-3">
-              <OrganizationSwitcher
-                hidePersonal
-                appearance={{
-                  elements: {
-                    organizationSwitcherTrigger: {
-                      paddingLeft: 0,
-                      maxWidth: "100%",
-                      minWidth: 0,
-                    },
-                    organizationPreview: { minWidth: 0 },
-                    organizationPreviewTextContainer: { minWidth: 0 },
-                    organizationPreviewMainIdentifier: {
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    },
-                  },
-                }}
-              />
-            </div>
-            <nav className="flex flex-1 flex-col gap-1 px-2">
-              {[...NAV, ...adminNav].map((item) => (
-                <NavItem key={item.to} {...item} active={isActive(item.to)} />
-              ))}
-            </nav>
-            {/* Notifications + Help — navigation-style items above the AI meter.
-                The bell surfaces async account events (finished sends, failed
-                schedules, capped signups); no docs site yet, so Help's popover is
-                the whole help surface. */}
-            <div className="px-2 pb-1">
-              <NotificationBell />
-              <HelpButton />
-            </div>
-            {/* Plan pill — a persistent reminder of the tier. Free links to
-                billing (its whole value is the upgrade path); paid plans just
-                show the tier. */}
-            <div className="px-4 pb-1">
-              {planCanSend(plan) ? (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                  {planLabel(plan)} plan
-                </span>
-              ) : (
-                <Link
-                  href="/billing"
-                  className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
-                >
-                  {planLabel(plan)} plan · Upgrade
-                </Link>
-              )}
-            </div>
-            <SidebarAiBudget />
-            {/* Account control, bottom-left of the sidebar — the conventional
-                placement for the personal profile/sign-out menu. px-5 (20px)
-                matches the nav/Help/AI gutter, and the trigger's own padding is
-                zeroed so the avatar sits flush at that gutter. */}
-            <div className="flex items-center px-5 py-3 mb-5">
-              <UserButton
-                appearance={{ elements: { userButtonTrigger: { padding: 0 } } }}
-              />
-            </div>
+          <aside className="hidden w-56 shrink-0 md:flex md:flex-col">
+            <SidebarBody plan={plan} nav={[...NAV, ...adminNav]} isActive={isActive} />
           </aside>
           <div className="flex min-w-0 flex-1 flex-col">
-            {/* No top chrome bar: each page renders its own heading, and the
-                account controls live in the sidebar. The content panel floats —
-                and now casts, so it reads as a lit sheet lying on the desk
-                behind it rather than a differently-coloured rectangle. A wide,
-                soft, almost entirely downward shadow: a sheet resting on a
-                surface, not a card hovering above one. */}
-            <main className="m-5 min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-card px-8 py-6 shadow-[0_18px_50px_-24px_oklch(0_0_0/0.85)]">
+            {/* No top chrome bar on desktop: each page renders its own heading,
+                and the account controls live in the sidebar. The content panel
+                floats — and now casts, so it reads as a lit sheet lying on the
+                desk behind it rather than a differently-coloured rectangle. A
+                wide, soft, almost entirely downward shadow: a sheet resting on a
+                surface, not a card hovering above one.
+
+                The gutter and inner padding shrink on a phone: at 375px the
+                desktop m-5 + px-8 spends 26 % of the width on margin, which is
+                what makes a table or a form field feel cramped there. */}
+            <main className="mx-3 mb-3 min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-card px-4 py-5 shadow-[0_18px_50px_-24px_oklch(0_0_0/0.85)] sm:mx-4 sm:mb-4 sm:px-6 md:m-5 md:px-8 md:py-6">
               {children}
             </main>
           </div>
@@ -334,5 +331,101 @@ export function AppShell({ children, plan }: { children: React.ReactNode; plan: 
       </div>
       <CommandPalette />
     </AiBudgetProvider>
+  );
+}
+
+// The sidebar's contents, shared by the fixed desktop rail and the mobile
+// drawer. `onNavigate` is only passed by the drawer — a client-side navigation
+// doesn't unmount the shell, so without it the drawer would stay open over the
+// page the user just asked for.
+function SidebarBody({
+  plan,
+  nav,
+  isActive,
+  onNavigate,
+}: {
+  plan: string;
+  nav: NavEntry[];
+  isActive: (to: string) => boolean;
+  onNavigate?: () => void;
+}) {
+  return (
+    <div className="flex min-h-full flex-col">
+      <Link href="/dashboard" onClick={onNavigate} className="flex h-14 items-center px-4">
+        <Image src="/day3-mark-light.svg" alt="Day3" width={46} height={13} priority />
+      </Link>
+      {/* Workspace switcher — top of the sidebar, directly under the mark
+          and above the nav: the org scopes everything below it, so it
+          reads as the context for the whole list. px-5 (20px) matches the
+          nav/Help/AI gutter; the switcher's own left padding is zeroed so
+          its avatar sits flush at that gutter rather than a few px right.
+          min-w-0 lets a long org name truncate (ellipsis) instead of
+          pushing the chevron out of the fixed-width sidebar. */}
+      <div className="min-w-0 px-5 pb-3">
+        <OrganizationSwitcher
+          hidePersonal
+          appearance={{
+            elements: {
+              organizationSwitcherTrigger: {
+                paddingLeft: 0,
+                maxWidth: "100%",
+                minWidth: 0,
+              },
+              organizationPreview: { minWidth: 0 },
+              organizationPreviewTextContainer: { minWidth: 0 },
+              organizationPreviewMainIdentifier: {
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              },
+            },
+          }}
+        />
+      </div>
+      <nav className="flex flex-1 flex-col gap-1 px-2">
+        {nav.map((item) => (
+          <NavItem
+            key={item.to}
+            {...item}
+            active={isActive(item.to)}
+            onNavigate={onNavigate}
+          />
+        ))}
+      </nav>
+      {/* Notifications + Help — navigation-style items above the AI meter.
+          The bell surfaces async account events (finished sends, failed
+          schedules, capped signups); no docs site yet, so Help's popover is
+          the whole help surface. */}
+      <div className="px-2 pt-1 pb-1">
+        <NotificationBell />
+        <HelpButton />
+      </div>
+      {/* Plan pill — a persistent reminder of the tier. Free links to
+          billing (its whole value is the upgrade path); paid plans just
+          show the tier. */}
+      <div className="px-4 pb-1">
+        {planCanSend(plan) ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+            {planLabel(plan)} plan
+          </span>
+        ) : (
+          <Link
+            href="/billing"
+            onClick={onNavigate}
+            className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-primary/10 hover:text-foreground"
+          >
+            {planLabel(plan)} plan · Upgrade
+          </Link>
+        )}
+      </div>
+      <SidebarAiBudget />
+      {/* Account control, bottom-left of the sidebar — the conventional
+          placement for the personal profile/sign-out menu. px-5 (20px)
+          matches the nav/Help/AI gutter, and the trigger's own padding is
+          zeroed so the avatar sits flush at that gutter. */}
+      <div className="flex items-center px-5 py-3 mb-5">
+        <UserButton appearance={{ elements: { userButtonTrigger: { padding: 0 } } }} />
+      </div>
+    </div>
   );
 }

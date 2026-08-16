@@ -82,7 +82,7 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
 
   return (
     <section className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-medium">Your keys</h2>
           <p className="text-sm text-muted-foreground">
@@ -113,9 +113,9 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
       ) : (
         <div className="divide-y rounded-md border">
           {activeKeys.map((k) => (
-            <div key={k.id} className="flex items-center justify-between gap-4 px-4 py-3">
+            <div key={k.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:gap-4">
               <div className="min-w-0">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="truncate text-sm font-medium">{k.name}</span>
                   <Badge variant="outline" className="font-mono text-xs">
                     {k.keyPrefix}…

@@ -11,7 +11,7 @@ export default function LandingPage() {
   const { isSignedIn } = useAuth();
 
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex min-h-dvh flex-col">
       <main className="flex flex-1 flex-col items-center justify-center px-4 py-16">
         <div className="max-w-2xl space-y-8 text-center">
         <div className="space-y-4">

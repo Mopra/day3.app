@@ -86,8 +86,11 @@ export function MergeTagsProvider({
 
 // Shared look for both floating surfaces: a frosted, elevated pill that reads as
 // "floating above" the canvas rather than docked chrome.
+// max-w + wrap: the bar carries nine controls (~300px), which is wider than an
+// iPhone SE. It's portaled to <body> with a fixed strategy, so nothing clips it —
+// it would simply run off the screen edge instead of wrapping to a second row.
 const floatingBarClass =
-  "z-50 flex items-center gap-1 rounded-xl border border-border bg-background p-1.5 shadow-lg";
+  "z-50 flex max-w-[calc(100vw-1rem)] flex-wrap items-center justify-center gap-1 rounded-xl border border-border bg-background p-1.5 shadow-lg";
 
 // Cross-editor focus coordination. When several RichTextEditors live side by side
 // (every section column is its own editor), only the one the user is actually in

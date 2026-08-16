@@ -236,11 +236,15 @@ function HeaderRow({
   action?: ReactNode;
   children: ReactNode;
 }) {
+  // From / Subject / Preheader. The label sits beside its field on a real
+  // screen; on a phone the canvas column is ~200px wide, so an 80px fixed
+  // label would leave a From dropdown too narrow to read an address in — the
+  // row stacks instead.
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
       <Label
         htmlFor={htmlFor}
-        className="w-20 shrink-0 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70"
+        className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70 sm:w-20 sm:py-2.5"
       >
         {label}
       </Label>
@@ -881,7 +885,7 @@ export function CampaignComposer({
           <div className="grid max-w-full items-center text-2xl font-semibold tracking-tight">
             <span
               aria-hidden
-              className="invisible col-start-1 row-start-1 min-w-[12rem] max-w-full whitespace-pre"
+              className="invisible col-start-1 row-start-1 min-w-[8rem] max-w-full whitespace-pre sm:min-w-[12rem]"
             >
               {name?.trim() ? name : "Untitled campaign"}
             </span>
@@ -895,7 +899,9 @@ export function CampaignComposer({
           </div>
           {titleBadge}
         </div>
-        <div className="ml-auto flex shrink-0 items-center gap-3">
+        {/* Test / Schedule / Submit & send is ~320px of buttons — more than a
+            phone has, so the group wraps instead of being clipped. */}
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto sm:shrink-0 sm:gap-3">
           {onAutosave && <AutosaveIndicator status={autosaveStatus} />}
           {titleActions}
         </div>
@@ -1053,12 +1059,16 @@ export function CampaignComposer({
           into the section editors below — true WYSIWYG. A whisper of shadow grounds
           the sheet against the dark app without drawing attention; it's builder chrome
           only and never reaches the sent email. */}
+      {/* The two nested pads are what give the section drag/duplicate/remove
+          controls a gutter to sit in (they hang outside each section's box).
+          Keep their combined base width at ≥36px or those controls end up
+          outside the message column and the page gains a sideways scroll. */}
       <div
-        className="rounded-2xl p-6 shadow-[0_8px_24px_-18px_rgba(0,0,0,0.4)] transition-[background-color] sm:p-10"
+        className="rounded-2xl p-4 shadow-[0_8px_24px_-18px_rgba(0,0,0,0.4)] transition-[background-color] sm:p-10"
         style={{ backgroundColor: theme.pageBg }}
       >
       <div
-        className="p-6 transition-colors sm:p-10"
+        className="p-5 transition-colors sm:p-10"
         style={{
           ...themeCanvasVars(theme),
           color: theme.textColor,

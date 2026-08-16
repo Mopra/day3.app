@@ -104,9 +104,9 @@ export default function AdminAccountPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h1 className="font-display text-3xl">{account.name}</h1>
+          <h1 className="font-display text-2xl sm:text-3xl">{account.name}</h1>
           <Badge variant={account.riskStatus === "normal" ? "outline" : "destructive"}>
             {account.riskStatus}
           </Badge>

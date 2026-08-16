@@ -629,7 +629,7 @@ function ImageColumn({
                   : "max-h-64 object-contain",
             )}
           />
-          <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover/img:opacity-100">
+          <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover/img:opacity-100 [@media(pointer:coarse)]:opacity-100">
             <button
               type="button"
               onClick={() => setDetailsOpen(true)}
@@ -1035,7 +1035,7 @@ function ButtonColumn({
     <div className="group/btn relative p-3">
       {/* Hover toolbar — width, colors + link, mirroring the image column's top-right
           tools. focus-within keeps it visible while a control inside is in use. */}
-      <div className="absolute right-1.5 top-1.5 z-10 flex gap-1 opacity-0 transition-opacity group-hover/btn:opacity-100 focus-within:opacity-100">
+      <div className="absolute right-1.5 top-1.5 z-10 flex gap-1 opacity-0 transition-opacity group-hover/btn:opacity-100 focus-within:opacity-100 [@media(pointer:coarse)]:opacity-100">
         <button
           type="button"
           aria-label="Full-width button"
@@ -1240,7 +1240,7 @@ function QuoteEditor({
     <div className="group/quote relative">
       {/* Hover toolbar — roundness + fill, mirroring the image/button top-right tools.
           focus-within keeps it visible while the color popover is open. */}
-      <div className="absolute right-1.5 top-1.5 z-10 flex gap-1 opacity-0 transition-opacity group-hover/quote:opacity-100 focus-within:opacity-100">
+      <div className="absolute right-1.5 top-1.5 z-10 flex gap-1 opacity-0 transition-opacity group-hover/quote:opacity-100 focus-within:opacity-100 [@media(pointer:coarse)]:opacity-100">
         <button
           type="button"
           aria-label="Rounded corners"
@@ -1585,13 +1585,16 @@ function SortableSection({
     >
       {/* Drag handle — pushed out past the content card's edge so it sits on the page
           background, not inside the email body. The offset clears the card's
-          horizontal padding (p-6 → sm:p-10), so it lands in the page gutter at both
+          horizontal padding (p-4 → sm:p-10), so it lands in the page gutter at both
           breakpoints. Vertically centered; muted but always present so it stays
-          tappable on touch. */}
+          tappable on touch.
+          The base offset is small on purpose: the phone canvas only has ~36px of
+          gutter, and a 28px control set 24px out would hang off the message
+          column and give the page a horizontal scrollbar. */}
       <button
         type="button"
         aria-label="Drag to reorder section"
-        className="absolute right-full top-1/2 mr-6 flex size-7 -translate-y-1/2 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground/50 transition-colors hover:bg-muted hover:text-foreground active:cursor-grabbing sm:mr-11"
+        className="absolute right-full top-1/2 mr-1 flex size-7 -translate-y-1/2 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground/50 transition-colors hover:bg-muted hover:text-foreground active:cursor-grabbing sm:mr-11"
         {...attributes}
         {...listeners}
       >
@@ -1601,7 +1604,7 @@ function SortableSection({
       {/* Section actions — pushed out past the content card's edge so they sit on the
           page background (mirrors the drag handle's offset). Vertically centered as a
           group: duplicate sits just above remove. */}
-      <div className="absolute left-full top-1/2 ml-6 flex -translate-y-1/2 flex-col gap-0.5 sm:ml-11">
+      <div className="absolute left-full top-1/2 ml-1 flex -translate-y-1/2 flex-col gap-0.5 sm:ml-11">
         <button
           type="button"
           aria-label="Duplicate section"
@@ -1635,9 +1638,17 @@ function SortableSection({
           (bottom-full, no margin). Moving the cursor up to a picker therefore never
           crosses a dead gap onto the section above — which would otherwise steal the
           hover and make these disappear mid-reach. z-20 keeps them above a neighbor's
-          content where the two overlap. */}
-      <div className="pointer-events-none absolute bottom-full left-1/2 z-20 flex -translate-x-1/2 justify-center pb-1 opacity-0 transition-opacity group-hover/section:pointer-events-auto group-hover/section:opacity-100">
-        <div className="flex items-center gap-1.5 rounded-lg border border-border bg-popover p-1 shadow-lg">
+          content where the two overlap.
+
+          focus-within is what makes these reachable on a touch screen, where
+          there is no hover at all: tapping into the section (its text field,
+          its button, any control) brings the pickers up. Without it the section
+          type, column count, alignment and background would be desktop-only. */}
+      <div className="pointer-events-none absolute bottom-full left-1/2 z-20 flex w-max max-w-[92vw] -translate-x-1/2 justify-center pb-1 opacity-0 transition-opacity group-hover/section:pointer-events-auto group-hover/section:opacity-100 group-focus-within/section:pointer-events-auto group-focus-within/section:opacity-100">
+        {/* Wraps rather than overflows: four picker groups are wider than a
+            phone, and this bar is centred on the section, so any overhang would
+            spill past both edges of the page. */}
+        <div className="flex flex-wrap items-center justify-center gap-1.5 rounded-lg border border-border bg-popover p-1 shadow-lg">
           <KindPicker value={section.kind} onChange={onKindChange} />
           {COLUMN_KINDS.has(section.kind) && (
             <ColumnPicker value={section.columns} onChange={onColumnsChange} />
@@ -1763,7 +1774,7 @@ function SortableSection({
               void onResize(clampHeight(base + (e.key === "ArrowUp" ? -16 : 16)));
             }
           }}
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex h-3 cursor-ns-resize touch-none items-center justify-center opacity-0 transition-opacity group-hover/section:pointer-events-auto group-hover/section:opacity-100"
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex h-3 cursor-ns-resize touch-none items-center justify-center opacity-0 transition-opacity group-hover/section:pointer-events-auto group-hover/section:opacity-100 [@media(pointer:coarse)]:pointer-events-auto [@media(pointer:coarse)]:opacity-100"
         >
           <span className="flex h-4 w-10 items-center justify-center rounded-full border border-border bg-background shadow-sm">
             <GripHorizontal className="size-3 text-muted-foreground" />

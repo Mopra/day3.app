@@ -545,12 +545,17 @@ export default function CampaignDetailPage() {
   return (
     <div className="space-y-6">
       {!isDraft && (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="font-display text-3xl">{campaign.name}</h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* min-w-0 + break-words: a campaign name is user-supplied and can be
+              one long unbroken string, which would push the action buttons off
+              a phone screen and give the page a horizontal scrollbar. */}
+          <div className="flex min-w-0 items-center gap-3">
+            <h1 className="min-w-0 break-words font-display text-2xl sm:text-3xl">
+              {campaign.name}
+            </h1>
             {statusBadge}
           </div>
-          <div className="flex gap-2">{actionButtons}</div>
+          <div className="flex flex-wrap gap-2">{actionButtons}</div>
         </div>
       )}
 

@@ -168,8 +168,8 @@ export function FormsView({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="font-display text-3xl">Signup forms</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="font-display text-2xl sm:text-3xl">Signup forms</h1>
         <Dialog open={open} onOpenChange={openChange}>
           <DialogTrigger render={<Button disabled={audiences.length === 0}>New form</Button>} />
           <DialogContent>
