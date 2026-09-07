@@ -755,7 +755,7 @@ function StatusHero({
                 &lt;{domain.fromEmail ?? domain.domain}&gt;
               </span>{" "}
               as your default sender — you can add more or change it any time under{" "}
-              <Link href="/senders" className="underline underline-offset-4">
+              <Link href="/sending?tab=senders" className="underline underline-offset-4">
                 Senders
               </Link>
               {domain.adminOverrideVerified && domain.verificationStatus !== "verified"

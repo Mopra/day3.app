@@ -921,7 +921,7 @@ export function CampaignComposer({
           <AlertTitle>You&apos;ll need a verified domain to send</AlertTitle>
           <AlertDescription>
             You can write and save this draft now.{" "}
-            <Link href="/domains" className="font-medium underline underline-offset-4">
+            <Link href="/sending" className="font-medium underline underline-offset-4">
               Set up a sending domain
             </Link>{" "}
             when you&apos;re ready to send.
@@ -1453,7 +1453,7 @@ export function CampaignComposer({
           {domains.length === 0 && (
             <>
               {audiences.length === 0 ? " " : ""}Need a sending address?{" "}
-              <Link href="/domains" className="underline underline-offset-2 hover:text-foreground">
+              <Link href="/sending" className="underline underline-offset-2 hover:text-foreground">
                 Add a domain
               </Link>
               .
@@ -1577,7 +1577,7 @@ export function CampaignComposer({
           {verifiedDomains.length === 0 ? (
             <div className="space-y-3 text-sm text-muted-foreground">
               <p>You&apos;ll need a verified sending domain before you can add a sender.</p>
-              <Button render={<Link href="/domains">Set up a domain</Link>} />
+              <Button render={<Link href="/sending">Set up a domain</Link>} />
             </div>
           ) : (
             <div className="space-y-4">

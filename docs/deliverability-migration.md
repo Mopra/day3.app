@@ -7,7 +7,7 @@
   post-verification "expect 2–4 weeks of spam-foldering" copy is **not** built.
 - **Feature 2** — **done, by a different shape than sketched below.** Bulk import
   is `POST /v1/suppressions` (explicit reason, add-only, tagged with the creating
-  key) for scripts, plus a **Suppressions page** (`app/(app)/suppressions/`) that
+  key) for scripts, plus a **Suppressions tab** on Audiences (`app/(app)/audiences/suppressions-tab.tsx`) that
   lists/searches/filters the account's entries, adds addresses from a pasted list,
   and **un-suppresses per address** — the undo the "recoverable in the app" premise
   depended on. The import-flow nudge shipped too, on the audience import panel.

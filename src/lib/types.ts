@@ -371,24 +371,53 @@ export type Recipient = {
   updatedAt: string;
 };
 
-// One row in the account-wide Activity log — an email_events row joined with
-// its campaign's name. `payloadJson` is the raw provider payload (SES/SNS
-// message, {error} for send failures, {url} for clicks) shown under
-// "Technical details".
-export type ActivityEvent = {
+// Which ledger an Activity row came from: a campaign or automation send
+// (campaign_recipients) or an API send (transactional_emails).
+export type ActivitySource = "campaign" | "automation" | "api";
+
+// One row on the Activity page: an email the account sent, whichever producer
+// sent it, projected onto one shape. `status` is the shared vocabulary
+// (services/activity.ts ACTIVITY_STATUSES); `email` is the first recipient and
+// `recipientCount` says how many an API message addressed. Campaign rows carry
+// the campaign, automation rows the automation, API rows the subject and From.
+export type ActivitySend = {
+  id: string;
+  source: ActivitySource;
+  email: string;
+  recipientCount: number;
+  subject: string | null;
+  fromEmail: string | null;
+  status: string;
+  campaignId: string | null;
+  campaignName: string | null;
+  automationId: string | null;
+  automationName: string | null;
+  error: string | null;
+  sandbox: boolean;
+  providerMessageId: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  openedAt: string | null;
+  clickedAt: string | null;
+  bouncedAt: string | null;
+  complainedAt: string | null;
+  unsubscribedAt: string | null;
+};
+
+// One event in a send's timeline (the Activity drawer). `payloadJson` is the
+// raw provider payload (SES/SNS message, {error} for send failures, {url} for
+// clicks) shown under "Technical details".
+export type ActivitySendEvent = {
   id: string;
   eventType: string;
   email: string | null;
-  campaignId: string | null;
-  campaignName: string | null;
-  provider: string;
-  providerMessageId: string | null;
   payloadJson: string | null;
   createdAt: string;
 };
 
-// One row in the /emails log — a transactional (API-sent) email without its
-// bodies (the detail endpoint carries those, until the retention prune).
+// A transactional (API-sent) email without its bodies; the Activity drawer's
+// detail read carries those (until the retention prune).
 export type TransactionalEmailListItem = {
   id: string;
   fromEmail: string;
@@ -413,13 +442,6 @@ export type TransactionalEmailDetail = TransactionalEmailListItem & {
   textBody: string | null;
   headers: Record<string, string> | null;
   bodyPrunedAt: string | null;
-};
-
-export type TransactionalEmailEvent = {
-  id: string;
-  eventType: string;
-  payloadJson: string | null;
-  createdAt: string;
 };
 
 export type RiskReview = {

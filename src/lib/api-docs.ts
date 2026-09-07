@@ -143,7 +143,7 @@ export type SnippetTask = {
   python: string;
 };
 
-/** The transactional-email snippets — the /emails page panel and the top of the
+/** The transactional-email snippets: the Activity page panel and the top of the
  *  api-keys snippet list share these. */
 export function buildEmailSnippets(ctx: ApiDocsContext): SnippetTask[] {
   const base = apiBaseUrl(ctx.origin);
@@ -1367,7 +1367,7 @@ export function buildAudiencesPanelContent(input: {
   };
 }
 
-/** Panel content for the /emails page — the transactional log's own </> panel. */
+/** Panel content for the Activity page: the transactional API's own </> panel. */
 export function buildEmailsPanelContent(input: {
   origin: string;
   /** Verified sending domains; the first one seeds the `from` examples. */

@@ -24,7 +24,7 @@ export function OnboardingChecklist({ onboarding }: { onboarding: OnboardingStat
       title: "Verify a sending domain",
       description: "Publish a few DNS records so inboxes trust your mail. We check them for you.",
       done: onboarding.hasVerifiedDomain,
-      href: "/domains",
+      href: "/sending",
       cta: "Set up a domain",
     },
     {

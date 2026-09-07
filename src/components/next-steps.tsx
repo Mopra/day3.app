@@ -29,7 +29,7 @@ export function NextSteps({
   const steps: Step[] = [
     {
       key: "domain",
-      href: "/domains",
+      href: "/sending",
       label: "Verify a sending domain",
       hint: "Publish your DNS records so email reaches the inbox.",
     },

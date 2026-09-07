@@ -63,12 +63,16 @@ const STATUS_OPTIONS = [
   { value: "unverified", label: "Needs setup" },
 ];
 
+// `tabs` is the Sending page's Domains | Senders switch, rendered in the title
+// row so the tab strip, the </> panel and the primary action share one line.
 export function SendersView({
   initialSenders,
   initialDomains,
+  tabs,
 }: {
   initialSenders: Sender[];
   initialDomains: SendingDomain[];
+  tabs: React.ReactNode;
 }) {
   const api = useApi();
   // Seeded from the server render; `load()` below re-reads both after a mutation.
@@ -213,7 +217,7 @@ export function SendersView({
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1.5">
-          <h1 className="font-display text-2xl sm:text-3xl">Senders</h1>
+          {tabs}
           <ApiPanel
             build={(origin) => buildSendersPanelContent({ origin, senders: senders ?? [] })}
           />
@@ -225,7 +229,7 @@ export function SendersView({
         A sender is the <span className="font-medium">From</span> name and address your
         campaigns go out as. Pick one in the campaign composer instead of typing it each
         time. Every sender must use a verified{" "}
-        <Link href="/domains" className="underline underline-offset-2 hover:text-foreground">
+        <Link href="/sending" className="underline underline-offset-2 hover:text-foreground">
           sending domain
         </Link>
         .
@@ -257,7 +261,7 @@ export function SendersView({
               }
               action={
                 noVerifiedDomain ? (
-                  <Button render={<Link href="/domains">Set up a domain</Link>} />
+                  <Button render={<Link href="/sending">Set up a domain</Link>} />
                 ) : (
                   <Button onClick={openAdd}>Add sender</Button>
                 )
@@ -302,7 +306,7 @@ export function SendersView({
                           </span>
                         ) : (
                           <Link
-                            href="/domains"
+                            href="/sending"
                             className="text-xs text-destructive underline underline-offset-2"
                           >
                             Needs setup
@@ -351,7 +355,7 @@ export function SendersView({
           {noVerifiedDomain && !editing ? (
             <div className="space-y-3 text-sm text-muted-foreground">
               <p>You&apos;ll need a verified sending domain before you can add a sender.</p>
-              <Button render={<Link href="/domains">Set up a domain</Link>} />
+              <Button render={<Link href="/sending">Set up a domain</Link>} />
             </div>
           ) : (
             <div className="space-y-4">

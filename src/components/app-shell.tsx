@@ -18,18 +18,15 @@ import { NotificationBell } from "@/components/notification-bell";
 import { CommandPalette } from "@/components/command-palette";
 import { LayoutGridIcon } from "@/components/ui/animated-icons/layout-grid";
 import { MailCheckIcon } from "@/components/ui/animated-icons/mail-check";
-import { SendIcon } from "@/components/ui/animated-icons/send";
 import { ChartColumnIcon } from "@/components/ui/animated-icons/chart-column";
 import { ActivityIcon } from "@/components/ui/animated-icons/activity";
 import { UsersIcon } from "@/components/ui/animated-icons/users";
 import { FormInputIcon } from "@/components/ui/animated-icons/form-input";
-import { AtSignIcon } from "@/components/ui/animated-icons/at-sign";
 import { EarthIcon } from "@/components/ui/animated-icons/earth";
 import { CreditCardIcon } from "@/components/ui/animated-icons/credit-card";
 import { KeyRoundIcon } from "@/components/ui/animated-icons/key-round";
 import { SettingsIcon } from "@/components/ui/animated-icons/settings";
 import { ShieldCheckIcon } from "@/components/ui/animated-icons/shield-check";
-import { BanIcon } from "@/components/ui/animated-icons/ban";
 
 type AnimatedIconHandle = {
   startAnimation: () => void;
@@ -38,27 +35,37 @@ type AnimatedIconHandle = {
 type AnimatedIcon = ComponentType<
   { size?: number; className?: string } & RefAttributes<AnimatedIconHandle>
 >;
-type NavEntry = { to: string; label: string; icon: AnimatedIcon };
+// `also` lists other path prefixes that should light this item: the domain
+// detail pages still live under /domains, but belong to Sending in the rail.
+type NavEntry = { to: string; label: string; icon: AnimatedIcon; also?: string[] };
+type NavGroup = { label?: string; items: NavEntry[] };
 
-const NAV: NavEntry[] = [
-  // Dashboard, Campaigns + Audiences lead as the daily-driver pages (an audience
-  // is the campaign's counterpart, so it sits just below), then the rest follows
-  // the real first-run setup flow (see OnboardingChecklist): who you may mail
-  // (Suppressions) → what you send as (Domains → Senders) → grow your audience
-  // (Forms) → measure (Metrics) → account (Billing, API keys, Settings).
-  { to: "/dashboard", label: "Dashboard", icon: LayoutGridIcon },
-  { to: "/campaigns", label: "Campaigns", icon: MailCheckIcon },
-  { to: "/emails", label: "Emails", icon: SendIcon },
-  { to: "/audiences", label: "Audiences", icon: UsersIcon },
-  { to: "/suppressions", label: "Suppressions", icon: BanIcon },
-  { to: "/domains", label: "Domains", icon: EarthIcon },
-  { to: "/senders", label: "Senders", icon: AtSignIcon },
-  { to: "/forms", label: "Forms", icon: FormInputIcon },
-  { to: "/metrics", label: "Metrics", icon: ChartColumnIcon },
-  { to: "/activity", label: "Activity", icon: ActivityIcon },
-  { to: "/billing", label: "Billing", icon: CreditCardIcon },
-  { to: "/api-keys", label: "API keys", icon: KeyRoundIcon },
-  { to: "/settings", label: "Settings", icon: SettingsIcon },
+// Two groups: the work (in the order a send actually happens: make it, who
+// gets it, grow that list, then watch what happened) and the account. Fewer,
+// broader items on purpose; Domains + Senders share one page (Sending), the
+// suppression list lives in Audiences, and every send, campaign or API, is on
+// Activity. The divider between the groups is what makes a thirteen-item list
+// feel like two short ones.
+const NAV_GROUPS: NavGroup[] = [
+  {
+    items: [
+      { to: "/dashboard", label: "Dashboard", icon: LayoutGridIcon },
+      { to: "/campaigns", label: "Campaigns", icon: MailCheckIcon },
+      { to: "/audiences", label: "Audiences", icon: UsersIcon },
+      { to: "/forms", label: "Forms", icon: FormInputIcon },
+      { to: "/activity", label: "Activity", icon: ActivityIcon },
+      { to: "/metrics", label: "Metrics", icon: ChartColumnIcon },
+      { to: "/sending", label: "Sending", icon: EarthIcon, also: ["/domains", "/senders"] },
+    ],
+  },
+  {
+    label: "Account",
+    items: [
+      { to: "/billing", label: "Billing", icon: CreditCardIcon },
+      { to: "/api-keys", label: "API keys", icon: KeyRoundIcon },
+      { to: "/settings", label: "Settings", icon: SettingsIcon },
+    ],
+  },
 ];
 
 function NavItem({
@@ -67,7 +74,7 @@ function NavItem({
   icon: Icon,
   active,
   onNavigate,
-}: NavEntry & { active: boolean; onNavigate?: () => void }) {
+}: Omit<NavEntry, "also"> & { active: boolean; onNavigate?: () => void }) {
   const iconRef = useRef<AnimatedIconHandle>(null);
   return (
     <Link
@@ -213,11 +220,17 @@ export function AppShell({ children, plan }: { children: React.ReactNode; plan: 
     }
   }, [api, orgId]);
 
-  const isActive = (to: string) => pathname === to || pathname.startsWith(`${to}/`);
+  const matches = (to: string) => pathname === to || pathname.startsWith(`${to}/`);
+  const isActive = (item: NavEntry) => matches(item.to) || (item.also ?? []).some(matches);
 
-  const adminNav: NavEntry[] = isAdmin
-    ? [{ to: "/admin", label: "Admin", icon: ShieldCheckIcon }]
-    : [];
+  // Admin joins the account group so the rail keeps two groups, not three.
+  const groups: NavGroup[] = isAdmin
+    ? NAV_GROUPS.map((g, i) =>
+        i === NAV_GROUPS.length - 1
+          ? { ...g, items: [...g.items, { to: "/admin", label: "Admin", icon: ShieldCheckIcon }] }
+          : g,
+      )
+    : NAV_GROUPS;
 
   return (
     <AiBudgetProvider>
@@ -301,7 +314,7 @@ export function AppShell({ children, plan }: { children: React.ReactNode; plan: 
             <SheetTitle className="sr-only">Navigation</SheetTitle>
             <SidebarBody
               plan={plan}
-              nav={[...NAV, ...adminNav]}
+              groups={groups}
               isActive={isActive}
               onNavigate={() => setNavOpen(false)}
             />
@@ -310,7 +323,7 @@ export function AppShell({ children, plan }: { children: React.ReactNode; plan: 
 
         <div className="flex min-h-0 flex-1">
           <aside className="hidden w-56 shrink-0 md:flex md:flex-col">
-            <SidebarBody plan={plan} nav={[...NAV, ...adminNav]} isActive={isActive} />
+            <SidebarBody plan={plan} groups={groups} isActive={isActive} />
           </aside>
           <div className="flex min-w-0 flex-1 flex-col">
             {/* No top chrome bar on desktop: each page renders its own heading,
@@ -340,13 +353,13 @@ export function AppShell({ children, plan }: { children: React.ReactNode; plan: 
 // page the user just asked for.
 function SidebarBody({
   plan,
-  nav,
+  groups,
   isActive,
   onNavigate,
 }: {
   plan: string;
-  nav: NavEntry[];
-  isActive: (to: string) => boolean;
+  groups: NavGroup[];
+  isActive: (item: NavEntry) => boolean;
   onNavigate?: () => void;
 }) {
   return (
@@ -383,13 +396,28 @@ function SidebarBody({
         />
       </div>
       <nav className="flex flex-1 flex-col gap-1 px-2">
-        {nav.map((item) => (
-          <NavItem
-            key={item.to}
-            {...item}
-            active={isActive(item.to)}
-            onNavigate={onNavigate}
-          />
+        {groups.map((group, i) => (
+          <div key={group.label ?? i} className="flex flex-col gap-1">
+            {/* A hairline plus a quiet label separates the groups. The label sits
+                at the nav gutter (px-3 = the item's own padding) so it reads as a
+                heading for the items below rather than an item itself. */}
+            {i > 0 && <div className="mx-3 mt-2 mb-1 border-t border-border" aria-hidden="true" />}
+            {group.label && (
+              <span className="px-3 pb-0.5 text-[11px] font-medium tracking-wide text-muted-foreground/70 uppercase">
+                {group.label}
+              </span>
+            )}
+            {group.items.map((item) => (
+              <NavItem
+                key={item.to}
+                to={item.to}
+                label={item.label}
+                icon={item.icon}
+                active={isActive(item)}
+                onNavigate={onNavigate}
+              />
+            ))}
+          </div>
         ))}
       </nav>
       {/* Notifications + Help — navigation-style items above the AI meter.

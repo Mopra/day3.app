@@ -516,7 +516,7 @@ export default function FormDetailPage() {
           <span>
             This form requires email confirmation, but you don&apos;t have a verified sending domain
             yet — confirmation emails can&apos;t be sent, so signups will stay unconfirmed.{" "}
-            <a href="/domains" className="font-medium underline">
+            <a href="/sending" className="font-medium underline">
               Verify a domain
             </a>{" "}
             to enable double opt-in.

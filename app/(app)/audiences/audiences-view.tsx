@@ -40,12 +40,16 @@ import {
   useListController,
 } from "@/components/ui/data-list";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiPanel } from "@/components/api-panel";
 import { NextSteps } from "@/components/next-steps";
 import { useApi } from "@/lib/api";
 import { buildAudiencesPanelContent } from "@/lib/api-docs";
 import { formatDate } from "@/lib/format";
 import type { Audience, OnboardingState } from "@/lib/types";
+import { SuppressionsTab } from "./suppressions-tab";
+
+type TabKey = "audiences" | "suppressions";
 
 export function AudiencesView({
   initialAudiences,
@@ -56,6 +60,21 @@ export function AudiencesView({
 }) {
   const api = useApi();
   const router = useRouter();
+  // Audiences | Suppressions. Reflected in ?tab= so the blocklist is deep-linkable
+  // (the old /suppressions URL redirects to it) and survives a refresh.
+  const [tab, setTab] = useState<TabKey>("audiences");
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("tab") === "suppressions") {
+      setTab("suppressions");
+    }
+  }, []);
+  function changeTab(next: TabKey) {
+    setTab(next);
+    const url = new URL(window.location.href);
+    if (next === "audiences") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", next);
+    window.history.replaceState(null, "", url);
+  }
   // Seeded from the server render; owned locally so a rename/delete updates the row
   // without a refetch, and re-synced whenever the server sends a new list.
   const [audiences, setAudiences] = useState<Audience[]>(initialAudiences);
@@ -131,11 +150,30 @@ export function AudiencesView({
     }
   }
 
+  const tabs = (
+    <Tabs value={tab} onValueChange={(v) => changeTab(v as TabKey)}>
+      <TabsList>
+        <TabsTrigger value="audiences">Audiences</TabsTrigger>
+        <TabsTrigger value="suppressions">Suppressions</TabsTrigger>
+      </TabsList>
+    </Tabs>
+  );
+
+  if (tab === "suppressions") {
+    return (
+      <div className="space-y-6">
+        <h1 className="font-display text-2xl sm:text-3xl">Audiences</h1>
+        <SuppressionsTab tabs={tabs} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
+      <h1 className="font-display text-2xl sm:text-3xl">Audiences</h1>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1.5">
-          <h1 className="font-display text-2xl sm:text-3xl">Audiences</h1>
+          {tabs}
           <ApiPanel build={(origin) => buildAudiencesPanelContent({ origin, audiences })} />
         </div>
         <Dialog open={open} onOpenChange={setOpen}>

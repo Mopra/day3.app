@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-09-07**.
+> Last verified against the codebase: **2026-09-08**.
 
 ---
 
@@ -546,6 +546,9 @@ the same "Saving… / Saved" indicator as the campaign composer.
   address.
 
 ### 6.5 Sending domains (deliverability)
+Domains and Senders (§6.6) share one **Sending** page in the sidebar, as two tabs:
+a sender is an address on a verified domain, and nobody finishes one without the
+other. Each domain still opens to its own detail page.
 - Add a domain and get the DKIM/SPF/DMARC DNS records to publish. A subdomain
   (`news.yourcompany.com`) is recommended, so newsletter sending stays separate from
   the company's day-to-day mail.
@@ -584,7 +587,8 @@ the same "Saving… / Saved" indicator as the campaign composer.
     decide. Verification is unaffected either way.
 
 ### 6.6 Senders (From identities)
-- A **Senders** page manages the From name + address pairs campaigns send as. Each
+- The **Senders** tab of the Sending page manages the From name + address pairs
+  campaigns send as. Each
   sender lives on a verified sending domain (its address must be at that domain).
 - The From details entered when adding a domain become that domain's **first (default)
   sender** automatically; an account can keep several senders per domain and mark one
@@ -604,7 +608,7 @@ the same "Saving… / Saved" indicator as the campaign composer.
   footer preview, no trip to Settings.
 - **Automatic suppression** of bounced/complained/unsubscribed addresses (per-account
   and global scopes).
-- **A Suppressions page** (its own item in the sidebar) is the account's blocklist made
+- **A Suppressions tab** on the Audiences page is the account's blocklist made
   visible: every address Day3 refuses to mail, with the reason (unsubscribed, bounced,
   marked as spam, added by hand, blocked by the provider), when it was blocked, and
   whether it arrived by hand or over the API. Searchable by address, filterable by
@@ -693,22 +697,37 @@ rewritten. The first click stamps `clicked_at` (and back-fills `opened_at`, sinc
 proves an open) and records one `click` event; repeat clicks are no-ops. Per-link
 click breakdowns are not surfaced yet (the click event stores the URL for future use).
 
-### 6.11 Activity (email event log)
-A dedicated **Activity** page (in the main nav) lists every email event for the
-account newest-first — sent, delivered, opened, clicked, bounced, marked as spam,
-unsubscribed, failed, and provider errors — so users can check status and
-troubleshoot ("did jane@example.com get the newsletter, and if not, why?"):
-- **Filters:** by event type, by campaign, and a search box matching the recipient
-  email (substring). Offset-paginated with "Load more".
+### 6.11 Activity (every email you sent)
+A dedicated **Activity** page (in the main nav) lists every email the account sent,
+newest-first, whichever producer sent it: campaign sends, automation sends and API
+(transactional) sends in one list, one row per email, with its current status. It
+answers "did jane@example.com get the newsletter, and if not, why?" for any kind of
+send:
+- **Rows are sends, not events.** Each row shows when, the status (queued, sent,
+  delivered, bounced, marked as spam, unsubscribed, failed, suppressed, skipped) with
+  an "Opened"/"Clicked" hint beside a delivered campaign email, the recipient (and
+  "+n" for a multi-recipient API message), what it was (campaign name, automation
+  name, or the API message's subject) and the source.
+- **Filters:** source (campaigns / automations / API), status (including opened and
+  clicked as engagement filters), campaign, and a search box matching the recipient
+  email (substring; API sends also match on subject). Offset-paginated with "Load
+  more". Deep links: a sent campaign's "Troubleshoot a recipient" lands here filtered
+  to that campaign (`?campaignId=`); the retired `/emails` URL redirects to
+  `?source=api`.
 - **Detail drawer:** clicking a row opens a side panel with a plain-language
-  explanation of the event (e.g. permanent vs. temporary bounce, what suppression
-  means), the recipient, time, a link to the campaign, the failure reason /
-  clicked URL / bounce diagnostic where applicable, and the raw provider payload
-  behind a collapsed "Technical details" section.
-- Backed by the append-only `email_events` table (written by the send pipeline,
-  the SES webhook, and the tracking endpoints); the page is read-only. The name
-  "Activity" is deliberately broader than email so future sources (e.g. an API
-  audit log) can slot in alongside without renaming.
+  explanation of the status (e.g. permanent vs. temporary bounce, what suppression
+  means), the recipient(s), a link to the campaign (or the automation / the API
+  message's subject, From, Reply-To, tags and `eml_` id), the error, and the
+  **timeline**: accepted, handed to the provider, delivered, opened, clicked,
+  bounced (with the SMTP diagnostic), and so on, with each raw provider payload
+  behind a collapsed "Technical details" section. An API send also shows its
+  rendered content until the retention prune.
+- **Data:** a union of the two send ledgers, `campaign_recipients` (campaign and
+  automation rows) and `transactional_emails`, projected onto one shape in
+  `src/services/activity.ts`; the timeline reads the append-only `email_events`
+  table by whichever id column the events carry. Read-only. The `</>` API panel on
+  the page carries the transactional-send snippets and the free-tier sandbox banner
+  shows when the API source is selected.
 
 ### 6.12 In-app help
 A **Help** button sits at the bottom of the sidebar on every page. It opens a small
@@ -778,8 +797,8 @@ Full reference spec: `docs/api-v1-spec.md`.
     and the same figure is written into the AI prompts, instructing the assistant
     to count the source rows and stop for an upgrade rather than half-migrate.
 - **The API panel (`</>`) brings the API to the resource pages.** Next to the page
-  title on Audiences (list and detail), Sending domains (list and detail), and
-  Senders sits a small `</>` button that slides out a panel with everything a
+  title on Audiences (list and detail), Sending (both tabs, and each domain's detail)
+  and Activity sits a small `</>` button that slides out a panel with everything a
   developer needs *for the resource in view*: the base URL, API-key status (with a
   one-click path to create a key when the org has none), **every id on the page as
   a copyable row** (audience id, segment ids, topic ids, field keys, domain and
@@ -875,15 +894,15 @@ campaign sends — the API is the higher-volume path and the one that skips
 campaign review, so excluding it would have left the 4%-bounce guard blind
 exactly where it matters most.
 
-**The Emails page** (sidebar, between Campaigns and Audiences) is the log: every
-API send with status chips, recipient/subject search, a status filter, and a
-detail drawer with the delivery timeline, error, tags, provider message id, and
-a rendered content preview (until the 30-day prune). Its `</>` API panel carries
-verified from-domains, send/status/list snippets, and an AI context pack; the
-empty state routes a first-time user to an API key. SES delivery/bounce/
-complaint webhooks update each email live — per recipient, since one message can
-carry fifty and SES reports each separately — and transactional events appear in
-the Activity log (§6.11) alongside campaign events.
+**The Activity page** (§6.11) is the log: every API send sits in the same list as
+campaign sends, with status chips, recipient/subject search, a status filter, and
+a detail drawer with the delivery timeline, error, tags, provider message id, and
+a rendered content preview (until the 30-day prune). Filtering the source to API
+(the retired `/emails` URL redirects there) shows the API-only view; its `</>` API
+panel carries verified from-domains, send/status/list snippets, and an AI context
+pack, and the empty state routes a first-time user to an API key. SES
+delivery/bounce/complaint webhooks update each email live, per recipient, since
+one message can carry fifty and SES reports each separately.
 
 **Plans:** sends draw from the same monthly allowance as campaigns; the free
 tier gets the member-only 100/month sandbox (§4). Delivery lifecycle statuses,
@@ -892,7 +911,7 @@ per-email, come free with the existing SES event pipeline.
 > Source of truth in code: routes `app/api/v1/emails/**`, shared vocabulary
 > `src/services/transactional.ts`, worker job
 > `src/queue/handlers/send-transactional.ts`, sweeps in `src/queue/cron.ts`,
-> UI `app/(app)/emails/page.tsx`, docs content `src/lib/api-docs.ts`.
+> UI `app/(app)/activity/page.tsx`, docs content `src/lib/api-docs.ts`.
 
 ### 6.16 Webhooks — Day3 tells your app what happened
 
@@ -1020,10 +1039,13 @@ organization, built to answer "what state am I in, and what should I do next?":
   bigger tier actually exists.
 - **Recent campaigns** — the last five with status, sent count, and created date.
 
-**Navigation:** the sidebar follows the actual job order — Dashboard, Campaigns, Emails,
-Audiences, who you may mail (Suppressions), what you send as (Domains, Senders), how you
-grow (Forms), how you measure (Metrics, Activity), and account (Billing, API keys,
-Settings).
+**Navigation:** the sidebar is two short groups, split by a hairline and a quiet
+"Account" label. The work, in the order a send happens: Dashboard, Campaigns,
+Audiences (with the Suppressions tab), Forms, Activity (every send, campaign or
+API), Metrics, and Sending (Domains and Senders as two tabs). Then the account:
+Billing, API keys, Settings. The retired URLs (`/emails`, `/domains`, `/senders`,
+`/suppressions`) redirect to where their content now lives; `/domains/{id}` detail
+pages are unchanged.
 
 - A **command palette** (⌘K / Ctrl-K) jumps to any page or the common create actions
   from anywhere.
@@ -1146,7 +1168,7 @@ their crashed/lost sends.
    the prompt on the API keys page to an AI assistant) → send to your most engaged
    segment first → watch Metrics and Activity. Detailed in §10.
 6. **Send transactional email from your app:** verify a domain → mint an API key →
-   `POST /v1/emails` → watch each send on the Emails page (§6.15).
+   `POST /v1/emails` → watch each send on the Activity page (§6.11).
 7. **Draft an email from your editor:** point Claude Code / Cursor at `/api/mcp` with an
    API key → describe the email → open the draft in the composer and send (§6.17).
 
@@ -1164,7 +1186,7 @@ There are three routes in, all landing on the same data:
 
 | Route | Best for | Where |
 |-------|----------|-------|
-| **A — CSV export/import** | Non-technical users, one-off moves, lists up to 5,000 per file | Audience page → **Import CSV**, plus **Suppressions** for the bounce list (§10.2) |
+| **A — CSV export/import** | Non-technical users, one-off moves, lists up to 5,000 per file | Audience page → **Import CSV**, plus the **Suppressions** tab for the bounce list (§10.2) |
 | **B — the v1 API** | Anything scripted, big lists, repeatable runs, topic preferences | `POST /api/v1/...` (§10.3) |
 | **C — hand it to an AI assistant** | "I have an export and a coding assistant, do it for me" | **API keys** page → *Migrate from another provider* prompt (§10.4) |
 
@@ -1183,7 +1205,7 @@ data is worse than one that says what it dropped.
 | First / last name | ✅ | `first_name` / `last_name` columns or fields |
 | Custom / merge fields | ✅ | Extra CSV columns, or `attributes` over the API — both **auto-register** in the audience's field registry (§6.3) and become `{{merge_tags}}` |
 | **Unsubscribes** | ✅ | A `status` column on the CSV (`unsubscribed`, plus an optional `unsubscribed_at` for the original date), or `status: "unsubscribed"` over the API |
-| **Hard bounces & spam complaints** | ✅ | Paste or upload them on the **Suppressions** page (§6.7), or `POST /v1/suppressions` with an explicit `reason` |
+| **Hard bounces & spam complaints** | ✅ | Paste or upload them on the **Suppressions** tab of Audiences (§6.7), or `POST /v1/suppressions` with an explicit `reason` |
 | Topic / group / interest preferences | ✅ **API only** | Create topics (§6.3), then `PATCH /v1/audiences/{id}/contacts/{ref}/topics` |
 | Segments / saved filters | ⚠️ Re-created | Segments are live filters over your fields — recreate them once the fields are in (usually a minute per segment, and they then stay current) |
 | **Original signup dates** | ❌ | `created_at` in a payload is ignored; there is no backdating. Keep the original date as a custom field (e.g. `signed_up_at`) if you need it — it's then usable in segments and merge tags |
@@ -1250,7 +1272,7 @@ operations matters more than the code:
    deliberately no `DELETE /v1/suppressions/{email}`, so a leaked key can never
    unblock addresses in order to mail them. Posting the wrong file (say, the full
    contact list) makes those addresses unmailable, which is undone **in the app** on
-   the Suppressions page (§6.7), one address at a time; entries are tagged with the
+   the Suppressions tab of Audiences (§6.7), one address at a time; entries are tagged with the
    key that created them so an accidental import is identifiable. Dry-run first.
    **Plain unsubscribes generally belong in step 3, not here** — suppressing them stops
    them being imported as contacts at all, which loses the record that they opted out.

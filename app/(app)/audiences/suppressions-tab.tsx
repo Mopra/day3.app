@@ -88,7 +88,11 @@ function splitEmails(text: string): string[] {
 
 type GlobalEntry = { email: string; reason: string; createdAt: string };
 
-export default function SuppressionsPage() {
+// The account-wide blocklist, shown as the Suppressions tab of the Audiences
+// page: it is the "who you may NOT mail" half of the audience story and applies
+// across every audience. `tabs` is the page's tab strip, rendered in the title
+// row so the strip and the primary action share one line.
+export function SuppressionsTab({ tabs }: { tabs: React.ReactNode }) {
   const api = useApi();
   const [rows, setRows] = useState<SuppressionRow[] | null>(null);
   const [total, setTotal] = useState(0);
@@ -200,7 +204,7 @@ export default function SuppressionsPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-display text-2xl sm:text-3xl">Suppressions</h1>
+        {tabs}
         <Button onClick={() => setAddOpen(true)}>Add addresses</Button>
       </div>
 
@@ -208,7 +212,7 @@ export default function SuppressionsPage() {
         Addresses Day3 will never send to for this account — everyone who unsubscribed,
         hard-bounced, or marked you as spam, plus anything you block by hand. The list applies
         across every audience and every send, campaign or{" "}
-        <Link href="/emails" className="underline underline-offset-2 hover:text-foreground">
+        <Link href="/activity?source=api" className="underline underline-offset-2 hover:text-foreground">
           transactional
         </Link>
         . Moving in from another platform? Add its bounce and complaint list here{" "}

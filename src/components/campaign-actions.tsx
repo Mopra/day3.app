@@ -43,7 +43,7 @@ function fixLinkFor(reason: string): { href: string; label: string } | null {
     return { href: "/settings", label: "Add your address" };
   }
   if (r.includes("domain")) {
-    return { href: "/domains", label: "Verify a domain" };
+    return { href: "/sending", label: "Verify a domain" };
   }
   if (r.includes("subscriber") || r.includes("audience") || r.includes("recipient")) {
     return { href: "/audiences", label: "Import subscribers" };

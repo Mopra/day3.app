@@ -115,7 +115,15 @@ function StatusCell({ domain }: { domain: SendingDomain }) {
   );
 }
 
-export function DomainsView({ initialDomains }: { initialDomains: SendingDomain[] }) {
+// `tabs` is the Sending page's Domains | Senders switch, rendered in the title
+// row so the tab strip, the </> panel and the primary action share one line.
+export function DomainsView({
+  initialDomains,
+  tabs,
+}: {
+  initialDomains: SendingDomain[];
+  tabs: React.ReactNode;
+}) {
   const api = useApi();
   const router = useRouter();
   // Seeded from the server render (./page.tsx) and re-synced when the server sends
@@ -211,7 +219,7 @@ export function DomainsView({ initialDomains }: { initialDomains: SendingDomain[
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1.5">
-          <h1 className="font-display text-2xl sm:text-3xl">Sending domains</h1>
+          {tabs}
           <ApiPanel
             build={(origin) => buildDomainsPanelContent({ origin, domains: domains ?? [] })}
           />

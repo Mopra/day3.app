@@ -12,11 +12,11 @@ import {
   Mail,
   Plus,
   Search,
-  Send,
   Settings,
   Users,
   AtSign,
   FileInput,
+  Workflow,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -37,15 +37,15 @@ type Command = {
 const COMMANDS: Command[] = [
   { label: "New campaign", hint: "Create", icon: Plus, href: "/campaigns/new", keywords: "compose write email draft" },
   { label: "Campaigns", icon: Mail, href: "/campaigns" },
-  { label: "Emails", icon: Send, href: "/emails", keywords: "transactional api sends log password reset receipt" },
+  { label: "Automations", icon: Workflow, href: "/automations", keywords: "welcome series drip flow onboarding" },
   { label: "Audiences", icon: Users, href: "/audiences", keywords: "subscribers list contacts" },
   { label: "Import subscribers", hint: "Audiences", icon: FileInput, href: "/audiences", keywords: "csv upload migrate" },
-  { label: "Suppressions", icon: Ban, href: "/suppressions", keywords: "unsubscribed bounced blocked spam complaints blocklist unsuppress migrate" },
-  { label: "Sending domains", icon: Globe, href: "/domains", keywords: "dns dkim verify" },
-  { label: "Senders", icon: AtSign, href: "/senders", keywords: "from identity" },
+  { label: "Suppressions", hint: "Audiences", icon: Ban, href: "/audiences?tab=suppressions", keywords: "unsubscribed bounced blocked spam complaints blocklist unsuppress migrate" },
+  { label: "Sending domains", hint: "Sending", icon: Globe, href: "/sending", keywords: "dns dkim verify domain" },
+  { label: "Senders", hint: "Sending", icon: AtSign, href: "/sending?tab=senders", keywords: "from identity address" },
   { label: "Signup forms", icon: FileInput, href: "/forms", keywords: "embed hosted" },
   { label: "Metrics", icon: BarChart3, href: "/metrics", keywords: "opens clicks deliverability" },
-  { label: "Activity", icon: Activity, href: "/activity", keywords: "events log troubleshoot" },
+  { label: "Activity", icon: Activity, href: "/activity", keywords: "events log troubleshoot emails transactional api sends delivered bounced password reset receipt" },
   { label: "Dashboard", icon: LayoutGrid, href: "/dashboard", keywords: "home overview" },
   { label: "Billing", icon: BarChart3, href: "/billing", keywords: "plan upgrade subscription" },
   { label: "API keys", icon: KeyRound, href: "/api-keys", keywords: "api rest developers integrate migrate import token bearer docs" },

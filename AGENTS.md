@@ -97,8 +97,8 @@ page share a single account lookup instead of one per caller.
   introduce a `Date`-mode column without converting at the boundary.
 - `app/(app)/loading.tsx` is what the router shows during the server read. Without
   it, a navigation leaves the *previous* page on screen and reads as a dead click.
-- Still on client fetch, deliberately: the server-paginated views (suppressions,
-  activity, emails) and the `[id]` detail pages, which own a `load(offset)` machine
+- Still on client fetch, deliberately: the server-paginated views (the Suppressions
+  tab, Activity) and the `[id]` detail pages, which own a `load(offset)` machine
   that server-rendering page 1 would duplicate.
 
 ## Gotchas
@@ -164,7 +164,8 @@ page share a single account lookup instead of one per caller.
   See `docs/automations-design.md` §3.1.
 - **Suppression is add-only everywhere except one route.** `POST /v1/suppressions`
   (and `addSuppressions`) only ever adds; the single undo is
-  `DELETE /api/suppressions/{email}` behind a session (the Suppressions page), so a
+  `DELETE /api/suppressions/{email}` behind a session (the Suppressions tab of
+  Audiences), so a
   leaked API key can't unblock a bounced address to mail it. That route clears every
   reason held against the address, restores contacts marked
   `bounced`/`complained`/`suppressed` to `subscribed`, and **deliberately leaves

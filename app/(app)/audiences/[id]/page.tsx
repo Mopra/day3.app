@@ -679,7 +679,7 @@ export default function AudienceDetailPage() {
               <code className="font-mono">unsubscribed_at</code> date), and rows marked bounced or
               spam are skipped — load those on{" "}
               <Link
-                href="/suppressions"
+                href="/audiences?tab=suppressions"
                 className="underline underline-offset-2 hover:text-foreground"
               >
                 Suppressions

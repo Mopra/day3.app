@@ -51,7 +51,7 @@ export default function DomainDetailPage() {
     try {
       await api.del(`/api/domains/${id}`);
       toast.success("Domain deleted");
-      router.push("/domains");
+      router.push("/sending");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't delete domain");
       setRemoving(false);
@@ -61,11 +61,11 @@ export default function DomainDetailPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <Link
-        href="/domains"
+        href="/sending"
         className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowLeft className="size-4" />
-        Sending domains
+        Sending
       </Link>
 
       {notFound ? (
@@ -74,7 +74,7 @@ export default function DomainDetailPage() {
           <p className="mt-1 text-sm text-muted-foreground">
             It may have been removed. Go back to your sending domains.
           </p>
-          <Button className="mt-4" render={<Link href="/domains">Back to domains</Link>} />
+          <Button className="mt-4" render={<Link href="/sending">Back to domains</Link>} />
         </div>
       ) : domain === null ? (
         <div className="space-y-4">
