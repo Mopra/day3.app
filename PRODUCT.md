@@ -636,6 +636,14 @@ other. Each domain still opens to its own detail page.
 - **Bounce/complaint handling** via SES → SNS webhooks updates recipient status and
   suppresses bad addresses; sustained bad reputation **over a trailing window** can
   auto-pause an account (and pages on-call via the error sink).
+  - An auto-pause needs a bad **rate** (>=4% bounce, >=0.08% complaint) *and* enough
+    bad addresses behind it to believe the rate: at least **20 bounces** or **3
+    complaints**. A percentage on a small send is mostly noise — 4% of 50 emails is
+    two dead mailboxes and 0.08% rounds to a single "report spam" click — and the
+    pause is one-way (only an operator can lift it), so a small sender is warned
+    rather than stopped. An account over the rate but under the counts keeps
+    sending and turns the dashboard's sending-status light amber with its live
+    bounce/complaint rates.
 - **Public Privacy Policy and Terms** pages (`/privacy`, `/terms`), linked from the
   marketing footer.
 
@@ -892,7 +900,9 @@ Bounces and complaints on transactional mail feed the suppression list **and
 count toward the account's reputation auto-pause** (§6.7) on equal footing with
 campaign sends — the API is the higher-volume path and the one that skips
 campaign review, so excluding it would have left the 4%-bounce guard blind
-exactly where it matters most.
+exactly where it matters most. One API message can carry up to 50 recipients, so
+it counts as 50 attempted sends, and a bounce or complaint counts **only the
+addresses it actually names** rather than the whole message.
 
 **The Activity page** (§6.11) is the log: every API send sits in the same list as
 campaign sends, with status chips, recipient/subject search, a status filter, and

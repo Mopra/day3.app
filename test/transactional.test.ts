@@ -15,7 +15,12 @@ import {
 import { newId, nowIso } from "../src/lib/ids";
 import type { EmailProvider } from "../src/email/provider";
 import { isDomainClaimed } from "../src/services/domain-ownership";
-import { computeAccountHealth, enforceAccountHealth } from "../src/services/health";
+import {
+  BOUNCE_RATE_PAUSE,
+  COMPLAINT_RATE_PAUSE,
+  computeAccountHealth,
+  enforceAccountHealth,
+} from "../src/services/health";
 import { releaseReservation } from "../src/services/quota";
 import { FakeQueue, RecordingProvider, seedAccount, seedDomain, testDb } from "./helpers";
 
@@ -721,42 +726,142 @@ describe("sending-domain ownership is global (anti-spoofing boundary)", () => {
 });
 
 describe("transactional sends count toward account reputation", () => {
-  it("auto-pauses on a transactional bounce rate, and weighs each recipient", async () => {
-    // 100 recipients' worth of clean transactional sends, then enough bounced
-    // ones to cross the 4% pause threshold. Without transactional volume in
-    // computeAccountHealth this account would read 0 attempted and never pause.
-    const now = nowIso();
-    const mk = async (status: "sent" | "bounced", recipients: number) => {
-      await currentDb.insert(transactionalEmails).values({
-        id: newId("eml"),
-        accountId: account.id,
-        fromEmail: "notify@updates.test.co",
-        to: Array.from({ length: recipients }, (_, i) => `r${i}-${newId("eml")}@example.com`),
-        subject: "s",
-        htmlBody: "<p>x</p>",
-        status,
-        provider: "ses",
-        sentAt: now,
-        createdAt: now,
-        updatedAt: now,
-      });
-    };
-    await mk("sent", 100);
-    const health = await computeAccountHealth(currentDb, account.id);
-    expect(health.attempted).toBe(100); // recipients, not rows
-    expect(health.status).toBe("normal");
+  const now = nowIso();
 
-    await mk("bounced", 5); // 5 / 105 ≈ 4.8% > 4%
+  // A message with `recipients` addresses. `bad` says how many of them got a
+  // bounce/complaint notification, written to email_events the way the SES
+  // webhook writes them: one row per (message, address).
+  const mkMessage = async (opts: {
+    status: "sent" | "delivered" | "bounced" | "complained";
+    recipients: number;
+    bad?: number;
+    event?: "bounce" | "complaint";
+    bounceType?: string;
+  }) => {
+    const id = newId("eml");
+    const to = Array.from({ length: opts.recipients }, (_, i) => `r${i}-${id}@example.com`);
+    await currentDb.insert(transactionalEmails).values({
+      id,
+      accountId: account.id,
+      fromEmail: "notify@updates.test.co",
+      to,
+      subject: "s",
+      htmlBody: "<p>x</p>",
+      status: opts.status,
+      provider: "ses",
+      providerMessageId: `msg-${id}`,
+      sentAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    for (let i = 0; i < (opts.bad ?? 0); i++) {
+      await currentDb.insert(emailEvents).values({
+        id: newId("evt"),
+        accountId: account.id,
+        transactionalEmailId: id,
+        eventType: opts.event ?? "bounce",
+        email: to[i],
+        provider: "ses",
+        providerMessageId: `msg-${id}`,
+        payloadJson: JSON.stringify({
+          bounce: { bounceType: opts.bounceType ?? "Permanent", bounceSubType: "General" },
+        }),
+        createdAt: now,
+      });
+    }
+    return id;
+  };
+
+  it("weighs the ADDRESSES that bounced, not every recipient of the message", async () => {
+    // The regression this guards: a bounce for any one recipient flips the whole
+    // message's status, so charging the message's recipient count to `bounced`
+    // made a single 50-recipient message with one dead mailbox read as a 100%
+    // bounce rate and pause the account on its own.
+    await mkMessage({ status: "sent", recipients: 100 });
+    await mkMessage({ status: "bounced", recipients: 50, bad: 1 });
+
+    const health = await computeAccountHealth(currentDb, account.id);
+    expect(health.attempted).toBe(150); // recipients, not rows
+    expect(health.bounced).toBe(1); // the one dead address, not all 50
+    expect(health.status).toBe("normal");
+  });
+
+  it("ignores soft bounces, as the campaign ledger does", async () => {
+    // The webhook records the event before it gates on the bounce type, so
+    // email_events holds Transient rows that must not count against reputation.
+    await mkMessage({ status: "sent", recipients: 100 });
+    await mkMessage({
+      status: "sent",
+      recipients: 30,
+      bad: 30,
+      bounceType: "Transient",
+    });
+
+    const health = await computeAccountHealth(currentDb, account.id);
+    expect(health.attempted).toBe(130);
+    expect(health.bounced).toBe(0);
+    expect(health.status).toBe("normal");
+  });
+
+  it("needs the rate AND an absolute count of bad addresses before pausing", async () => {
+    await mkMessage({ status: "sent", recipients: 380 });
+    for (let i = 0; i < 18; i++) {
+      await mkMessage({ status: "bounced", recipients: 1, bad: 1 });
+    }
+
+    // 18 / 398 = 4.52%, over the 4% rate line but under MIN_BOUNCED_FOR_PAUSE.
+    // At this volume that is binomial noise on an ordinary list, so it warns.
+    const noisy = await enforceAccountHealth(currentDb, account.id);
+    expect(noisy.attempted).toBe(398);
+    expect(noisy.bounced).toBe(18);
+    expect(noisy.bounceRate).toBeGreaterThanOrEqual(BOUNCE_RATE_PAUSE);
+    expect(noisy.status).toBe("warning");
+    expect(
+      (await currentDb.query.accounts.findFirst({ where: eq(accounts.id, account.id) }))!
+        .riskStatus,
+    ).toBe("normal");
+
+    // Two more clears both halves: 20 / 400 = 5% and 20 >= MIN_BOUNCED_FOR_PAUSE.
+    for (let i = 0; i < 2; i++) {
+      await mkMessage({ status: "bounced", recipients: 1, bad: 1 });
+    }
     const bad = await enforceAccountHealth(currentDb, account.id);
-    expect(bad.attempted).toBe(105);
-    expect(bad.bounced).toBe(5);
+    expect(bad.attempted).toBe(400);
+    expect(bad.bounced).toBe(20);
     expect(bad.status).toBe("paused");
+    expect(bad.reason).toMatch(/20 bounced of 400 sent/);
 
     const acct = (await currentDb.query.accounts.findFirst({
       where: eq(accounts.id, account.id),
     }))!;
     expect(acct.riskStatus).toBe("paused");
     expect(acct.sendingEnabled).toBe(false);
+  });
+
+  it("does not pause on one or two complaints, however small the send", async () => {
+    // The complaint threshold is 0.08%, so at 200 sends a SINGLE "report spam"
+    // click read as 25x over the line. This is the case that was pausing
+    // legitimate product senders.
+    await mkMessage({ status: "sent", recipients: 200 });
+    await mkMessage({ status: "complained", recipients: 1, bad: 1, event: "complaint" });
+
+    const one = await enforceAccountHealth(currentDb, account.id);
+    expect(one.complained).toBe(1);
+    expect(one.complaintRate).toBeGreaterThanOrEqual(COMPLAINT_RATE_PAUSE);
+    expect(one.status).toBe("warning");
+
+    await mkMessage({ status: "complained", recipients: 1, bad: 1, event: "complaint" });
+    expect((await enforceAccountHealth(currentDb, account.id)).status).toBe("warning");
+
+    // The third satisfies MIN_COMPLAINED_FOR_PAUSE.
+    await mkMessage({ status: "complained", recipients: 1, bad: 1, event: "complaint" });
+    const bad = await enforceAccountHealth(currentDb, account.id);
+    expect(bad.complained).toBe(3);
+    expect(bad.status).toBe("paused");
+    expect(
+      (await currentDb.query.accounts.findFirst({ where: eq(accounts.id, account.id) }))!
+        .riskStatus,
+    ).toBe("paused");
   });
 });
 

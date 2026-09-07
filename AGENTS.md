@@ -162,6 +162,25 @@ page share a single account lookup instead of one per caller.
   every send the account made (leave it unfiltered, as `enforceAccountHealth`
   does — reputation is account-wide). The name is a misnomer pending a rename.
   See `docs/automations-design.md` §3.1.
+- **A reputation auto-pause needs a rate AND a count, and the count is the half
+  that is easy to delete.** `services/health.ts` pauses only when the bounce/
+  complaint rate crosses the threshold *and* at least `MIN_BOUNCED_FOR_PAUSE`
+  (20) / `MIN_COMPLAINED_FOR_PAUSE` (3) addresses are behind it. Without the
+  counts the thresholds are applied at volumes where they measure nothing: at the
+  50-attempted floor, 4% is two bounces and 0.08% rounds to one complaint, so an
+  ordinary list bouncing at 1.5% tripped a pause on roughly one in six small
+  sends. The pause is one-way (`risk_status` flips and only an operator resumes),
+  so a false positive costs a support round-trip. SES reasons the same way: it
+  reviews at 5%/0.1% but does not enforce against low-volume senders. The warning
+  tier deliberately keeps the low floor — warn early, pause late.
+  Transactional bounces are counted **per address** off `email_events` (one row
+  per message+address+type), never by charging a message's whole recipient list:
+  a 50-recipient API message with one dead mailbox otherwise read as a 100%
+  bounce rate on its own. That query filters `bounceType` textually because the
+  webhook records soft bounces too and `payload_json` is text a `::jsonb` cast
+  would throw on. `scripts/review-reputation-pauses.ts` re-adjudicates existing
+  pauses; it judges over the account's whole history, not the trailing window,
+  because a paused account's window is empty by construction.
 - **Suppression is add-only everywhere except one route.** `POST /v1/suppressions`
   (and `addSuppressions`) only ever adds; the single undo is
   `DELETE /api/suppressions/{email}` behind a session (the Suppressions tab of

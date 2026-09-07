@@ -1,6 +1,6 @@
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { accounts, campaignRecipients, transactionalEmails } from "../db/schema";
+import { accounts, campaignRecipients, emailEvents, transactionalEmails } from "../db/schema";
 import { nowIso } from "../lib/ids";
 import { logger } from "../lib/logger";
 
@@ -9,8 +9,32 @@ export const BOUNCE_RATE_PAUSE = 0.04;
 export const COMPLAINT_RATE_WARNING = 0.0005;
 export const COMPLAINT_RATE_PAUSE = 0.0008;
 
-// Below this many attempted sends, rates are too noisy to act on.
-const MIN_ATTEMPTED_FOR_ENFORCEMENT = 50;
+// Below this many attempted sends, rates are too noisy to say anything at all.
+export const MIN_ATTEMPTED_FOR_ENFORCEMENT = 50;
+
+// A rate on its own is not evidence, and this is the half that was missing.
+// The thresholds above are SES-grade, but SES applies them to SES-grade volume:
+// at the enforcement floor of 50 attempted, 4% is *two* bounces and 0.08% rounds
+// to *one* complaint. An ordinary B2B list bouncing at a true 1.5% clears
+// 2-of-50 about 17% of the time, so roughly one in six clean small sends tripped
+// the auto-pause, and a single "report spam" click did it outright.
+//
+// The auto-pause is also one-way: it flips `risk_status` to paused and only an
+// operator can resume, so a false positive costs a support round-trip and tells
+// a legitimate customer they look like a spammer. That asymmetry is why the bar
+// belongs well above the noise rather than at it.
+//
+// So a pause needs the rate AND an absolute count of bad addresses behind it.
+// The count is a crude confidence floor: the smallest possible pause becomes 20
+// bounces (>=500 attempted) or 3 complaints (>=3750 attempted), volumes where
+// the percentage is actually estimating something. AWS reasons the same way —
+// SES opens a review at 5% bounce / 0.1% complaint but does not enforce against
+// low-volume senders, because the rates are not meaningful there. An account
+// genuinely mailing a purchased list blows through both counts on its first real
+// send; an account sending 200 product notifications a fortnight never touches
+// them, which is the population the rate-only rule was catching.
+export const MIN_BOUNCED_FOR_PAUSE = 20;
+export const MIN_COMPLAINED_FOR_PAUSE = 3;
 
 // Reputation is judged over a TRAILING WINDOW of recent sends, not the account's
 // lifetime. SES suspends on *recent* bounce/complaint rates, so a long good
@@ -28,6 +52,8 @@ export type AccountHealth = {
   status: "normal" | "warning" | "paused";
   reason?: string;
 };
+
+const COUNTED_TX_STATUSES = ["sent", "delivered", "bounced", "complained"] as const;
 
 export async function computeAccountHealth(db: Db, accountId: string): Promise<AccountHealth> {
   // Only count emails SENT within the trailing window. `sent_at` is set on the
@@ -60,33 +86,79 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
   // AWS judges one bounce rate for the whole SES account, and the API is the
   // path that skips campaign review entirely — an account mailing a harvested
   // list through POST /v1/emails would otherwise never trip the auto-pause.
-  // A message carries up to 50 recipients, so it weighs jsonb_array_length(to)
-  // rather than one row; a bounce/complaint notification for any of them flips
-  // the message's status, which (like the campaign ledger) attributes the whole
-  // message — the conservative direction for a reputation guard.
-  const txRows = await db
+  //
+  // A message carries up to 50 recipients, so the denominator weighs
+  // jsonb_array_length(to) rather than one row per message.
+  const [txAttemptedRow] = await db
     .select({
-      status: transactionalEmails.status,
-      count: sql<number>`coalesce(sum(jsonb_array_length(${transactionalEmails.to})), 0)`.as("count"),
+      count: sql<number>`coalesce(sum(jsonb_array_length(${transactionalEmails.to})), 0)`.as(
+        "count",
+      ),
     })
     .from(transactionalEmails)
     .where(
       and(
         eq(transactionalEmails.accountId, accountId),
         gte(transactionalEmails.sentAt, cutoff),
-        inArray(transactionalEmails.status, ["sent", "delivered", "bounced", "complained"]),
+        inArray(transactionalEmails.status, [...COUNTED_TX_STATUSES]),
+      ),
+    );
+
+  // The NUMERATOR has to be counted per ADDRESS, not per message. A bounce or
+  // complaint for any one recipient flips the whole message's status, so
+  // grouping the recipient count by message status charged all 50 addresses of a
+  // 50-recipient message for one dead mailbox — one such message read as a 100%
+  // bounce rate on its own and paused the account. `email_events` already holds
+  // exactly one row per (message, address, event type) — that is what its unique
+  // index is for — so it is the honest source for "how many addresses actually
+  // went wrong", and it makes transactional weigh the same as the per-recipient
+  // campaign ledger.
+  //
+  // Bounce events are recorded for soft bounces too (the SES webhook records
+  // first and gates only the status flip on Permanent/Undetermined), so the
+  // bounce type is filtered here to match campaign semantics. `payload_json` is
+  // the raw SNS notification held as text; a `::jsonb` cast would throw on any
+  // row that is not parseable, so this matches the field textually instead —
+  // `bounceType` appears exactly once in a bounce notification. The POSIX
+  // character class avoids a backslash escape surviving the template literal.
+  const txEventRows = await db
+    .select({
+      eventType: emailEvents.eventType,
+      count: sql<number>`count(distinct (${emailEvents.transactionalEmailId} || ':' || coalesce(${emailEvents.email}, '')))`.as(
+        "count",
+      ),
+    })
+    .from(emailEvents)
+    .innerJoin(transactionalEmails, eq(emailEvents.transactionalEmailId, transactionalEmails.id))
+    .where(
+      and(
+        eq(emailEvents.accountId, accountId),
+        gte(transactionalEmails.sentAt, cutoff),
+        inArray(transactionalEmails.status, [...COUNTED_TX_STATUSES]),
+        inArray(emailEvents.eventType, ["bounce", "complaint"]),
+        sql`(${emailEvents.eventType} <> 'bounce' OR ${emailEvents.payloadJson} ~ '"bounceType"[[:space:]]*:[[:space:]]*"(Permanent|Undetermined)"')`,
       ),
     )
-    .groupBy(transactionalEmails.status);
+    .groupBy(emailEvents.eventType);
 
   const counts: Record<string, number> = {};
-  for (const r of [...rows, ...txRows]) {
+  for (const r of rows) {
     counts[r.status] = (counts[r.status] ?? 0) + Number(r.count);
   }
-  const bounced = counts.bounced ?? 0;
-  const complained = counts.complained ?? 0;
+  const txCounts: Record<string, number> = {};
+  for (const r of txEventRows) {
+    txCounts[r.eventType] = Number(r.count);
+  }
+
+  const bounced = (counts.bounced ?? 0) + (txCounts.bounce ?? 0);
+  const complained = (counts.complained ?? 0) + (txCounts.complaint ?? 0);
   const attempted =
-    (counts.sent ?? 0) + (counts.delivered ?? 0) + bounced + complained + (counts.unsubscribed ?? 0);
+    (counts.sent ?? 0) +
+    (counts.delivered ?? 0) +
+    (counts.bounced ?? 0) +
+    (counts.complained ?? 0) +
+    (counts.unsubscribed ?? 0) +
+    Number(txAttemptedRow?.count ?? 0);
 
   const bounceRate = attempted > 0 ? bounced / attempted : 0;
   const complaintRate = attempted > 0 ? complained / attempted : 0;
@@ -95,13 +167,18 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
   let reason: string | undefined;
 
   if (attempted >= MIN_ATTEMPTED_FOR_ENFORCEMENT) {
-    if (bounceRate >= BOUNCE_RATE_PAUSE) {
+    // Both halves, always: the rate says the proportion is bad, the count says
+    // there is enough of it to believe the rate. See MIN_BOUNCED_FOR_PAUSE.
+    if (bounceRate >= BOUNCE_RATE_PAUSE && bounced >= MIN_BOUNCED_FOR_PAUSE) {
       status = "paused";
-      reason = `Bounce rate ${(bounceRate * 100).toFixed(2)}% exceeded ${BOUNCE_RATE_PAUSE * 100}%`;
-    } else if (complaintRate >= COMPLAINT_RATE_PAUSE) {
+      reason = `Bounce rate ${(bounceRate * 100).toFixed(2)}% exceeded ${BOUNCE_RATE_PAUSE * 100}% (${bounced} bounced of ${attempted} sent)`;
+    } else if (complaintRate >= COMPLAINT_RATE_PAUSE && complained >= MIN_COMPLAINED_FOR_PAUSE) {
       status = "paused";
-      reason = `Complaint rate ${(complaintRate * 100).toFixed(3)}% exceeded ${COMPLAINT_RATE_PAUSE * 100}%`;
+      reason = `Complaint rate ${(complaintRate * 100).toFixed(3)}% exceeded ${COMPLAINT_RATE_PAUSE * 100}% (${complained} complaints of ${attempted} sent)`;
     } else if (bounceRate >= BOUNCE_RATE_WARNING || complaintRate >= COMPLAINT_RATE_WARNING) {
+      // Warn early, pause late. The warning tier keeps the low volume floor on
+      // purpose — it costs the tenant nothing and it is the signal an operator
+      // wants long before an account is anywhere near a pause.
       status = "warning";
     }
   }

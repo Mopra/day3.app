@@ -12,7 +12,11 @@ import {
 import { newId, nowIso } from "../src/lib/ids";
 import { addSuppression } from "../src/services/suppression";
 import { handleQueueMessage, type QueueDeps } from "../src/queue/consumer";
-import { COMPLAINT_RATE_PAUSE } from "../src/services/health";
+import {
+  COMPLAINT_RATE_PAUSE,
+  MIN_COMPLAINED_FOR_PAUSE,
+  computeAccountHealth,
+} from "../src/services/health";
 import type { Db } from "../src/db/client";
 import {
   FakeQueue,
@@ -459,34 +463,51 @@ describe("end-to-end: webhook ingestion drives status, suppression, and auto-pau
     expect(acc?.sendingEnabled).toBe(true);
     expect(acc?.riskStatus).toBe("normal");
 
-    // 4) A second complaint pushes the rate over the threshold → auto-pause.
+    // 4) A second complaint clears the RATE but not the absolute count: a pause
+    // needs both (MIN_COMPLAINED_FOR_PAUSE), because at these volumes one or two
+    // "report spam" clicks are noise, not a reputation problem. The account keeps
+    // sending and only the warning tier moves.
     const complainer2 = emails[3];
     expect(
       (await post(snsNotification(mid(complainer2), { eventType: "Complaint" }))).status,
     ).toBe(200);
     acc = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
     expect(2 / 2000).toBeGreaterThanOrEqual(COMPLAINT_RATE_PAUSE);
+    expect(2).toBeLessThan(MIN_COMPLAINED_FOR_PAUSE);
+    expect(acc?.sendingEnabled).toBe(true);
+    expect(acc?.riskStatus).toBe("normal");
+    expect((await computeAccountHealth(db, account.id)).status).toBe("warning");
+
+    // 5) A third complaint satisfies the rate AND the count → auto-pause.
+    const complainer3 = emails[4];
+    expect(
+      (await post(snsNotification(mid(complainer3), { eventType: "Complaint" }))).status,
+    ).toBe(200);
+    acc = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
+    expect(3 / 2000).toBeGreaterThanOrEqual(COMPLAINT_RATE_PAUSE);
     expect(acc?.sendingEnabled).toBe(false);
     expect(acc?.riskStatus).toBe("paused");
     expect(acc?.pausedReason).toMatch(/complaint rate/i);
 
-    // Suppression list now holds the bounce + both complaints.
+    // Suppression list now holds the bounce + all three complaints.
     const allSup = await db
       .select()
       .from(suppressionEntries)
-      .where(inArray(suppressionEntries.email, [bouncer, complainer1, complainer2]));
-    expect(allSup).toHaveLength(3);
+      .where(
+        inArray(suppressionEntries.email, [bouncer, complainer1, complainer2, complainer3]),
+      );
+    expect(allSup).toHaveLength(4);
 
-    // Re-delivering the second complaint is idempotent: still one event row, the
+    // Re-delivering the third complaint is idempotent: still one event row, the
     // account stays paused (health enforcement does not re-fire on the no-op).
     expect(
-      (await post(snsNotification(mid(complainer2), { eventType: "Complaint" }))).status,
+      (await post(snsNotification(mid(complainer3), { eventType: "Complaint" }))).status,
     ).toBe(200);
     const complaintEvents = await db
       .select()
       .from(emailEvents)
       .where(eq(emailEvents.eventType, "complaint"));
-    expect(complaintEvents).toHaveLength(2);
+    expect(complaintEvents).toHaveLength(3);
     // 2,000 real sends through the full pipeline in WASM Postgres: ~9s alone,
     // but the parallel suite runs many pglite instances at once — give it
     // headroom so CPU contention can't flake it at the default 30s.
