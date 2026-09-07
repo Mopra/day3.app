@@ -8,6 +8,7 @@ import {
   sendingDomains,
   transactionalEmails,
   webhookDeliveries,
+  type Account,
 } from "../db/schema";
 import { campaignContentError, campaignSendGateError } from "../api/campaigns";
 import { nowIso } from "../lib/ids";
@@ -24,6 +25,11 @@ import { laneCountFor, SEND_BATCH_SIZE, type JobQueue } from "./messages";
 
 const STUCK_LOCK_MINUTES = 15;
 const DOMAIN_RECHECK_MAX = 50; // bound SES calls per sweep
+// The verified pass is a slow patrol rather than a poll: a domain that has been
+// working for months only needs re-reading often enough that a regression is
+// caught before it costs the customer a campaign.
+const VERIFIED_RECHECK_MAX = 25; // bound SES calls per sweep
+const VERIFIED_RECHECK_EVERY_HOURS = 6;
 const SWEEP_PAGE = 100; // campaigns examined per sweep per stage (ordered oldest-first, so nothing starves)
 // DOMAIN_RECHECK_WINDOW_DAYS: stop re-checking domains stale this long. Shared
 // with the setup-guide UI (lib/domain) so both agree on when a domain has gone
@@ -581,6 +587,29 @@ export async function releaseDueCampaigns(
 // AWS, and so a process without SES configured (no AWS_REGION) cleanly skips.
 export type DomainIdentityFetcher = (domain: string) => Promise<DomainIdentityState>;
 
+// The identity fields a re-check can move, and the row shape holding them. Both
+// sweeps share these so "something changed" means the same thing in each, and so
+// a field added to one write cannot be forgotten in the other.
+type IdentityRow = { verificationStatus: string; dkimStatus: string; mailFromStatus: string };
+
+function identityMoved(row: IdentityRow, state: DomainIdentityState): boolean {
+  return (
+    state.verificationStatus !== row.verificationStatus ||
+    state.dkimStatus !== row.dkimStatus ||
+    state.mailFromStatus !== row.mailFromStatus
+  );
+}
+
+function identityFields(state: DomainIdentityState) {
+  return {
+    verificationStatus: state.verificationStatus,
+    dkimStatus: state.dkimStatus,
+    mailFromDomain: state.mailFromDomain,
+    mailFromStatus: state.mailFromStatus,
+    dnsRecordsJson: JSON.stringify(state.records),
+  };
+}
+
 // Sync domains still waiting on SES verification into our DB, so a domain
 // verifies even if the user closed the setup page (the send gate reads
 // verificationStatus). SES verifies in the background regardless; this is the
@@ -607,32 +636,33 @@ export async function recheckPendingDomains(
         gt(sendingDomains.updatedAt, cutoff),
       ),
     )
+    // Least-recently-checked first, never-checked rows leading. Once there are
+    // more pending domains than one sweep can read, the batch rotates instead of
+    // re-reading the same DOMAIN_RECHECK_MAX rows forever and starving the tail.
+    .orderBy(sql`${sendingDomains.lastCheckedAt} asc nulls first`)
     .limit(DOMAIN_RECHECK_MAX);
 
   let verified = 0;
   for (const domain of pending) {
     try {
       const state = await fetchIdentity(domain.domain);
-      // Persist on any meaningful change — verification/DKIM (the gate) or the
+      const now = nowIso();
+      // Persist on any meaningful change: verification/DKIM (the gate) or the
       // optional Return-Path (mailFromStatus), so the setup guide reflects the
       // latest SES state even when only deliverability moved.
-      if (
-        state.verificationStatus !== domain.verificationStatus ||
-        state.dkimStatus !== domain.dkimStatus ||
-        state.mailFromStatus !== domain.mailFromStatus
-      ) {
+      if (identityMoved(domain, state)) {
         await db
           .update(sendingDomains)
-          .set({
-            verificationStatus: state.verificationStatus,
-            dkimStatus: state.dkimStatus,
-            mailFromDomain: state.mailFromDomain,
-            mailFromStatus: state.mailFromStatus,
-            dnsRecordsJson: JSON.stringify(state.records),
-            updatedAt: nowIso(),
-          })
+          .set({ ...identityFields(state), lastCheckedAt: now, updatedAt: now })
           .where(eq(sendingDomains.id, domain.id));
         if (state.verificationStatus === "verified") verified += 1;
+      } else {
+        // Nothing moved, but the read still happened. Stamp it so the ordering
+        // above advances to the rows queued behind this one.
+        await db
+          .update(sendingDomains)
+          .set({ lastCheckedAt: now })
+          .where(eq(sendingDomains.id, domain.id));
       }
     } catch (err) {
       // One bad domain must not abort the sweep.
@@ -640,6 +670,144 @@ export async function recheckPendingDomains(
     }
   }
   return verified;
+}
+
+// Re-check domains SES has ALREADY verified.
+//
+// recheckPendingDomains only ever looks at rows still waiting to verify, so
+// until this pass existed nothing read a domain again once it went green. SES
+// withdraws verification when the DKIM CNAMEs stop resolving, and revokes the
+// custom Return-Path when its MX disappears: a DNS host migration, a zone
+// tidy-up, an expired registration. Both regressions are silent. Losing the
+// Return-Path keeps mail flowing but drops SES back to a shared amazonses.com
+// return address (BehaviorOnMxFailure=USE_DEFAULT_VALUE), costing SPF alignment
+// and inbox placement; losing DKIM stops mail from that domain outright. The
+// first thing a customer would otherwise notice is a campaign that failed.
+//
+// AWS does report both, as account-wide Health events, but those land with the
+// operator of the AWS account and carry no tenant, so the identity's own SES
+// state is the signal we act on.
+//
+// A patrol, not a poll: rows read within VERIFIED_RECHECK_EVERY_HOURS are
+// skipped and the rest taken least-recently-checked first, so the pass costs
+// nothing once every domain is current, and a regression surfaces within roughly
+// the recheck interval.
+export async function recheckVerifiedDomains(
+  db: Db,
+  fetchIdentity: DomainIdentityFetcher | null,
+): Promise<number> {
+  if (!fetchIdentity) return 0; // SES not configured in this process
+
+  const due = new Date(Date.now() - VERIFIED_RECHECK_EVERY_HOURS * 3600_000).toISOString();
+  const rows = await db
+    .select()
+    .from(sendingDomains)
+    .where(
+      and(
+        eq(sendingDomains.verificationStatus, "verified"),
+        eq(sendingDomains.provider, "ses"),
+        // An admin override exists precisely because SES is not the truth for
+        // that row (testing, a manual rescue), so polling it would only produce
+        // noise and a notification nobody can act on.
+        eq(sendingDomains.adminOverrideVerified, false),
+        or(isNull(sendingDomains.lastCheckedAt), lt(sendingDomains.lastCheckedAt, due)),
+      ),
+    )
+    .orderBy(sql`${sendingDomains.lastCheckedAt} asc nulls first`)
+    .limit(VERIFIED_RECHECK_MAX);
+
+  // One lookup per account rather than per domain: an account with several
+  // domains regressing at once (one DNS zone going away takes them all) would
+  // otherwise re-read the same account row for each.
+  const accountCache = new Map<string, Account | undefined>();
+  const accountFor = async (accountId: string): Promise<Account | undefined> => {
+    if (!accountCache.has(accountId)) {
+      accountCache.set(
+        accountId,
+        await db.query.accounts.findFirst({ where: eq(accounts.id, accountId) }),
+      );
+    }
+    return accountCache.get(accountId);
+  };
+
+  let regressions = 0;
+  for (const domain of rows) {
+    try {
+      const state = await fetchIdentity(domain.domain);
+      const now = nowIso();
+
+      if (!identityMoved(domain, state)) {
+        await db
+          .update(sendingDomains)
+          .set({ lastCheckedAt: now })
+          .where(eq(sendingDomains.id, domain.id));
+        continue;
+      }
+
+      // Claim the transition on the values we read. The notification below is
+      // the user-visible half of this write, so a concurrent sweep that already
+      // applied the same regression must not raise it a second time.
+      const claimed = await db
+        .update(sendingDomains)
+        .set({ ...identityFields(state), lastCheckedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(sendingDomains.id, domain.id),
+            eq(sendingDomains.verificationStatus, domain.verificationStatus),
+            eq(sendingDomains.mailFromStatus, domain.mailFromStatus),
+          ),
+        )
+        .returning({ id: sendingDomains.id });
+      if (claimed.length === 0) continue;
+
+      const lostVerification = state.verificationStatus !== "verified";
+      // Only a Return-Path that WAS live can be lost. A domain that never
+      // published the MX is not regressing, it just never finished the optional
+      // step, and the setup guide already says so in place.
+      const lostReturnPath =
+        !lostVerification &&
+        domain.mailFromStatus === "success" &&
+        state.mailFromStatus !== "success";
+      // Neither: DKIM detail moved while the domain stayed verified, or the
+      // Return-Path came up. Recorded above, nothing to tell anyone.
+      if (!lostVerification && !lostReturnPath) continue;
+      regressions += 1;
+
+      const account = await accountFor(domain.accountId);
+      if (!account) continue;
+      // Deliberately not throttled per kind: the claimed transition above is
+      // already the exactly-once guard, and a throttle would silently swallow a
+      // second domain breaking in the same window, which is the case that most
+      // needs saying.
+      await notifyAccount(
+        db,
+        account,
+        lostVerification
+          ? {
+              kind: "domain_verification_lost",
+              title: `Sending from ${domain.domain} has stopped working`,
+              body:
+                "Amazon no longer verifies this domain, which almost always means its DKIM records were changed or removed at your DNS host. " +
+                "Email from this address will fail until they are back in place.",
+              ctaHref: `/domains/${domain.id}`,
+              ctaLabel: "Check the DNS records",
+            }
+          : {
+              kind: "domain_return_path_lost",
+              title: `${domain.domain} lost its Return-Path record`,
+              body:
+                `Your email still goes out, but the MX record for ${domain.mailFromDomain ?? `send.${domain.domain}`} stopped answering, ` +
+                "so bounces fall back to a shared Amazon address. That weakens SPF alignment and can push your mail to spam.",
+              ctaHref: `/domains/${domain.id}`,
+              ctaLabel: "Check the DNS records",
+            },
+      );
+    } catch (err) {
+      // One bad domain must not abort the sweep.
+      console.error(`[cron] verified domain re-check failed for ${domain.domain}:`, err);
+    }
+  }
+  return regressions;
 }
 
 async function dailyHealthChecks(db: Db): Promise<void> {
@@ -741,10 +909,14 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
   const rescued = (await stage("rescue_pipeline", () => rescueStuckPipelineCampaigns(db, queue, now))) ?? 0;
   const webhooks = (await stage("webhook_deliveries", () => sweepWebhookDeliveries(db, queue, now))) ?? 0;
 
-  // SES re-check only when this process has SES configured.
+  // SES re-check only when this process has SES configured. Two passes: domains
+  // still working towards verification, and (far more slowly) domains that got
+  // there and could have quietly regressed since.
   const region = process.env.AWS_REGION;
   const fetchIdentity = region ? (domain: string) => getDomainIdentity(domain, region) : null;
   const domainsVerified = (await stage("domain_recheck", () => recheckPendingDomains(db, fetchIdentity))) ?? 0;
+  const domainsRegressed =
+    (await stage("domain_recheck_verified", () => recheckVerifiedDomains(db, fetchIdentity))) ?? 0;
 
   const isDaily =
     (await stage("daily", async () => {
@@ -770,6 +942,7 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
       rescued,
       usageReset,
       domainsVerified,
+      domainsRegressed,
       webhooks,
       daily: isDaily,
     },

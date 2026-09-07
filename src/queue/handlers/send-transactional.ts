@@ -18,7 +18,12 @@ import {
 } from "../../email/ses";
 import { addSuppression } from "../../services/suppression";
 import { releaseReservation } from "../../services/quota";
-import { PLATFORM_HEADERS, emailDomain, mergeSendHeaders } from "../../services/transactional";
+import {
+  PLATFORM_HEADERS,
+  emailDomain,
+  listUnsubscribeHeaders,
+  mergeSendHeaders,
+} from "../../services/transactional";
 import { emitWebhookEvent } from "../../services/webhook-events";
 
 export type SendTransactionalDeps = {
@@ -108,7 +113,12 @@ export async function sendTransactionalEmail(
     subject: email.subject,
     html: email.htmlBody ?? undefined,
     text: email.textBody ?? undefined,
+    // The unsubscribe pair is derived here, not stored, and it goes in the
+    // platform half of the merge: List-Unsubscribe* are reserved header names,
+    // so a caller can only reach them through the validated
+    // `list_unsubscribe` field and never overwrite what we build from it.
     headers: mergeSendHeaders(email.headers, {
+      ...listUnsubscribeHeaders(email.listUnsubscribeUrl),
       [PLATFORM_HEADERS.accountId]: account.id,
       [PLATFORM_HEADERS.transactionalEmailId]: email.id,
     }),

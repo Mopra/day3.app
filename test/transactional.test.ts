@@ -434,6 +434,83 @@ async function acceptedEmail(overrides: Record<string, unknown> = {}): Promise<s
   return (await body(res)).id as string;
 }
 
+describe("list_unsubscribe (RFC 8058)", () => {
+  it("accepts an https url, stores it, and derives the header pair at send time", async () => {
+    const url = "https://probe.exit1.dev/u/a3OYHh1DRGi2";
+    const res = await postEmail(sendBody({ list_unsubscribe: url }));
+    expect(res.status).toBe(200);
+    const accepted = await body(res);
+    expect(accepted.list_unsubscribe).toBe(url);
+
+    const row = await currentDb.query.transactionalEmails.findFirst({
+      where: eq(transactionalEmails.id, accepted.id as string),
+    });
+    expect(row!.listUnsubscribeUrl).toBe(url);
+    // Not stored as headers: the pair is derived, so a fix to the bracket or
+    // One-Click form reaches rows that were accepted before it.
+    expect(row!.headers).toBeNull();
+
+    const provider = new RecordingProvider();
+    await sendTransactionalEmail(
+      { emailId: accepted.id as string, accountId: account.id },
+      { db: currentDb, emailProvider: provider },
+    );
+    const headers = provider.sent[0].headers!;
+    expect(headers["List-Unsubscribe"]).toBe(`<${url}>`);
+    expect(headers["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
+  });
+
+  it("sends no unsubscribe headers when the field is absent", async () => {
+    const id = await acceptedEmail();
+    const provider = new RecordingProvider();
+    await sendTransactionalEmail(
+      { emailId: id, accountId: account.id },
+      { db: currentDb, emailProvider: provider },
+    );
+    const headers = provider.sent[0].headers!;
+    expect(headers["List-Unsubscribe"]).toBeUndefined();
+    expect(headers["List-Unsubscribe-Post"]).toBeUndefined();
+  });
+
+  it("rejects http, credentials, brackets and junk", async () => {
+    for (const bad of [
+      "http://probe.exit1.dev/u/tok",
+      "https://user:pw@probe.exit1.dev/u/tok",
+      "<https://probe.exit1.dev/u/tok>",
+      "https://localhost/u/tok",
+      "not-a-url",
+      "mailto:unsub@probe.exit1.dev",
+    ]) {
+      const res = await postEmail(sendBody({ list_unsubscribe: bad }));
+      expect(res.status, bad).toBe(400);
+      expect((await body(res)).error.param, bad).toBe("list_unsubscribe");
+    }
+  });
+
+  it("still refuses the raw header names, which is what makes the field the only door", async () => {
+    for (const name of ["List-Unsubscribe", "list-unsubscribe-post"]) {
+      const res = await postEmail(sendBody({ headers: { [name]: "whatever" } }));
+      expect(res.status, name).toBe(400);
+    }
+  });
+
+  it("cannot be shadowed by a header smuggled onto the row", async () => {
+    const url = "https://probe.exit1.dev/u/real";
+    const id = await acceptedEmail({ list_unsubscribe: url });
+    await currentDb
+      .update(transactionalEmails)
+      .set({ headers: { "List-Unsubscribe": "<https://evil.example/u/fake>" } })
+      .where(eq(transactionalEmails.id, id));
+
+    const provider = new RecordingProvider();
+    await sendTransactionalEmail(
+      { emailId: id, accountId: account.id },
+      { db: currentDb, emailProvider: provider },
+    );
+    expect(provider.sent[0].headers!["List-Unsubscribe"]).toBe(`<${url}>`);
+  });
+});
+
 describe("send_transactional handler", () => {
   it("stamps platform attribution headers that a caller header cannot shadow", async () => {
     // `x-account-id` (lowercase) is reserved at the API boundary, so post one

@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-08-16**.
+> Last verified against the codebase: **2026-09-07**.
 
 ---
 
@@ -566,6 +566,13 @@ the same "Saving… / Saved" indicator as the campaign composer.
   correctly and reopens verification against them — the published records stay
   valid, so there is nothing for the user to re-add.
 - Optional **Return-Path (custom MAIL FROM)** setup for better deliverability.
+- **A verified domain keeps being watched.** DNS changes at the customer's host can
+  quietly undo a working setup, and both failure modes are silent: remove the DKIM
+  records and Amazon withdraws verification, so mail from that domain fails; remove
+  the Return-Path MX and Amazon revokes it, so mail still sends but from a shared
+  return address, weakening SPF alignment and inbox placement. Day3 re-reads every
+  verified domain a few times a day and notifies the account when either happens,
+  so the first sign of trouble is not a failed campaign.
 - **One-click DNS auto-configuration via Cloudflare OAuth** (connect a Cloudflare
   account; Day3 writes the records for you).
   - **Existing records are never overwritten.** The required DKIM records sit at
@@ -720,8 +727,10 @@ Day3 tells you about things that happen while you're not looking, on two channel
 Events raised: a **scheduled send that couldn't start** (a gate lapsed by its due
 time — the campaign returns to drafts with the reason, and you're told rather than
 left to discover it), a **campaign finishing sending** (with the reached count and a
-link to its results), and **signups turned away at the free-plan subscriber cap**
-(throttled to once a day, with an upgrade link). The service fails open — a
+link to its results), **signups turned away at the free-plan subscriber cap**
+(throttled to once a day, with an upgrade link), and a **sending domain that
+regressed** after having worked (verification or Return-Path lost, §6.5). The
+service fails open — a
 notification never blocks the flow that triggered it.
 
 ### 6.14 Public API (v1) — audiences, campaigns and transactional email over HTTPS
@@ -810,10 +819,22 @@ synchronous errors, copy-paste snippets, and a sandbox that works before paying.
 - `POST /v1/emails` — send. Body: `from` (any local-part on a **verified sending
   domain** — `"Acme <notify@acme.com>"` or a bare address; no pre-created sender
   needed), `to` (string or array, up to **50 recipients** on one message),
-  `subject`, `html` and/or `text`, optional `reply_to`, custom `headers`
-  (platform-owned ones like `List-Unsubscribe` are reserved), and string
-  `tags`. Returns the email object (`eml_…`, `status: "queued"`) immediately;
-  delivery is asynchronous and typically takes a couple of seconds.
+  `subject`, `html` and/or `text`, optional `reply_to`, optional
+  `list_unsubscribe`, custom `headers` (platform-owned ones like
+  `List-Unsubscribe` are reserved), and string `tags`. Returns the email object
+  (`eml_…`, `status: "queued"`) immediately; delivery is asynchronous and
+  typically takes a couple of seconds.
+- **`list_unsubscribe` for the bulk-shaped sends.** Not every caller on this
+  API is sending a password reset. Outreach with a real opt-out, an operational
+  digest, a one-off announcement: for those, RFC 8058 one-click unsubscribe is
+  a deliverability requirement at Gmail and Yahoo and a legal one under
+  CAN-SPAM. Pass one https URL and Day3 emits the header pair
+  (`List-Unsubscribe: <url>` and `List-Unsubscribe-Post:
+  List-Unsubscribe=One-Click`). The header names themselves stay reserved on
+  purpose: routing the capability through one validated field is what makes the
+  bracket and One-Click forms right by construction instead of right only when
+  the caller remembered both. Omit the field and the mail carries no
+  unsubscribe at all, which is still the correct default for transactional.
 - `GET /v1/emails/{id}` — the status poll: `queued` → `sent` → `delivered` (or
   `bounced` / `complained` / `failed` / `suppressed`) plus the raw `events`
   timeline. `GET /v1/emails` lists sends, filterable by `?status=`.

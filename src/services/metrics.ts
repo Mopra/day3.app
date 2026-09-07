@@ -22,7 +22,12 @@ export async function accountCampaignMetrics(
 ): Promise<CampaignMetricsRow[]> {
   const rows = await db
     .select({
-      campaignId: campaignRecipients.campaignId,
+      // From the joined campaign, not from the recipient row: the send ledger is
+      // shared with automations now, so campaign_recipients.campaign_id is
+      // nullable. The inner join already drops automation sends (they belong to
+      // the automation's own per-node stats, not to a campaign row); taking the
+      // id from `campaigns` says so in the type as well.
+      campaignId: campaigns.id,
       name: campaigns.name,
       status: campaigns.status,
       // Sandbox sends are real sends and belong in the numbers — they bounce,
@@ -46,7 +51,7 @@ export async function accountCampaignMetrics(
     .innerJoin(campaigns, eq(campaigns.id, campaignRecipients.campaignId))
     .where(eq(campaignRecipients.accountId, accountId))
     .groupBy(
-      campaignRecipients.campaignId,
+      campaigns.id,
       campaigns.name,
       campaigns.status,
       campaigns.sandbox,

@@ -142,13 +142,29 @@ export async function POST(req: NextRequest) {
   // Outbound webhooks ride on the recorded-event id, and only when the insert
   // actually inserted: SNS is at-least-once, so emitting on every notification
   // would replay the event at the customer's endpoint on each redelivery.
-  const campaignSource = {
-    kind: "campaign" as const,
-    campaignId: recipient.campaignId,
-    recipientId: recipient.id,
-    subscriberId: recipient.subscriberId,
-    email: recipient.email,
-  };
+  //
+  // The ledger is shared, so one lookup by provider_message_id above already
+  // found the row whether a campaign or an automation sent it. Which one it was
+  // is decided by campaign_id, not by a second query: everything below (status
+  // advance, hard-failure suppression, account health) is identical either way,
+  // and only the webhook payload's shape differs.
+  const campaignSource = recipient.campaignId
+    ? {
+        kind: "campaign" as const,
+        campaignId: recipient.campaignId,
+        recipientId: recipient.id,
+        subscriberId: recipient.subscriberId,
+        email: recipient.email,
+      }
+    : {
+        kind: "automation" as const,
+        automationId: recipient.automationId ?? "",
+        nodeKey: recipient.automationNodeKey,
+        enrollmentId: recipient.automationEnrollmentId,
+        recipientId: recipient.id,
+        subscriberId: recipient.subscriberId,
+        email: recipient.email,
+      };
 
   if (eventType === "delivery") {
     const eventId = await recordEvent(db, recipient, "delivery", messageId, payload.Message, now);
@@ -429,6 +445,11 @@ async function recordEvent(
       accountId: recipient.accountId,
       campaignId: recipient.campaignId,
       campaignRecipientId: recipient.id,
+      // Null for a campaign send; set for an automation one, so the Activity
+      // page can filter a flow's mail and the canvas can attribute the event
+      // to the step that sent it.
+      automationId: recipient.automationId,
+      automationNodeKey: recipient.automationNodeKey,
       eventType,
       email: recipient.email,
       provider: "ses",

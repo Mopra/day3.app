@@ -26,7 +26,16 @@ export type IdPrefix =
   | "key"
   | "idem"
   | "whe"
-  | "whd";
+  | "whd"
+  // Automations. `nd` is the stable node key (see automation_nodes.key) rather
+  // than a row id: it is minted once in the draft and copied into every
+  // published version, so it identifies a step across edits.
+  | "aut"
+  | "aev"
+  | "aun"
+  | "nd"
+  | "aee"
+  | "aen";
 
 export function newId(prefix: IdPrefix): string {
   const bytes = new Uint8Array(20);

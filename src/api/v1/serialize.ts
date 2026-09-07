@@ -150,6 +150,7 @@ export function serializeEmail(
     from: e.fromName ? `${e.fromName} <${e.fromEmail}>` : e.fromEmail,
     to: e.to,
     reply_to: e.replyTo,
+    list_unsubscribe: e.listUnsubscribeUrl,
     subject: e.subject,
     status: publicEmailStatus(e.status),
     error: e.error,

@@ -26,6 +26,7 @@ import { getSuppressedEmails } from "@/services/suppression";
 import {
   MAX_CUSTOM_HEADERS,
   MAX_HTML_BYTES,
+  MAX_LIST_UNSUBSCRIBE_URL_LENGTH,
   MAX_SUBJECT_LENGTH,
   MAX_TAGS,
   MAX_TEXT_BYTES,
@@ -37,6 +38,7 @@ import {
   isReservedHeader,
   isSendableAddress,
   parseFromAddress,
+  parseListUnsubscribeUrl,
 } from "@/services/transactional";
 
 // Header values and the subject must not carry control characters — CR/LF is
@@ -74,6 +76,10 @@ const SendSchema = z.object({
   html: z.string().max(MAX_HTML_BYTES).optional(),
   text: z.string().max(MAX_TEXT_BYTES).optional(),
   reply_to: z.string().trim().max(320).optional(),
+  // RFC 8058 one-click unsubscribe. A single https URL; we build the
+  // List-Unsubscribe / List-Unsubscribe-Post pair from it (those header names
+  // stay reserved, so this field is the only way to set them).
+  list_unsubscribe: z.string().trim().max(MAX_LIST_UNSUBSCRIBE_URL_LENGTH).optional(),
   headers: z.record(z.string().min(1).max(200), z.string().max(2000)).optional(),
   tags: z.record(z.string().min(1).max(100), z.string().max(256)).optional(),
 });
@@ -124,6 +130,18 @@ export const POST = apiRoute(async (req, ctx) => {
     throw new ApiError(400, "invalid_email", "reply_to is not a valid email address", {
       param: "reply_to",
     });
+  }
+
+  const listUnsubscribe = body.list_unsubscribe
+    ? parseListUnsubscribeUrl(body.list_unsubscribe)
+    : null;
+  if (body.list_unsubscribe && !listUnsubscribe) {
+    throw new ApiError(
+      400,
+      "invalid_request",
+      "list_unsubscribe must be an absolute https URL with no embedded credentials",
+      { param: "list_unsubscribe" },
+    );
   }
 
   if (body.headers) {
@@ -284,6 +302,7 @@ export const POST = apiRoute(async (req, ctx) => {
     htmlBody: body.html ?? null,
     textBody: body.text ?? null,
     headers: body.headers ?? null,
+    listUnsubscribeUrl: listUnsubscribe,
     tags: body.tags ?? null,
     sandbox,
     status: "queued",

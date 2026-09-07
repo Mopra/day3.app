@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -88,6 +89,13 @@ export const sendingDomains = pgTable(
     // never gates verificationStatus (BehaviorOnMxFailure=USE_DEFAULT_VALUE).
     mailFromDomain: text("mail_from_domain"),
     mailFromStatus: text("mail_from_status").notNull().default("pending"),
+
+    // When we last ASKED SES about this identity, as opposed to updatedAt, which
+    // only moves when something about the row actually changed. The re-check
+    // sweeps order by it (nulls first) and skip rows checked recently, which is
+    // what turns a bounded per-sweep batch into a round-robin over every domain
+    // instead of the same rows every run.
+    lastCheckedAt: tstz("last_checked_at"),
 
     // Auto-DNS: when a customer connects Cloudflare and we write the records for
     // them, we record the resolved zone and a write-error for the UI to surface.
@@ -542,14 +550,48 @@ export const RECIPIENT_STATUSES = [
 ] as const;
 export type RecipientStatus = (typeof RECIPIENT_STATUSES)[number];
 
+// The send ledger: one row per email we intend to put in one person's inbox,
+// whatever put it there. Its `status` is what makes every retry duplicate-free
+// (AGENTS.md hard rule 1) — a send is claimed by flipping the row to `sending`
+// in one atomic statement, and a retried job only re-claims rows still
+// `pending`.
+//
+// Two producers write here, and they are distinguished by which id set is
+// populated, never by a discriminator column:
+//   • a campaign — `campaign_id` set, automation columns null;
+//   • an automation send node — `automation_id` / `automation_enrollment_id` /
+//     `automation_node_key` set, `campaign_id` null.
+// Everything downstream of the send (the SES notification lookup by
+// provider_message_id, open/click tracking, one-click unsubscribe, account
+// health) therefore keeps working for automations without a second ledger to
+// join, which is the entire reason automations do not get their own table. The
+// name is now a misnomer; renaming it is a mechanical follow-up, not a
+// prerequisite.
 export const campaignRecipients = pgTable(
   "campaign_recipients",
   {
     id: text("id").primaryKey(),
-    campaignId: text("campaign_id").notNull(),
+    // Null for an automation send. Nullable rather than a sentinel because the
+    // unique index below keys on it: Postgres treats NULLs as distinct, so
+    // automation rows never collide with each other on (campaign_id, email).
+    campaignId: text("campaign_id"),
     accountId: text("account_id").notNull(),
     subscriberId: text("subscriber_id"),
     email: text("email").notNull(),
+
+    // --- automation sends -----------------------------------------------
+    // The automation and the enrollment (one subscriber's run through it) this
+    // send belongs to, plus the *stable* node key (automation_nodes.key, which
+    // survives edits and version bumps) rather than the per-version row id — so
+    // per-node stats stay joinable across published versions.
+    automationId: text("automation_id"),
+    automationEnrollmentId: text("automation_enrollment_id"),
+    automationNodeKey: text("automation_node_key"),
+    // Which pass through the node this send is, for send nodes inside a loop.
+    // Always 0 unless the node opts into `allowResend`, which makes the unique
+    // index below exactly "one send per node per enrollment" in the normal
+    // case, and "one send per node per lap" for a deliberate recurring nudge.
+    visitNo: integer("visit_no").notNull().default(0),
 
     status: text("status").$type<RecipientStatus>().notNull().default("pending"),
 
@@ -574,6 +616,18 @@ export const campaignRecipients = pgTable(
     index("idx_campaign_recipients_campaign_status").on(t.campaignId, t.status),
     index("idx_campaign_recipients_account_status").on(t.accountId, t.status),
     index("idx_campaign_recipients_provider_message_id").on(t.providerMessageId),
+    // THE duplicate-safety anchor for automations, and the direct analogue of
+    // uq_campaign_recipients_campaign_email: an enrollment can hold at most one
+    // send row per node per lap, so a re-run tick, a retried job, or a crashed
+    // batch can never mail the same node to the same person twice.
+    uniqueIndex("uq_campaign_recipients_enrollment_node")
+      .on(t.automationEnrollmentId, t.automationNodeKey, t.visitNo)
+      .where(sql`automation_enrollment_id is not null`),
+    // Per-node live stats on the canvas ("412 sent, 96 opened") and the
+    // engagement predicates a branch evaluates against an earlier send node.
+    index("idx_campaign_recipients_automation_node").on(t.automationId, t.automationNodeKey),
+    // The automation send batch claims this automation's pending rows.
+    index("idx_campaign_recipients_automation_status").on(t.automationId, t.status),
   ],
 );
 
@@ -602,6 +656,14 @@ export const emailEvents = pgTable(
     // campaign send; campaignId/campaignRecipientId stay null on those rows.
     transactionalEmailId: text("transactional_email_id"),
 
+    // Set when the event belongs to an automation send. campaignRecipientId is
+    // still populated (the send ledger is shared), so the Activity page and the
+    // provider-message-id correlation need no special case; these two columns
+    // only add "which automation, which step" so Activity can filter by them
+    // and the canvas can attribute an event to a node.
+    automationId: text("automation_id"),
+    automationNodeKey: text("automation_node_key"),
+
     eventType: text("event_type").$type<EmailEventType>().notNull(),
     email: text("email"),
     provider: text("provider").notNull().default("ses"),
@@ -618,6 +680,8 @@ export const emailEvents = pgTable(
     // The Activity page lists an account's events newest-first with offset
     // pagination — this composite index serves that scan directly.
     index("idx_email_events_account_created").on(t.accountId, t.createdAt),
+    // Automation troubleshooting: "show me everything this flow sent".
+    index("idx_email_events_automation_created").on(t.automationId, t.createdAt),
     // SNS delivers at-least-once: the same delivery/bounce/complaint notification
     // can arrive multiple times. De-dup on (providerMessageId, eventType, email)
     // so a redelivery is a no-op insert (see onConflictDoNothing in the SES
@@ -682,6 +746,11 @@ export const transactionalEmails = pgTable(
     htmlBody: text("html_body"),
     textBody: text("text_body"),
     headers: jsonb("headers").$type<Record<string, string>>(),
+    // RFC 8058 one-click unsubscribe target, when the caller supplied one. The
+    // header pair itself is derived at send time (services/transactional.ts):
+    // storing the URL rather than the headers keeps the correct bracket/POST
+    // form in one place and lets an older row pick up a fix to it.
+    listUnsubscribeUrl: text("list_unsubscribe_url"),
     tags: jsonb("tags").$type<Record<string, string>>(),
     // True when sent by a free org in sandbox mode: recipients restricted to the
     // org's own members, on the shared monthly sandbox allowance (see
@@ -776,6 +845,13 @@ export const NOTIFICATION_KINDS = [
   "import_failed",
   "subscribers_cap_reached",
   "account_paused",
+  // A sending domain that WAS working stopped working: SES withdrew its
+  // verification (DKIM records changed or removed at the DNS host), or the
+  // custom Return-Path went away. Raised by the verified-domain sweep, which
+  // is the only thing watching for it — nothing else re-reads a domain once
+  // it verifies.
+  "domain_verification_lost",
+  "domain_return_path_lost",
 ] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
@@ -1002,6 +1078,340 @@ export const webhookDeliveries = pgTable(
   ],
 );
 
+// --- Automations ------------------------------------------------------------
+//
+// An automation is a directed graph of nodes on a canvas, entered at one
+// trigger. A subscriber's progress through it is an *enrollment*: a cursor
+// sitting on exactly one node, advanced by the 60-second dispatcher tick. The
+// pure graph model (node kinds, per-kind config schemas, publish validation)
+// lives in lib/automation-graph.ts; these tables are its storage.
+//
+// Two rules shape everything below:
+//   1. Published graphs are immutable and enrollments pin a version. Rewiring
+//      edges under a live enrollment could orphan the node someone is sitting
+//      on, so editing mutates the DRAFT version while the published one keeps
+//      running untouched.
+//   2. Waits live in Postgres, never as BullMQ delayed jobs. A wait is one
+//      column (`next_run_at`) with a partial index behind it; Redis only ever
+//      carries ID-only "go do work now" messages, exactly as everywhere else.
+
+export const AUTOMATION_STATUSES = ["draft", "active", "paused", "archived"] as const;
+export type AutomationStatus = (typeof AUTOMATION_STATUSES)[number];
+
+// What puts someone into the automation. Design rule: no trigger without an
+// existing code path that already writes the row. `api` is the one that has no
+// hook because it IS the hook — POST /v1/automations/:id/enroll, fired from the
+// customer's own backend for lifecycle events we will never model (trial
+// ending, feature never used).
+export const AUTOMATION_TRIGGER_KINDS = [
+  "audience_join",
+  "segment_join",
+  "topic_join",
+  "api",
+] as const;
+export type AutomationTriggerKind = (typeof AUTOMATION_TRIGGER_KINDS)[number];
+
+// The classic automation disaster is someone getting the welcome series four
+// times because a CSV re-import touched their row. `once` (the default) plus a
+// partial unique index makes that structurally impossible rather than merely
+// unlikely.
+export const AUTOMATION_REENTRY_MODES = ["once", "once_at_a_time", "always"] as const;
+export type AutomationReentryMode = (typeof AUTOMATION_REENTRY_MODES)[number];
+
+export const automations = pgTable(
+  "automations",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    audienceId: text("audience_id").notNull(),
+    name: text("name").notNull(),
+    status: text("status").$type<AutomationStatus>().notNull().default("draft"),
+
+    triggerKind: text("trigger_kind").$type<AutomationTriggerKind>().notNull(),
+    triggerSegmentId: text("trigger_segment_id"),
+    triggerTopicId: text("trigger_topic_id"),
+    // Optional narrowing of an audience-join trigger: "only signups from the
+    // Pricing page form". subscribers.formId is already stored, so this costs
+    // one comparison at enrollment time.
+    triggerFormId: text("trigger_form_id"),
+
+    // Both are a SegmentFilter as JSON text (lib/segment-filter.ts), the same
+    // shape the Segments tab saves. Entry narrows who may enrol at all; exit is
+    // checked before EVERY node execution, which is what stops a customer who
+    // just upgraded from receiving four more upgrade nudges.
+    entryFilterJson: text("entry_filter_json"),
+    exitFilterJson: text("exit_filter_json"),
+
+    reentry: text("reentry").$type<AutomationReentryMode>().notNull().default("once"),
+
+    // From identity, snapshotted exactly as campaigns do it: senderId is
+    // provenance (so reopening the editor re-selects the right option) while
+    // fromName/fromEmail are what actually goes out. Nullable so a canvas can
+    // be drafted before a domain is verified; publish is the gate that requires
+    // them (same gate function campaigns use).
+    senderId: text("sender_id"),
+    sendingDomainId: text("sending_domain_id"),
+    fromName: text("from_name"),
+    fromEmail: text("from_email"),
+    replyTo: text("reply_to"),
+
+    // Applied to every send node, so one automation looks like one voice.
+    themeJson: text("theme_json"),
+    footerText: text("footer_text"),
+    topicId: text("topic_id"),
+
+    // Working-hours clamp for wait nodes that opt in, as JSON
+    // ({days, from, to}), interpreted in `timezone`. Per automation rather than
+    // per account because a EU onboarding series and a US one legitimately want
+    // different windows.
+    sendWindowJson: text("send_window_json"),
+    timezone: text("timezone").notNull().default("UTC"),
+
+    // True when this automation was published by a free org under the sandbox
+    // carve-out: real delivery through the real pipeline, restricted to the
+    // org's own members and metered against the same monthly counter (see
+    // services/sandbox.ts). Stamped at publish and never re-evaluated, so an
+    // upgrade mid-flight cannot change how running enrollments are targeted or
+    // metered — the same rule campaigns.sandbox follows.
+    sandbox: boolean("sandbox").notNull().default(false),
+
+    // The version new enrollments enter on, and the version the editor mutates.
+    // Nullable during creation only; a draft version is created immediately.
+    liveVersionId: text("live_version_id"),
+    draftVersionId: text("draft_version_id"),
+
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    index("idx_automations_account_status").on(t.accountId, t.status),
+    index("idx_automations_account_audience").on(t.accountId, t.audienceId),
+    // The audience-join hook asks "which live automations trigger on this
+    // audience?" on every confirmed signup, so it gets its own index.
+    index("idx_automations_audience_trigger").on(t.audienceId, t.triggerKind, t.status),
+  ],
+);
+
+export const AUTOMATION_VERSION_STATUSES = ["draft", "published", "superseded"] as const;
+export type AutomationVersionStatus = (typeof AUTOMATION_VERSION_STATUSES)[number];
+
+// One immutable snapshot of the graph. Publish validates the draft, runs risk
+// review on every send node, freezes it as version N+1, and points new
+// enrollments at it. Someone three nodes into v3 finishes v3.
+export const automationVersions = pgTable(
+  "automation_versions",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    automationId: text("automation_id").notNull(),
+    version: integer("version").notNull(),
+    status: text("status").$type<AutomationVersionStatus>().notNull().default("draft"),
+    publishedAt: tstz("published_at"),
+    publishedBy: text("published_by"),
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_automation_versions_automation_version").on(t.automationId, t.version),
+    index("idx_automation_versions_account").on(t.accountId),
+  ],
+);
+
+export const AUTOMATION_NODE_KINDS = ["trigger", "send", "wait", "branch", "end"] as const;
+export type AutomationNodeKind = (typeof AUTOMATION_NODE_KINDS)[number];
+
+// Normalized nodes and edges rather than one graphJson blob, because the send
+// ledger needs a stable key to attribute a send to a step: a blob makes node
+// identity mushy and per-node stats un-joinable.
+export const automationNodes = pgTable(
+  "automation_nodes",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    automationVersionId: text("automation_version_id").notNull(),
+
+    // The node's STABLE logical identity (`nd_…`), minted once in the draft and
+    // copied verbatim into every published version. The row `id` changes on
+    // every publish (it is a new row); this does not. Stats, engagement
+    // predicates, enrollment cursors, and "move in-flight people to the new
+    // version" all key off this.
+    key: text("key").notNull(),
+
+    kind: text("kind").$type<AutomationNodeKind>().notNull(),
+    // Per-kind config, validated by the discriminated schema set in
+    // lib/automation-graph.ts. For a send node this holds the whole email
+    // (subject, previewText, sectionsJson, htmlBody, textBody), authored by the
+    // real composer, so lib/sections.ts and services/render.ts are reused
+    // unchanged.
+    configJson: text("config_json").notNull().default("{}"),
+    label: text("label"),
+
+    // Presentation only. These are on the node row precisely BECAUSE they are
+    // the one part of the graph the engine never reads.
+    canvasX: integer("canvas_x").notNull().default(0),
+    canvasY: integer("canvas_y").notNull().default(0),
+
+    // Per-send-node risk verdict, recorded at publish (content is fixed, sends
+    // are open-ended, so reviewing per recipient would be meaningless). A
+    // `high` verdict blocks publish with the same fix-it guidance the campaign
+    // page shows; without this, automations become the obvious way to route
+    // around review entirely.
+    riskLevel: text("risk_level"),
+    riskSummary: text("risk_summary"),
+    riskGuidanceJson: text("risk_guidance_json"),
+
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_automation_nodes_version_key").on(t.automationVersionId, t.key),
+    index("idx_automation_nodes_account").on(t.accountId),
+  ],
+);
+
+// Edges reference node KEYS, not row ids, so publishing a version is a verbatim
+// copy of both tables with only the version id changed.
+export const automationEdges = pgTable(
+  "automation_edges",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    automationVersionId: text("automation_version_id").notNull(),
+    fromNodeKey: text("from_node_key").notNull(),
+    port: text("port").notNull(),
+    toNodeKey: text("to_node_key").notNull(),
+    createdAt: tstz("created_at").notNull(),
+  },
+  (t) => [
+    // A port has exactly one destination. This is the single-cursor invariant
+    // expressed in the database: two edges out of one port would mean splitting
+    // the token, and there is no join semantics to split it back.
+    uniqueIndex("uq_automation_edges_version_from_port").on(
+      t.automationVersionId,
+      t.fromNodeKey,
+      t.port,
+    ),
+    index("idx_automation_edges_version").on(t.automationVersionId),
+  ],
+);
+
+// `active` covers both "running now" and "sleeping on a wait" — the two are the
+// same row to the dispatcher, which claims on next_run_at alone. `sending` is
+// the state that keeps the tick's hands off an enrollment whose send batch is
+// in flight; without it the next tick 60 seconds later would re-dispatch the
+// same node. lockedAt drives the stuck-lock sweep that recovers a crashed one.
+export const AUTOMATION_ENROLLMENT_STATUSES = [
+  "active",
+  "sending",
+  "completed",
+  "exited",
+  "failed",
+] as const;
+export type AutomationEnrollmentStatus = (typeof AUTOMATION_ENROLLMENT_STATUSES)[number];
+
+// Why an enrollment stopped early. `loop_guard` is the backstop that protects
+// the recipient (independent of any rate limit); `exit_filter` is the global
+// "stop the whole automation when they match X".
+export const AUTOMATION_EXIT_REASONS = [
+  "unsubscribed",
+  "suppressed",
+  "not_subscribed",
+  "exit_filter",
+  "loop_guard",
+  "automation_archived",
+  "version_retired",
+  "manual",
+] as const;
+export type AutomationExitReason = (typeof AUTOMATION_EXIT_REASONS)[number];
+
+export const automationEnrollments = pgTable(
+  "automation_enrollments",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    automationId: text("automation_id").notNull(),
+    // Pinned at enrollment: this run executes the graph as it was when the
+    // subscriber entered, even after three more publishes.
+    automationVersionId: text("automation_version_id").notNull(),
+    subscriberId: text("subscriber_id").notNull(),
+
+    status: text("status")
+      .$type<AutomationEnrollmentStatus>()
+      .notNull()
+      .default("active"),
+
+    // Snapshotted from automations.reentry so the partial unique indexes below
+    // can reference it: a partial index predicate may only use columns of the
+    // table it indexes, so the mode has to live on this row.
+    reentryMode: text("reentry_mode")
+      .$type<AutomationReentryMode>()
+      .notNull()
+      .default("once"),
+
+    // The cursor: the stable key of the node this enrollment is sitting on, and
+    // when it is next due. Together they are the entire scheduler.
+    currentNodeKey: text("current_node_key"),
+    nextRunAt: tstz("next_run_at"),
+    // Stamped when a send batch claims the enrollment (status `sending`).
+    lockedAt: tstz("locked_at"),
+
+    // Loop guards, per enrollment. Exceeding either exits with `loop_guard`.
+    visitCount: integer("visit_count").notNull().default(0),
+    sendCount: integer("send_count").notNull().default(0),
+
+    // Snapshot of the automation's sandbox flag, for the same reason campaigns
+    // stamp it: how this run is metered and targeted must not change mid-flight.
+    sandbox: boolean("sandbox").notNull().default(false),
+
+    // Why the enrollment is not advancing right now (monthly limit reached,
+    // account past due). Surfaced in the UI as "held", never as a failure: a
+    // late welcome email is recoverable, a silently dropped one is not.
+    holdReason: text("hold_reason"),
+    heldSince: tstz("held_since"),
+
+    enteredAt: tstz("entered_at").notNull(),
+    completedAt: tstz("completed_at"),
+    exitedAt: tstz("exited_at"),
+    exitReason: text("exit_reason").$type<AutomationExitReason>(),
+    lastError: text("last_error"),
+
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    // The hot path: "what is due?", claimed round-robin by account so one org
+    // importing 50,000 contacts cannot starve every other tenant's welcome
+    // emails behind it. Partial so the index only ever holds live enrollments,
+    // not the completed ones that accumulate forever.
+    index("idx_automation_enrollments_due")
+      .on(t.accountId, t.nextRunAt)
+      .where(sql`status = 'active'`),
+    // Which accounts have work, for the dispatcher's round-robin pass.
+    index("idx_automation_enrollments_next_run")
+      .on(t.nextRunAt)
+      .where(sql`status = 'active'`),
+    // The stuck-lock sweep: enrollments whose send batch died mid-flight.
+    index("idx_automation_enrollments_locked")
+      .on(t.lockedAt)
+      .where(sql`status = 'sending'`),
+    // Canvas badges ("how many people are sitting on this node right now") and
+    // the automation detail page's counts.
+    index("idx_automation_enrollments_automation_status").on(t.automationId, t.status),
+    index("idx_automation_enrollments_subscriber").on(t.subscriberId),
+    // Re-entry, enforced by the database rather than by a check-then-insert
+    // race. `once`: one enrollment per person, ever. `once_at_a_time`: one LIVE
+    // enrollment per person, so they may go through again after finishing.
+    // `always` gets no index (API-driven events like "trial ending" legitimately
+    // recur, possibly concurrently).
+    uniqueIndex("uq_automation_enrollments_once")
+      .on(t.automationId, t.subscriberId)
+      .where(sql`reentry_mode = 'once'`),
+    uniqueIndex("uq_automation_enrollments_one_at_a_time")
+      .on(t.automationId, t.subscriberId)
+      .where(sql`reentry_mode = 'once_at_a_time' and status in ('active', 'sending')`),
+  ],
+);
+
 export type Account = typeof accounts.$inferSelect;
 export type AccountUser = typeof accountUsers.$inferSelect;
 export type SendingDomain = typeof sendingDomains.$inferSelect;
@@ -1026,3 +1436,8 @@ export type ApiKey = typeof apiKeys.$inferSelect;
 export type IdempotencyKey = typeof idempotencyKeys.$inferSelect;
 export type WebhookEndpoint = typeof webhookEndpoints.$inferSelect;
 export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;
+export type Automation = typeof automations.$inferSelect;
+export type AutomationVersion = typeof automationVersions.$inferSelect;
+export type AutomationNode = typeof automationNodes.$inferSelect;
+export type AutomationEdge = typeof automationEdges.$inferSelect;
+export type AutomationEnrollment = typeof automationEnrollments.$inferSelect;

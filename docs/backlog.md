@@ -27,6 +27,19 @@ purge (today we just delete the encrypted `dns_integrations` row).
 
 ---
 
+## Sending infrastructure scaling (deferred by decision)
+
+**Status:** deferred 2026-09-07 · **Priority:** trigger-based, see the roadmap
+
+Reviewed the SES send path against how comparable products run: the correctness work
+(duplicate safety, pacing, DKIM/MAIL FROM/DMARC, SNS validation, one-click unsubscribe)
+is at or above the norm; multi-tenant reputation isolation, soft-bounce handling, warm-up
+and dedicated IPs are behind. Decided the current setup is sufficient at a handful of
+users. [sending-infra-roadmap.md](sending-infra-roadmap.md) lists each item with the
+growth signal that should trigger it, in build order.
+
+---
+
 ## Deliverability onboarding & ESP-migration help
 
 **Status:** not started · **Priority:** should-have before courting migrators from other ESPs

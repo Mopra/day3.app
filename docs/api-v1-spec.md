@@ -223,6 +223,7 @@ worker job `src/queue/handlers/send-transactional.ts`; product docs in
   "html": "<p>…</p>",
   "text": "…",
   "reply_to": "support@acme.com",
+  "list_unsubscribe": "https://acme.com/u/eyJ0…",
   "headers": { "X-Entity-Ref-ID": "abc" },
   "tags": { "type": "password-reset" }
 }
@@ -235,6 +236,17 @@ worker job `src/queue/handlers/send-transactional.ts`; product docs in
 - `to` is a string or an array of up to **50** addresses: ONE message whose To
   header lists them all (not 50 separate emails). Addresses are canonicalized
   and de-duplicated; each one counts against the monthly allowance.
+- `list_unsubscribe`: an absolute **https** URL, no embedded credentials. We
+  build the RFC 8058 header pair from it (`List-Unsubscribe: <url>` plus
+  `List-Unsubscribe-Post: List-Unsubscribe=One-Click`), which is why those two
+  header names stay reserved: this field is the only door to them, and it means
+  the bracket and One-Click forms are correct by construction rather than by
+  each caller getting them right. Omit it for genuinely transactional mail — a
+  password reset carries no unsubscribe. Set it for anything bulk-shaped
+  (outreach with a real opt-out, an operational digest, a one-off
+  announcement), where one-click is a deliverability requirement at Gmail and
+  Yahoo and a legal one under CAN-SPAM. The URL must answer both `POST` (the
+  mail client, no body) and `GET` (a human clicking the visible link).
 - `headers`: up to 20. Reserved names are rejected with `400` —
   everything derived from the body (`from`/`to`/`subject`/`reply-to`/…), MIME
   plumbing, auth/trace headers (`DKIM-Signature`, `Authentication-Results`,
@@ -255,6 +267,7 @@ Response — the Email object, `202`-in-spirit but returned as `200`:
   "from": "Acme <notifications@updates.acme.com>",
   "to": ["jane@example.com"],
   "reply_to": null,
+  "list_unsubscribe": null,
   "subject": "Reset your password",
   "status": "queued",
   "error": null,

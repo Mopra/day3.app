@@ -1,10 +1,59 @@
 # Day3 Automations — design
 
-Status: **design agreed, not implemented** (2026-08-03). Nothing here has shipped.
+Status: **Phase 1 in progress** (design agreed 2026-08-03, build started
+2026-08-16).
+
+Landed so far:
+
+- `src/lib/automation-graph.ts` — the node vocabulary, per-kind config schemas,
+  publish validator, and the prose outline renderer. Database-free, like
+  `lib/segment-filter.ts`, so the canvas, the API and the worker all validate a
+  graph with one implementation.
+- Schema + `migrations/0031_sleepy_leader.sql` — `automations`,
+  `automation_versions`, `automation_nodes`, `automation_edges`,
+  `automation_enrollments`, plus the send-ledger and `email_events` changes
+  described in §3.
+
+Still to build: the tick engine (§5), the triggers and enroll endpoint (§6), the
+canvas (§8), templates, and the `PRODUCT.md` updates in §10.
 
 Decided: a **node canvas with branches**, not a linear list. Automations and
 automation **runs are unlimited on every paid tier** — no per-tier metering —
 protected by a documented fair-use rate ceiling and hard loop guards instead.
+
+### Corrections to this document, made during implementation
+
+The design held up, with six fixes and three decisions the original missed.
+Each is folded into the relevant section below; collected here so a reader of
+the original does not act on a superseded detail.
+
+1. **Node identity is a `key`, not the row id** (§2, §3). The doc promised node
+   ids survive edits *and* made nodes per-version rows. Those contradict. Nodes
+   now carry a stable `key` (`nd_…`) minted in the draft and copied verbatim
+   into every published version; the row `id` changes on each publish.
+2. **Automation sends share `campaign_recipients`** rather than getting their
+   own table (§3.1, §5.5). The `SendTarget` refactor was understated: the SES
+   notification lookup, `recordOpen`/`recordClick`, one-click unsubscribe,
+   account-health reputation maths and Metrics all resolve a send through that
+   one table. Sharing it means automations inherit every one of them.
+3. **Re-entry is enforced by two partial unique indexes on enrollment-local
+   columns** (§3.2). `WHERE reentry = 'once'` could never have worked: a partial
+   index predicate may only reference columns of the table it indexes, and
+   `reentry` lives on `automations`. The mode is snapshotted onto the enrollment.
+4. **`allowResend` is a `visit_no` column, not a second unique key** (§3.1). A
+   unique index cannot change its columns based on a flag.
+5. **An enrollment needs a `sending` state** (§5.4). Without one, the tick 60
+   seconds later re-dispatches a send node whose batch is still in flight.
+6. **Cycle validation is strongly-connected components, not cycle enumeration**
+   (§1.2). Enumerating every cycle is exponential; Tarjan is O(V+E) and answers
+   the same question, since a qualifying wait anywhere in an SCC delays every
+   cycle through it.
+
+Decisions taken (2026-08-16): the free tier **publishes in sandbox mode**
+rather than being blocked (§7), matching what campaigns already do; the send
+window carries a **per-automation timezone** (§3); and there is still **one
+trigger node per automation**, with `/enroll` able to enter any automation
+regardless of its trigger, which answers open question 2 (§11).
 
 ---
 
@@ -88,8 +137,11 @@ devs will draw it. Rather than blocking cycles, we permit them under two
 conditions:
 
 1. **Every cycle must pass through a Wait node of ≥ 1 hour.** Validated at
-   publish by finding cycles in the graph and checking each contains a
-   sufficient wait. This makes a tight infinite loop unrepresentable.
+   publish over the graph's **strongly-connected components** (Tarjan, O(V+E)):
+   any SCC of more than one node, or a node edged to itself, must contain a
+   qualifying wait. Enumerating cycles instead would be exponential and answers
+   the same question, since one slow wait in an SCC delays every cycle through
+   it. This makes a tight infinite loop unrepresentable.
 2. **A per-enrollment visit cap (default 200 nodes) and per-enrollment send cap
    (default 50).** Exceeding either exits the enrollment with
    `exit_reason: 'loop_guard'` and notifies the account. This is the backstop
@@ -143,9 +195,11 @@ automation_versions
   snapshots it as version N+1, and points new enrollments at it.
 - **Enrollments pin `versionId`** and run to completion on the version they
   entered on. Someone three nodes into v3 finishes v3.
-- Node ids are **preserved across edits**, so an optional, explicit
-  "move in-flight people to the new version" action can map most cursors cleanly
-  — with a clear warning and a count of how many can't be mapped (their node was
+- Node **keys** are preserved across edits (`automation_nodes.key`, minted once
+  in the draft and copied into every published version — the row `id` is
+  per-version and changes on each publish), so an optional, explicit "move
+  in-flight people to the new version" action can map most cursors cleanly, with
+  a clear warning and a count of how many can't be mapped (their node was
   deleted) and will be exited.
 
 This costs one table and a copy-on-publish, and it deletes an entire category of
@@ -181,79 +235,113 @@ automations
   triggerSegmentId?  triggerTopicId?  triggerFormId?
   entryFilterJson?   exitFilterJson?
   reentry: once | once_at_a_time | always            // default: once
-  senderId  sendingDomainId  fromName  fromEmail  replyTo   // snapshot, as campaigns do
+  senderId? sendingDomainId? fromName? fromEmail? replyTo?  // snapshot, as campaigns do
   themeJson  footerText  topicId?
+  sendWindowJson?  timezone                          // working-hours clamp, per automation
+  sandbox                                            // free-tier publish, as campaigns.sandbox
   liveVersionId?  draftVersionId?
   createdAt  updatedAt
 
 automation_nodes
-  id (and_)  accountId  automationVersionId
-  kind: trigger | send | wait | wait_for | branch | split | set_field | end
+  id (aun_)  accountId  automationVersionId
+  key (nd_)                         // STABLE across edits and versions; the row id is not
+  kind: trigger | send | wait | branch | end     // wait_for / split / set_field are Phase 2
   configJson                        // per-kind config (validated by a discriminated Zod union)
   canvasX  canvasY                  // presentation only — never read by the engine
   label?                            // user-facing name, used in engagement predicates
   riskLevel?  riskSummary?  riskGuidanceJson?
   createdAt  updatedAt
+  unique (automationVersionId, key)
 
 automation_edges
   id (aee_)  accountId  automationVersionId
-  fromNodeId  fromPort   toNodeId
-  unique (fromNodeId, fromPort)     // a port has exactly one destination
+  fromNodeKey  port  toNodeKey
+  unique (automationVersionId, fromNodeKey, port)   // a port has exactly one destination
 ```
+
+Edges reference node **keys**, not row ids, which makes publishing a version a
+verbatim copy of both tables with only the version id changed. The From identity
+fields are nullable so a canvas can be drafted before a domain is verified;
+publish is the gate that requires them.
 
 Send-node content (subject, previewText, sectionsJson, htmlBody, textBody) lives
 in `configJson` and is authored by the real composer, so `lib/sections.ts`,
 `lib/theme.ts`, and `services/render.ts` are reused unchanged.
 
-**Why normalized nodes/edges rather than one `graphJson` blob:**
-`automation_sends` needs a stable FK to a node for per-node stats and for
-engagement predicates. A blob makes node identity mushy and stats un-joinable.
-Canvas coordinates live on the node row precisely because they are the *only*
-part of the graph the engine never reads.
+**Why normalized nodes/edges rather than one `graphJson` blob:** the send ledger
+needs a stable key per node for per-node stats and for engagement predicates. A
+blob makes node identity mushy and stats un-joinable. Canvas coordinates live on
+the node row precisely because they are the *only* part of the graph the engine
+never reads.
 
-### 3.1 Enrollments and sends
+### 3.1 Enrollments, and the shared send ledger
 
 ```ts
 automation_enrollments
   id (aen_)  accountId  automationId  automationVersionId  subscriberId
-  status: active | waiting | completed | exited | failed
-  currentNodeId?   nextRunAt?        // the entire scheduler, in one indexed column
-  waitingForJson?                    // wait_for node: condition + hard deadline
+  status: active | sending | completed | exited | failed
+  reentryMode                        // snapshot of automations.reentry (see below)
+  currentNodeKey?  nextRunAt?        // the entire scheduler, in one indexed column
+  lockedAt?                          // set while a send batch owns the enrollment
   visitCount  sendCount              // loop guards (§1.2)
-  enteredAt  completedAt?  exitedAt?  exitReason?
-  index (status, nextRunAt) WHERE status IN ('active','waiting')   -- the hot path
-  unique (automationId, subscriberId) WHERE reentry = 'once'
-
-automation_sends
-  id (asn_)  accountId  automationId  automationNodeId  enrollmentId  subscriberId  email
-  status: pending | sending | sent | delivered | bounced | complained
-        | unsubscribed | failed | skipped      -- same vocabulary as campaign_recipients
-  skipReason?  lockedAt?  sentAt?  deliveredAt?  openedAt?  clickedAt?  …
-  provider  providerMessageId?  error?
-  unique (enrollmentId, automationNodeId)      -- THE duplicate-safety anchor
+  sandbox                            // snapshot, as campaigns.sandbox
+  holdReason?  heldSince?            // quota / billing hold (§5.6), never a failure
+  enteredAt  completedAt?  exitedAt?  exitReason?  lastError?
+  index (accountId, nextRunAt) WHERE status = 'active'    -- the hot path
+  index (nextRunAt)            WHERE status = 'active'    -- which accounts have work
+  index (lockedAt)             WHERE status = 'sending'   -- stuck-lock sweep
+  unique (automationId, subscriberId) WHERE reentryMode = 'once'
+  unique (automationId, subscriberId)
+    WHERE reentryMode = 'once_at_a_time' AND status IN ('active','sending')
 ```
 
-`automation_sends` is deliberately a near-clone of `campaign_recipients`, for the
-same reason that table exists: it is the row whose status makes retries
-duplicate-free (`AGENTS.md` hard rule 1). A send is claimed by flipping its row
-to `sending` in one atomic statement before the provider call; a retried job only
-re-claims rows still `pending`. Same proven pattern, nothing new invented.
+`active` covers both "running now" and "sleeping on a wait": to the dispatcher
+they are the same row, claimed on `next_run_at` alone. **`sending` is the state
+that keeps the next tick's hands off an enrollment whose send batch is still in
+flight** — without it, the tick 60 seconds later re-dispatches the same node.
+`lockedAt` drives the stuck-lock sweep that recovers a crashed batch.
 
-The `unique (enrollmentId, automationNodeId)` constraint has one consequence
-worth naming: **a loop cannot re-send the same node to the same enrollment.** For
-a genuine recurring nudge, that's wrong — so looping send nodes carry an
-`allowResend: true` flag, and those rows key on
-`(enrollmentId, automationNodeId, visitCount)` instead. Default off, because
-accidentally mailing someone the same thing twice is the more common bug.
+**Automation sends go on the existing `campaign_recipients` ledger**, with
+`campaign_id` NULL and `automation_id` / `automation_enrollment_id` /
+`automation_node_key` / `visit_no` set. It is the same row-status-is-the-truth
+pattern (`AGENTS.md` hard rule 1) and, crucially, the same row every downstream
+consumer already resolves: the SES notification lookup by `provider_message_id`,
+`recordOpen` / `recordClick`, one-click unsubscribe, and the account-health
+bounce-rate maths all keep working for automation mail with no second ledger to
+join. `email_events` gains `automation_id` + `automation_node_key` so Activity
+can filter a flow and the canvas can attribute an event to a step. Metrics is the
+one query that needed a change (it inner-joins `campaigns`, which correctly drops
+automation sends from the per-campaign table).
+
+The duplicate-safety anchor is `unique (enrollment_id, node_key, visit_no)`.
+`visit_no` is 0 unless the send node opts into `allowResend`, in which case it is
+the enrollment's `visitCount` — so the constraint reads "one send per node per
+enrollment" normally, and "one send per node per lap" for a deliberate recurring
+nudge. Default off, because accidentally mailing someone the same thing twice is
+the more common bug.
+
+*Rejected: a separate `automation_sends` table*, as this doc originally
+specified. It is conceptually cleaner and keeps campaign queries narrow, but it
+forces a parallel implementation of the tracking-token payloads, both tracking
+recorders, the SES webhook's ledger resolution, the outbound-webhook source
+union and the reputation maths. That is a large surface of security-sensitive
+code duplicated for a table shape that is otherwise identical. The table name is
+now a misnomer; renaming it is a mechanical follow-up, not a prerequisite.
 
 ### 3.2 Re-entry: `once` by default, with an index behind it
 
 The classic automation disaster is a subscriber getting the welcome series four
-times because a CSV re-import touched their row. `reentry: once` + a unique
-partial index makes that structurally impossible rather than merely unlikely.
+times because a CSV re-import touched their row. `reentry: once` + a partial
+unique index makes that structurally impossible rather than merely unlikely.
 
 `once` (default) · `once_at_a_time` (re-enter after completing) · `always` (for
-API events like "trial ending", which legitimately recur).
+API events like "trial ending", which legitimately recur, possibly concurrently).
+
+The mode is **snapshotted onto the enrollment row** as `reentryMode`, because a
+partial index predicate may only reference columns of the table it indexes: an
+index on `automation_enrollments` cannot read `automations.reentry`. `once` gets
+an unconditional pair, `once_at_a_time` an additional live-status predicate, and
+`always` no index at all.
 
 ---
 
@@ -432,12 +520,14 @@ and trackable-link extraction are prepared **once per node** (identical for ever
 recipient); only the per-recipient signed tokens differ — exactly today's
 structure.
 
-The one real refactor: `signUnsubscribeToken` / `signOpenToken` /
-`signClickToken` currently take `{campaignId, campaignRecipientId}`. Generalize
-to a discriminated `SendTarget` — `{kind:"campaign", …} | {kind:"automation", …}`
-— so unsubscribe, open tracking, and click tracking all work unchanged. This is
-the main non-trivial plumbing and it's contained to three functions plus their
-verify side.
+Because the send ledger is shared (§3.1), `campaignRecipientId` in the
+unsubscribe / open / click token payloads already identifies an automation send,
+and `recordOpen` / `recordClick` stamp the right row without change. What is
+left is narrow: those payloads carry `campaignId` for the `email_events` row they
+write, so it becomes optional alongside `automationId` + `automationNodeKey`.
+The SES webhook needed no new lookup at all — one resolution by
+`provider_message_id` finds the row whichever producer wrote it, and only the
+outbound-webhook payload shape branches (`object: "automation_send"`).
 
 ### 5.6 Quota exhaustion holds, it does not skip
 
@@ -505,9 +595,15 @@ comparison crossing midnight).
 
 ## 7. Interaction with what exists
 
-**Plans.** Free builds and drafts, cannot publish (`planCanSend`) — identical to
-campaigns. Every paid tier gets unlimited automations and runs. No new SKU, no
-pricing-table change.
+**Plans.** Free builds, drafts, and **publishes in sandbox mode** — identical to
+campaigns, which already give a free org a real send through the real pipeline,
+restricted to the org's own members and metered against the same
+`monthly_email_sent_count` (`services/sandbox.ts`). The automation carries a
+`sandbox` flag stamped at publish, enrollments snapshot it, and a non-member
+subscriber is simply never enrolled. Being able to watch a welcome email
+actually arrive is the entire demo, and a free tier that can send a campaign but
+not a welcome email would be an arbitrary distinction. Every paid tier gets
+unlimited automations and runs. No new SKU, no pricing-table change.
 
 **Compliance.** Automation emails are campaign emails in every respect that
 matters: canonical footer, mailing address, one-click unsubscribe,
@@ -647,9 +743,11 @@ their own and are being made now:
    enrollments/min per org are reasoned in §4.2 but not measured. Worth loading
    once against a real Supabase instance before publishing them, since §4.3
    commits to the figure in writing.
-2. **Multiple trigger nodes per automation?** One keeps validation and the
-   mental model simple. But "joins the audience *or* I enroll them via API" is a
-   real want, and it's currently two automations with duplicated graphs.
+2. ~~**Multiple trigger nodes per automation?**~~ **Resolved (2026-08-16): one
+   trigger.** "Joins the audience *or* I enroll them via API" does not need a
+   second trigger node, because `POST /v1/automations/:id/enroll` can enter any
+   automation regardless of what its trigger says. The validator enforces exactly
+   one trigger node.
 3. **Should an automation target a segment directly** rather than an audience
    plus an entry filter? The filter covers it with one fewer concept, but "send
    this series to my Pro users" is how people say it out loud.

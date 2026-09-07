@@ -42,6 +42,19 @@ type EmailEventSource =
       email: string;
     }
   | {
+      // An automation send node. It shares the send ledger with campaigns, so
+      // `recipientId` is a campaign_recipients row here too; what differs is
+      // which flow and which step it came from. A receiver that only cares
+      // "did this address bounce" reads `email` and ignores the rest.
+      kind: "automation";
+      automationId: string;
+      nodeKey: string | null;
+      enrollmentId: string | null;
+      recipientId: string;
+      subscriberId: string | null;
+      email: string;
+    }
+  | {
       kind: "transactional";
       emailId: string;
       to: string[];
@@ -90,20 +103,33 @@ export type WebhookEventInput =
     };
 
 function sourceData(source: EmailEventSource): Record<string, unknown> {
-  return source.kind === "campaign"
-    ? {
+  switch (source.kind) {
+    case "campaign":
+      return {
         object: "campaign_recipient",
         campaign_id: source.campaignId,
         recipient_id: source.recipientId,
         contact_id: source.subscriberId,
         email: source.email,
-      }
-    : {
+      };
+    case "automation":
+      return {
+        object: "automation_send",
+        automation_id: source.automationId,
+        node_id: source.nodeKey,
+        enrollment_id: source.enrollmentId,
+        recipient_id: source.recipientId,
+        contact_id: source.subscriberId,
+        email: source.email,
+      };
+    case "transactional":
+      return {
         object: "email",
         email_id: source.emailId,
         to: source.to,
         email: source.email,
       };
+  }
 }
 
 /** The exact JSON body we sign and POST. */

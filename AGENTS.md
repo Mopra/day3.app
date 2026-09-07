@@ -118,6 +118,17 @@ page share a single account lookup instead of one per caller.
   codes (`rate_limit` / `daily_limit` / `quota` — see `campaigns.paused_code`;
   user pauses never auto-resume), and re-enqueues the driving job for campaigns
   stranded in `pending_review` / `approved` / `generating_recipients`.
+- **A domain is re-read after it verifies, not just before.** SES withdraws an
+  identity's verification when its DKIM CNAMEs stop resolving and revokes the
+  custom Return-Path when its MX disappears, both silently, and AWS reports them
+  only as account-wide Health events that carry no tenant. `recheckPendingDomains`
+  covers the road to verified; `recheckVerifiedDomains` (both in `queue/cron.ts`)
+  patrols what happens after, notifying the account on a regression
+  (`domain_verification_lost` / `domain_return_path_lost`). Both order by
+  `sending_domains.last_checked_at`, which is stamped on every SES read even when
+  nothing changed: that stamp is what rotates a bounded batch across the whole
+  table instead of re-reading the same rows every sweep, so do not make it
+  conditional on a change.
 - **Outbound mail is paced, and the pacer is the only thing that knows the rate.**
   SES enforces a max send *rate* (emails/second) separately from the 24-hour quota,
   and nothing else in the send path bounds it — the lanes send as fast as the
@@ -139,6 +150,18 @@ page share a single account lookup instead of one per caller.
   errors (connection-phase network failures, provider-rejected requests) ever
   return a recipient to `pending`; ambiguous errors (timeouts, 5xx) stay
   terminal for that recipient.
+- **`campaign_recipients` is the shared send ledger, not a campaign-only table.**
+  Automation send nodes write rows here too (`campaign_id` NULL, `automation_id` /
+  `automation_enrollment_id` / `automation_node_key` / `visit_no` set), which is
+  why `campaign_id` is nullable. That is deliberate and load-bearing: one lookup
+  by `provider_message_id` in the SES webhook resolves a row whichever producer
+  wrote it, and open/click tracking, one-click unsubscribe and the account-health
+  bounce-rate maths therefore cover automation mail with no second ledger. When
+  you add a query here, decide explicitly whether it wants campaign rows only
+  (filter on `campaign_id`, as `services/metrics.ts` does via its inner join) or
+  every send the account made (leave it unfiltered, as `enforceAccountHealth`
+  does — reputation is account-wide). The name is a misnomer pending a rename.
+  See `docs/automations-design.md` §3.1.
 - **Suppression is add-only everywhere except one route.** `POST /v1/suppressions`
   (and `addSuppressions`) only ever adds; the single undo is
   `DELETE /api/suppressions/{email}` behind a session (the Suppressions page), so a

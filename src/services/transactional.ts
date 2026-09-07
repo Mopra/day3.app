@@ -170,3 +170,68 @@ export function parseFromAddress(raw: string): { email: string; name: string | n
 export function emailDomain(email: string): string {
   return email.slice(email.lastIndexOf("@") + 1).toLowerCase();
 }
+
+// --- One-click unsubscribe (RFC 8058) ---------------------------------------
+//
+// `List-Unsubscribe` and `List-Unsubscribe-Post` are in RESERVED_HEADERS, so a
+// caller cannot smuggle them through `headers`. That default is right for the
+// mail this API was built for: a password reset carries no unsubscribe, and a
+// caller who sets one by hand gets the pair subtly wrong (a bare URL instead of
+// `<URL>`, or the POST header without the `One-Click` value) often enough that
+// accepting raw header strings would mostly produce broken headers.
+//
+// But some legitimate senders on this API are bulk-shaped rather than
+// transactional — cold outreach with a real opt-out, operational digests, a
+// one-off announcement — and for those, RFC 8058 is a deliverability
+// requirement at Gmail and Yahoo and a legal one under CAN-SPAM. So the
+// capability is exposed as ONE validated field, `list_unsubscribe`, and this
+// module owns turning it into the header pair. The caller supplies the URL; we
+// supply the correctness.
+//
+// https is required. A one-click unsubscribe is a state-changing POST from a
+// mail client the sender does not control, and over http it is both
+// interceptable and ignored by the providers that matter.
+
+export const MAX_LIST_UNSUBSCRIBE_URL_LENGTH = 1000;
+
+/**
+ * Validates a caller-supplied one-click unsubscribe URL. Returns the normalized
+ * URL, or null when it is not something we are willing to put in a header.
+ *
+ * Deliberately narrow: https only, no embedded credentials, no whitespace or
+ * control characters, and no angle brackets (the caller passes a bare URL and
+ * we add the brackets, so a caller who included them would otherwise produce
+ * `<<url>>`).
+ */
+export function parseListUnsubscribeUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_LIST_UNSUBSCRIBE_URL_LENGTH) return null;
+  // eslint-disable-next-line no-control-regex
+  if (/[<>\s\x00-\x1f\x7f]/.test(trimmed)) return null;
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:") return null;
+  if (url.username !== "" || url.password !== "") return null;
+  if (!url.hostname.includes(".")) return null;
+
+  return url.toString();
+}
+
+/**
+ * The RFC 8058 header pair for a validated URL, or an empty object when there
+ * is none. Both headers together or neither: `List-Unsubscribe-Post` without a
+ * `List-Unsubscribe` target is meaningless, and a `List-Unsubscribe` without
+ * the POST header is the old two-click form that Gmail no longer counts.
+ */
+export function listUnsubscribeHeaders(url: string | null | undefined): Record<string, string> {
+  if (!url) return {};
+  return {
+    "List-Unsubscribe": `<${url}>`,
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+  };
+}
