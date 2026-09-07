@@ -1,6 +1,9 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+/* Registers Clerk's shadcn theme as a Tailwind source so the utility classes it
+   applies (border, shadow-sm, bg-input/30) are generated. See app/layout.tsx. */
+@import "@clerk/themes/shadcn.css";
 
 @custom-variant dark (&:is(.dark *));
 

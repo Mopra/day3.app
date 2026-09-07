@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Instrument_Serif } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
-import { dark } from "@clerk/themes";
+import { shadcn } from "@clerk/themes";
 import { Toaster } from "sonner";
 import "./globals.css";
 
@@ -43,12 +43,16 @@ export default function RootLayout({
   return (
     <ClerkProvider
       afterSignOutUrl="/"
-      // Clerk keeps its stock dark theme: the app's surfaces are neutral, so
-      // Clerk's already match and there is nothing to reconcile. Only the type
-      // is handed over, so the org switcher and user button don't sit in a
-      // different typeface from everything around them.
+      // Clerk's shadcn theme reads the app's own design tokens (--card, --primary,
+      // --border, --radius, --font-sans, ...) instead of shipping a palette of its
+      // own, so the org switcher, user menu, sign-in and the organization profile
+      // modal are painted with the same ink as everything around them. The stock
+      // `dark` theme only shared the typeface; its blue-grey primary, shadows and
+      // input chrome were what made those surfaces read as a different product.
+      // The theme's Tailwind classes are picked up via the @import of
+      // "@clerk/themes/shadcn.css" in globals.css.
       appearance={{
-        theme: dark,
+        theme: shadcn,
         variables: { fontFamily: "var(--font-geist)", borderRadius: "0.5rem" },
       }}
     >

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import { useClerk } from "@clerk/nextjs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import type { Account } from "@/lib/types";
 
 // A past-due payment is the one billing state that needs the user to act outside
 // the plan picker — it's fixed in the organization billing settings (Clerk's
-// <OrganizationProfile>), so its CTA points at Settings. Everything else in the
+// <OrganizationProfile>), so its CTA opens that modal on the billing tab. Everything else in the
 // bandwidth model is a self-serve plan change handled by the grid, which drives
 // Clerk Billing's checkout/subscription drawers directly.
 function pastDueNotice(status: string) {
@@ -34,6 +34,7 @@ function pastDueNotice(status: string) {
 // could show a stale tier right after a change. The once-per-session sync in
 // <AppShell> covers the tester-override / webhook-less fallback.
 export function BillingView({ initialAccount }: { initialAccount: Account }) {
+  const clerk = useClerk();
   const api = useApi();
   const [account, setAccount] = useState<Account>(initialAccount);
   useEffect(() => setAccount(initialAccount), [initialAccount]);
@@ -107,8 +108,12 @@ export function BillingView({ initialAccount }: { initialAccount: Account }) {
             <Button
               variant="outline"
               size="sm"
-              render={<Link href="/settings">Update payment method</Link>}
-            />
+              onClick={() =>
+                clerk.openOrganizationProfile({ __experimental_startPath: "/organization-billing" })
+              }
+            >
+              Update payment method
+            </Button>
           </AlertDescription>
         </Alert>
       )}

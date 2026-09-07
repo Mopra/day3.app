@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { OrganizationProfile } from "@clerk/nextjs";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { OrbitLoader } from "@/components/ui/orbit-loader";
 import { useApi } from "@/lib/api";
 import type { Account } from "@/lib/types";
+import { OrganizationSection } from "./organization-section";
 
 // The account row comes from the server render (./page.tsx) — requireAccount has
 // already resolved it there, so this page costs no query of its own.
@@ -66,10 +66,7 @@ export function SettingsView({ account }: { account: Account }) {
         </p>
       </section>
 
-      <section className="space-y-4">
-        <h2 className="text-base font-medium">Organization</h2>
-        <OrganizationProfile routing="hash" />
-      </section>
+      <OrganizationSection account={account} />
     </div>
   );
 }
