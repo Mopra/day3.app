@@ -15,6 +15,7 @@ import { AutomationCanvas, type SaveStatus } from "@/components/automation-canva
 import { EnrollmentsTab } from "@/components/automation-canvas/enrollments-tab";
 import { PublishDialog } from "@/components/automation-canvas/publish-dialog";
 import { StatsTable } from "@/components/automation-canvas/stats-table";
+import { PreviewBadge } from "@/components/preview-notice";
 import { SandboxBadge } from "@/components/sandbox-notice";
 import { AutomationStatusBadge } from "@/components/ui/status-badge";
 import { useApi } from "@/lib/api";
@@ -195,6 +196,7 @@ export function AutomationView({
           <div className="flex shrink-0 items-center gap-2">
             <AutomationStatusBadge status={detail.status} />
             {detail.sandbox && <SandboxBadge />}
+            <PreviewBadge />
           </div>
         </div>
 

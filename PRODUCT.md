@@ -1147,6 +1147,15 @@ stopped opening. It is drawn as a graph of **nodes** on a canvas, entered at one
 **trigger**, and each person who enters walks the graph independently. Campaigns
 are the one-to-many send; automations are the one-at-a-time send.
 
+**Early preview.** Automations are labelled *Early preview* in the app: a badge on
+the list page and on every automation's header, plus a line under the list title
+saying that what you build runs for real and sends real email, that this is the
+newest part of Day3, and to report anything that looks wrong through Help. The
+feature is not gated or limited by the label, and it is not a beta programme you
+opt into. It is an honesty notice, and it comes out (delete
+`src/components/preview-notice.tsx` and its two call sites) once the canvas has
+been through enough real accounts.
+
 **The canvas.** Every automation lives at `/automations/{id}` as a pan-and-zoom
 canvas (React Flow). Clicking a node opens an inspector panel beside the canvas
 rather than a modal, so the flow stays in view while a step is edited; a send node

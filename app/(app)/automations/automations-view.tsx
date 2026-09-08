@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/data-list";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { NewAutomationDialog } from "@/components/new-automation-dialog";
+import { PreviewBadge, PreviewNote } from "@/components/preview-notice";
 import { SandboxBadge } from "@/components/sandbox-notice";
 import { AutomationStatusBadge } from "@/components/ui/status-badge";
 import { useApi } from "@/lib/api";
@@ -189,11 +190,17 @@ export function AutomationsView({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="font-display text-2xl sm:text-3xl">Automations</h1>
-        <Button onClick={() => setDialogOpen(true)} disabled={audiences.length === 0}>
-          New automation
-        </Button>
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <h1 className="font-display text-2xl sm:text-3xl">Automations</h1>
+            <PreviewBadge />
+          </div>
+          <Button onClick={() => setDialogOpen(true)} disabled={audiences.length === 0}>
+            New automation
+          </Button>
+        </div>
+        <PreviewNote />
       </div>
 
       {automations.length > 0 && (
