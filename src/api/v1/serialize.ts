@@ -1,6 +1,7 @@
 import type {
   Audience,
   AudienceField,
+  Automation,
   Segment,
   Subscriber,
   SuppressionEntry,
@@ -10,6 +11,7 @@ import type {
   WebhookDelivery,
   WebhookEndpoint,
 } from "../../db/schema";
+import type { EnrollResult } from "../../lib/automation-types";
 import { safeParseSegmentFilter, type SegmentFilter } from "../../lib/segment-filter";
 
 // Row → public v1 shape. The public API is snake_case and never leaks raw
@@ -203,6 +205,35 @@ export function serializeWebhookDelivery(d: WebhookDelivery): Record<string, unk
     delivered_at: toIso(d.deliveredAt),
     created_at: toIso(d.createdAt),
   };
+}
+
+// Automation → public shape. Deliberately shallow: the graph, settings and
+// enrollments are app-only in Phase 1 (docs/automations-design.md §9), so the
+// API exposes what a caller needs to pick a flow and enroll into it. `trigger`
+// tells an integrator whether the flow also fires on its own (audience_join) or
+// only when they call /enroll (api).
+export function serializeAutomation(
+  a: Automation,
+  liveVersion: number | null,
+): Record<string, unknown> {
+  return {
+    id: a.id,
+    object: "automation",
+    name: a.name,
+    status: a.status,
+    trigger: a.triggerKind,
+    audience_id: a.audienceId,
+    live_version: liveVersion,
+    sandbox: a.sandbox,
+    created_at: toIso(a.createdAt),
+    updated_at: toIso(a.updatedAt),
+  };
+}
+
+// Only `enrolled` made a row; every other outcome explains why not, in the
+// vocabulary of lib/automation-types EnrollOutcome.
+export function serializeEnrollResult(r: EnrollResult): Record<string, unknown> {
+  return { object: "enrollment_result", outcome: r.outcome, enrollment_id: r.enrollmentId };
 }
 
 export function serializeSuppression(e: SuppressionEntry): Record<string, unknown> {

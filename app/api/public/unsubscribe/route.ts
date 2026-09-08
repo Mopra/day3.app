@@ -4,7 +4,7 @@ import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { getDb } from "@/db/client";
 import type { Db } from "@/db/client";
-import { accounts, campaigns, emailEvents, subscribers, topics } from "@/db/schema";
+import { accounts, automations, campaignRecipients, campaigns, emailEvents, subscribers, topics } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { verifyUnsubscribeToken, type UnsubscribeTokenPayload } from "@/services/unsubscribe";
 import { applyUnsubscribe } from "@/services/unsubscribe-action";
@@ -20,13 +20,11 @@ async function topicChoiceFor(
   db: Db,
   payload: UnsubscribeTokenPayload,
 ): Promise<{ id: string; name: string } | null> {
-  if (!payload.campaignId || !payload.subscriberId) return null;
-  const campaign = await db.query.campaigns.findFirst({
-    where: and(eq(campaigns.id, payload.campaignId), eq(campaigns.accountId, payload.accountId)),
-  });
-  if (!campaign?.topicId) return null;
+  if (!payload.subscriberId) return null;
+  const topicId = await topicIdFor(db, payload);
+  if (!topicId) return null;
   const topic = await db.query.topics.findFirst({
-    where: and(eq(topics.id, campaign.topicId), eq(topics.accountId, payload.accountId)),
+    where: and(eq(topics.id, topicId), eq(topics.accountId, payload.accountId)),
   });
   if (!topic) return null;
   const subscriber = await db.query.subscribers.findFirst({
@@ -37,6 +35,55 @@ async function topicChoiceFor(
   });
   if (!subscriber) return null;
   return { id: topic.id, name: topic.name };
+}
+
+// The topic the email was sent under. A campaign token names its campaign; an
+// automation token names only the ledger row, which points at the automation.
+async function topicIdFor(db: Db, payload: UnsubscribeTokenPayload): Promise<string | null> {
+  if (payload.campaignId) {
+    const campaign = await db.query.campaigns.findFirst({
+      columns: { topicId: true },
+      where: and(eq(campaigns.id, payload.campaignId), eq(campaigns.accountId, payload.accountId)),
+    });
+    return campaign?.topicId ?? null;
+  }
+  if (!payload.campaignRecipientId) return null;
+  const ledger = await db.query.campaignRecipients.findFirst({
+    columns: { automationId: true },
+    where: and(
+      eq(campaignRecipients.id, payload.campaignRecipientId),
+      eq(campaignRecipients.accountId, payload.accountId),
+    ),
+  });
+  if (!ledger?.automationId) return null;
+  const automation = await db.query.automations.findFirst({
+    columns: { topicId: true },
+    where: and(eq(automations.id, ledger.automationId), eq(automations.accountId, payload.accountId)),
+  });
+  return automation?.topicId ?? null;
+}
+
+// Attribution for the audit event of a topic-only opt-out, read off the ledger
+// row so an automation send is attributed to its flow and step.
+async function ledgerAttribution(
+  db: Db,
+  payload: UnsubscribeTokenPayload,
+): Promise<{ campaignId: string | null; automationId: string | null; automationNodeKey: string | null }> {
+  if (!payload.campaignRecipientId) {
+    return { campaignId: payload.campaignId ?? null, automationId: null, automationNodeKey: null };
+  }
+  const row = await db.query.campaignRecipients.findFirst({
+    columns: { campaignId: true, automationId: true, automationNodeKey: true },
+    where: and(
+      eq(campaignRecipients.id, payload.campaignRecipientId),
+      eq(campaignRecipients.accountId, payload.accountId),
+    ),
+  });
+  return {
+    campaignId: payload.campaignId ?? row?.campaignId ?? null,
+    automationId: row?.automationId ?? null,
+    automationNodeKey: row?.automationNodeKey ?? null,
+  };
 }
 
 export const GET = route(async (req: NextRequest) => {
@@ -96,11 +143,14 @@ export const POST = route(async (req: NextRequest) => {
     });
     // Audit trail alongside the full-unsubscribe events, distinguishable via
     // the payload (no suppression, no status change happened).
+    const attribution = await ledgerAttribution(db, payload);
     await db.insert(emailEvents).values({
       id: newId("evt"),
       accountId: payload.accountId,
-      campaignId: payload.campaignId ?? null,
+      campaignId: attribution.campaignId,
       campaignRecipientId: payload.campaignRecipientId ?? null,
+      automationId: attribution.automationId,
+      automationNodeKey: attribution.automationNodeKey,
       eventType: "unsubscribe",
       email: payload.email,
       provider: "ses",

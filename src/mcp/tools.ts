@@ -11,7 +11,13 @@ import {
   serializeCampaign,
   updateCampaign,
 } from "../api/v1/campaigns";
+import { serializeAutomation, serializeEnrollResult } from "../api/v1/serialize";
 import { audiences, campaigns, senders, sendingDomains } from "../db/schema";
+import {
+  enrollContactByApi,
+  findAutomationOr404,
+  listAutomationsForApi,
+} from "../services/automations";
 import { checkSendEligibility } from "../services/plans";
 import { accountSandboxMode } from "../services/sandbox";
 import {
@@ -127,6 +133,7 @@ export const TOOLS: Tool<Ctx>[] = [
           name: apiKey.name,
           scopes: parseScopes(apiKey.scopes),
           can_send_campaigns: keyHasScope(apiKey, "campaigns:send"),
+          can_enroll_in_automations: keyHasScope(apiKey, "automations:enroll"),
         },
         audiences: audienceRows.map((a) => ({
           id: a.id,
@@ -349,6 +356,83 @@ export const TOOLS: Tool<Ctx>[] = [
       return serializeCampaign(updated);
     },
   },
+
+  // Automations: the same two operations the v1 API exposes, over the same
+  // service functions. The graph itself is app-only in Phase 1.
+  {
+    name: "day3_list_automations",
+    title: "List automations",
+    description:
+      "List the workspace's automations (welcome series, onboarding flows) newest first, with " +
+      "their status and trigger. `trigger` is `audience_join` when the flow also fires on its own " +
+      "as people join the audience, or `api` when only enrolling starts it. Only `active` " +
+      "automations can be enrolled into.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          description: "Filter by status: draft, active, paused or archived. Archived are hidden by default.",
+        },
+        limit: { type: "integer", minimum: 1, maximum: 50, description: "Default 20." },
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true },
+    handler: async (args, { db, account }) => {
+      const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 50);
+      const rows = await listAutomationsForApi(db, account.id, { status: str(args.status), limit });
+      return { automations: rows.map((a) => serializeAutomation(a, a.liveVersion)) };
+    },
+  },
+
+  {
+    name: "day3_enroll_in_automation",
+    title: "Enroll a contact in an automation",
+    description:
+      "Enroll one email address in an active automation, so they receive every email in the flow " +
+      "on its schedule. Pass `attributes` to create the contact in the automation's audience if " +
+      "they are not in it yet (otherwise a missing contact is reported as `not_subscribed` and " +
+      "nothing is sent). Requires an API key with the `automations:enroll` scope. Confirm with the " +
+      "user before calling this.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        automation_id: { type: "string" },
+        email: { type: "string", description: "The contact's email address." },
+        attributes: {
+          type: "object",
+          additionalProperties: { type: ["string", "null"] },
+          description:
+            "Optional flat map of custom fields (string values). Creates the contact when new; " +
+            "merges into an existing contact. A null value deletes that key.",
+        },
+      },
+      required: ["automation_id", "email"],
+      additionalProperties: false,
+    },
+    annotations: { destructiveHint: true, idempotentHint: true },
+    handler: async (args, { db, account, apiKey }) => {
+      requireScope(apiKey, "automations:enroll");
+      const automation = await findAutomationOr404(db, account.id, requireId(args, "automation_id"));
+      const email = str(args.email);
+      if (!email) throw new ApiError(400, "invalid_request", "`email` is required");
+      let attributes: Record<string, string | null> | undefined;
+      if (args.attributes !== undefined) {
+        if (!args.attributes || typeof args.attributes !== "object" || Array.isArray(args.attributes)) {
+          throw new ApiError(400, "invalid_request", "`attributes` must be an object of string values");
+        }
+        attributes = {};
+        for (const [key, value] of Object.entries(args.attributes as Record<string, unknown>)) {
+          if (value === null) attributes[key] = null;
+          else if (typeof value === "string") attributes[key] = value;
+          else throw new ApiError(400, "invalid_request", `attributes.${key} must be a string`);
+        }
+      }
+      const result = await enrollContactByApi(db, account, automation, { email, attributes });
+      return { automation_id: automation.id, ...serializeEnrollResult(result) };
+    },
+  },
 ];
 
 // Sent once at initialize rather than repeated across nine tool descriptions:
@@ -370,4 +454,9 @@ and is the right way to check an email. day3_send_campaign and
 day3_schedule_campaign mail the entire audience and cannot be undone; they need
 an API key that was explicitly created with the campaigns:send scope. Always
 confirm with the user before either, and report back the URL of the draft so
-they can look at it in Day3 themselves.`;
+they can look at it in Day3 themselves.
+
+AUTOMATIONS. day3_list_automations shows the workspace's flows (welcome series,
+onboarding). day3_enroll_in_automation puts one person into an active flow, which
+sends them every email in it on its schedule; it needs the automations:enroll
+scope and, like sending, should be confirmed with the user first.`;

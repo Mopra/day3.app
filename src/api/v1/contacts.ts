@@ -9,6 +9,7 @@ import { registerAudienceFields } from "../../services/audience-fields";
 import { subscriberHeadroom, subscriberLimitMessage } from "../../services/subscriber-limit";
 import { getSuppressedEmails } from "../../services/suppression";
 import { setTopicSubscription } from "../../services/topic-subscription";
+import { enrollAudienceJoin } from "../../services/automation-enroll";
 import { ApiError, type ApiErrorCode } from "./errors";
 
 // Shared write path for v1 contacts — the single POST and the batch endpoint
@@ -235,6 +236,17 @@ export async function writeContacts(
     }
   }
 
+  // Contacts that became `subscribed` in this call: created that way, or an
+  // upsert that flipped them from unsubscribed. The audience-join trigger fires
+  // for exactly these once every write has landed.
+  const joinedIds: string[] = [];
+  for (const p of creations) {
+    const result = results[p.index];
+    if (result.status === "created" && result.contact.status === "subscribed") {
+      joinedIds.push(result.contact.id);
+    }
+  }
+
   // Updates: per-row (attribute merge is row-specific).
   for (const p of updates) {
     const existing = existingByEmail.get(p.email) ?? insertedByEmail.get(p.email)!;
@@ -262,6 +274,7 @@ export async function writeContacts(
       .where(eq(subscribers.id, existing.id))
       .returning();
     results[p.index] = { status: "updated", contact: updated };
+    if (set.status === "subscribed" && existing.status !== "subscribed") joinedIds.push(updated.id);
   }
 
   // Topic choices, applied after the contact exists.
@@ -277,6 +290,11 @@ export async function writeContacts(
       });
     }
   }
+
+  // Best-effort and last, after topics: a trigger hiccup must not fail the
+  // API call, and the enrollment's entry filter should see the finished row.
+  // No queue in scope here; the hook enqueues through the tier's ambient queue.
+  await enrollAudienceJoin(db, null, { accountId: account.id, audienceId, subscriberIds: joinedIds });
 
   return { results };
 }

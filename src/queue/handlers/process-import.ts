@@ -8,6 +8,7 @@ import { maxSubscribersForPlan } from "../../lib/plans-catalog";
 import { getSuppressedEmails } from "../../services/suppression";
 import { registerAudienceFields } from "../../services/audience-fields";
 import { countAccountSubscribers } from "../../services/subscriber-limit";
+import { enrollAudienceJoin } from "../../services/automation-enroll";
 import type { ObjectStore } from "../../lib/storage";
 
 // Postgres allows up to 65535 bound params per statement; chunk into
@@ -121,6 +122,9 @@ export async function processImport(
 
     const now = nowIso();
     let imported = 0;
+    // Rows that landed as `subscribed`: the audience-join trigger fires for
+    // these once the import has committed (not for opt-outs carried over).
+    const joinedIds: string[] = [];
     for (let i = 0; i < candidates.length; i += INSERT_CHUNK) {
       const chunk = candidates.slice(i, i + INSERT_CHUNK);
       const result = await db
@@ -150,8 +154,9 @@ export async function processImport(
           })),
         )
         .onConflictDoNothing()
-        .returning({ id: subscribers.id });
+        .returning({ id: subscribers.id, status: subscribers.status });
       imported += result.length;
+      for (const r of result) if (r.status === "subscribed") joinedIds.push(r.id);
       // Progressive count so a large import shows real movement, not a hang.
       await db
         .update(imports)
@@ -185,6 +190,15 @@ export async function processImport(
         updatedAt: nowIso(),
       })
       .where(eq(imports.id, importRow.id));
+
+    // After the import is recorded complete, so a trigger hiccup can never
+    // fail the import. The handler has no queue of its own; the hook enqueues
+    // through the worker's ambient queue. Never throws.
+    await enrollAudienceJoin(db, null, {
+      accountId: importRow.accountId,
+      audienceId: importRow.audienceId,
+      subscriberIds: joinedIds,
+    });
 
     await logJob(db, {
       jobType: "process_import",

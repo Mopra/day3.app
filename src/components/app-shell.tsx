@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { ComponentType, RefAttributes } from "react";
+import { useEffect, useImperativeHandle, useRef, useState } from "react";
+import type { ComponentType, Ref, RefAttributes } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { OrganizationSwitcher, UserButton, useAuth } from "@clerk/nextjs";
-import { Menu, Sparkles } from "lucide-react";
+import { Menu, Sparkles, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useApi } from "@/lib/api";
@@ -40,6 +40,25 @@ type AnimatedIcon = ComponentType<
 type NavEntry = { to: string; label: string; icon: AnimatedIcon; also?: string[] };
 type NavGroup = { label?: string; items: NavEntry[] };
 
+// Automations has no animated glyph yet. A static lucide icon behind the same
+// handle lets NavItem treat every entry alike; hover simply does nothing here.
+function WorkflowNavIcon({
+  size = 16,
+  className,
+  ref,
+}: {
+  size?: number;
+  className?: string;
+  ref?: Ref<AnimatedIconHandle>;
+}) {
+  useImperativeHandle(ref, () => ({ startAnimation() {}, stopAnimation() {} }), []);
+  return (
+    <span className={className}>
+      <Workflow size={size} />
+    </span>
+  );
+}
+
 // Two groups: the work (in the order a send actually happens: make it, who
 // gets it, grow that list, then watch what happened) and the account. Fewer,
 // broader items on purpose; Domains + Senders share one page (Sending), the
@@ -51,6 +70,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/dashboard", label: "Dashboard", icon: LayoutGridIcon },
       { to: "/campaigns", label: "Campaigns", icon: MailCheckIcon },
+      { to: "/automations", label: "Automations", icon: WorkflowNavIcon },
       { to: "/audiences", label: "Audiences", icon: UsersIcon },
       { to: "/forms", label: "Forms", icon: FormInputIcon },
       { to: "/activity", label: "Activity", icon: ActivityIcon },

@@ -12,7 +12,10 @@ import { newId, nowIso } from "../lib/ids";
 // from being used to forge opens/clicks for someone else.
 export type OpenTrackingTokenPayload = {
   accountId: string;
-  campaignId: string;
+  // Absent on an automation send: the ledger row (campaign_recipients, shared by
+  // both producers) says which campaign or automation the open belongs to, and
+  // the recorders below read it from there rather than trusting the token.
+  campaignId?: string;
   campaignRecipientId: string;
   email: string;
   /** Issued-at, epoch seconds. Set by signOpenToken; used to bound token age. */
@@ -109,6 +112,12 @@ export async function recordOpen(db: Db, payload: OpenTrackingTokenPayload): Pro
   // INSERT pair matters on the hot path: the web tier runs on a tiny per-instance
   // Postgres pool, so halving the connection hold time per pixel directly raises
   // how many opens an instance can absorb during a large campaign's open storm.
+  //
+  // The event's campaign / automation attribution comes from the ledger row the
+  // UPDATE just touched, not from the token: the ledger is shared by campaign
+  // and automation sends, so one statement attributes either correctly and an
+  // old token (which carried campaignId) and a new one (which does not) record
+  // the same thing.
   await db.execute(sql`
     WITH upd AS (
       UPDATE campaign_recipients
@@ -116,12 +125,14 @@ export async function recordOpen(db: Db, payload: OpenTrackingTokenPayload): Pro
       WHERE id = ${payload.campaignRecipientId}
         AND account_id = ${payload.accountId}
         AND opened_at IS NULL
-      RETURNING id
+      RETURNING id, campaign_id, automation_id, automation_node_key
     )
     INSERT INTO email_events
-      (id, account_id, campaign_id, campaign_recipient_id, event_type, email, provider, created_at)
-    SELECT ${newId("evt")}, ${payload.accountId}, ${payload.campaignId},
-           ${payload.campaignRecipientId}, 'open', ${payload.email}, 'ses', ${now}::timestamptz
+      (id, account_id, campaign_id, campaign_recipient_id, automation_id, automation_node_key,
+       event_type, email, provider, created_at)
+    SELECT ${newId("evt")}, ${payload.accountId}, upd.campaign_id,
+           upd.id, upd.automation_id, upd.automation_node_key,
+           'open', ${payload.email}, 'ses', ${now}::timestamptz
     FROM upd
   `);
 }
@@ -130,7 +141,8 @@ export async function recordOpen(db: Db, payload: OpenTrackingTokenPayload): Pro
 
 export type ClickTrackingTokenPayload = {
   accountId: string;
-  campaignId: string;
+  /** Absent on an automation send; see OpenTrackingTokenPayload. */
+  campaignId?: string;
   campaignRecipientId: string;
   email: string;
   /** The real destination — signed in, so the redirect can't be tampered with. */
@@ -209,12 +221,14 @@ export async function recordClick(db: Db, payload: ClickTrackingTokenPayload): P
       WHERE id = ${payload.campaignRecipientId}
         AND account_id = ${payload.accountId}
         AND clicked_at IS NULL
-      RETURNING id
+      RETURNING id, campaign_id, automation_id, automation_node_key
     )
     INSERT INTO email_events
-      (id, account_id, campaign_id, campaign_recipient_id, event_type, email, provider, payload_json, created_at)
-    SELECT ${newId("evt")}, ${payload.accountId}, ${payload.campaignId},
-           ${payload.campaignRecipientId}, 'click', ${payload.email}, 'ses',
+      (id, account_id, campaign_id, campaign_recipient_id, automation_id, automation_node_key,
+       event_type, email, provider, payload_json, created_at)
+    SELECT ${newId("evt")}, ${payload.accountId}, upd.campaign_id,
+           upd.id, upd.automation_id, upd.automation_node_key,
+           'click', ${payload.email}, 'ses',
            ${JSON.stringify({ url: payload.url })}, ${now}::timestamptz
     FROM upd
   `);

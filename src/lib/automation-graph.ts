@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { MAX_SERIALIZED_BODY_CHARS } from "./sections";
-import { SegmentFilterSchema } from "./segment-filter";
+import { SegmentFilterSchema } from "./segment-filter-schema";
 
 // The automation graph: the pure, database-free model of a canvas.
 //

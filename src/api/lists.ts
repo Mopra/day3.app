@@ -1,7 +1,9 @@
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { apiKeys, audiences, campaigns, forms, sendingDomains } from "../db/schema";
+import { apiKeys, audiences, automations, campaigns, forms, sendingDomains } from "../db/schema";
+import type { AutomationListRow, AutomationTriggerKind } from "../lib/automation-types";
 import { resolveFormDesign } from "../lib/form-design";
+import { enrollmentCountsByAutomation } from "../services/automations";
 import { parseScopes } from "./v1/scopes";
 
 // The read side of the list pages, in one place.
@@ -93,6 +95,61 @@ export async function listForms(db: Db, accountId: string) {
     ...f,
     design: resolveFormDesign(f.design),
     audienceName: audienceName.get(f.audienceId) ?? null,
+  }));
+}
+
+// Automations, newest first, archived hidden (archive is the app's delete; a
+// deleted flow reappearing in the list would read as a bug). Enrollment counts
+// come from one grouped query over automation_enrollments rather than five
+// correlated subqueries per row.
+export async function listAutomations(db: Db, accountId: string): Promise<AutomationListRow[]> {
+  const rows = await db
+    .select({
+      id: automations.id,
+      name: automations.name,
+      status: automations.status,
+      triggerKind: automations.triggerKind,
+      audienceId: automations.audienceId,
+      sandbox: automations.sandbox,
+      createdAt: automations.createdAt,
+      updatedAt: automations.updatedAt,
+      // Written literally for the same reason as listCampaigns: an interpolated
+      // column renders unqualified inside the subquery and loses the correlation.
+      audienceName: sql<string>`(
+        SELECT name FROM audiences a WHERE a.id = automations.audience_id
+      )`.as("audienceName"),
+      liveVersion: sql<number | null>`(
+        SELECT v.version FROM automation_versions v WHERE v.id = automations.live_version_id
+      )`.as("liveVersion"),
+    })
+    .from(automations)
+    .where(and(eq(automations.accountId, accountId), ne(automations.status, "archived")))
+    .orderBy(desc(automations.createdAt), desc(automations.id));
+
+  const counts = await enrollmentCountsByAutomation(
+    db,
+    accountId,
+    rows.map((r) => r.id),
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    status: r.status,
+    triggerKind: r.triggerKind as AutomationTriggerKind,
+    audienceId: r.audienceId,
+    audienceName: r.audienceName ?? "",
+    liveVersion: r.liveVersion === null ? null : Number(r.liveVersion),
+    sandbox: r.sandbox,
+    counts: counts.get(r.id) ?? {
+      active: 0,
+      sending: 0,
+      completed: 0,
+      exited: 0,
+      failed: 0,
+      total: 0,
+    },
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
   }));
 }
 

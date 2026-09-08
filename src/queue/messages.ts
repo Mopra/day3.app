@@ -37,6 +37,18 @@ export const queueMessageSchema = z.discriminatedUnion("type", [
   // stored row (endpoint, signed payload, attempt count) from Postgres.
   // Idempotent via the row's status ledger — only a `pending` row is delivered.
   z.object({ type: z.literal("deliver_webhook"), deliveryId: id, accountId: id }),
+  // Automations (docs/automations-design.md §5). All ID-only; Postgres holds
+  // every wait as automation_enrollments.next_run_at, never a delayed job.
+  //   automation_tick: the 60s dispatcher (a repeatable scheduler job). Claims
+  //     due enrollments round-robin by account and advances them; it never sends.
+  //   advance_automation_enrollment: the immediate path after enrollment or a
+  //     "run now", so a zero-wait welcome email leaves in seconds. Idempotent:
+  //     the handler re-reads the row and does nothing unless it is due.
+  //   send_automation_node: one enrollment's send node. Duplicate-safe via the
+  //     (enrollment, node, visit) unique key on the shared send ledger.
+  z.object({ type: z.literal("automation_tick") }),
+  z.object({ type: z.literal("advance_automation_enrollment"), enrollmentId: id, accountId: id }),
+  z.object({ type: z.literal("send_automation_node"), enrollmentId: id, accountId: id }),
 ]);
 export type QueueMessage = z.infer<typeof queueMessageSchema>;
 
@@ -88,7 +100,13 @@ export function laneCountFor(pending: number): number {
 // The single BullMQ queue both tiers share: the web tier (producer) adds jobs,
 // the VPS worker (consumer) processes them. Kept here (no bullmq import) so both
 // sides reference the same name without pulling in the driver.
-export const QUEUE_NAME = "day3-jobs";
+//
+// Overridable so a developer machine can run its own web tier AND its own worker
+// against the shared Redis without either side touching production's jobs: set
+// QUEUE_NAME=day3-jobs-dev in both .env.local and .env.worker. Without it a job
+// enqueued from localhost is consumed by the production worker (which, until the
+// same code is deployed there, dead-letters anything it does not recognise).
+export const QUEUE_NAME = process.env.QUEUE_NAME?.trim() || "day3-jobs";
 
 // Per-type BullMQ priority (lower number = processed sooner). Transactional
 // emails (password resets, receipts) must never wait behind a big campaign

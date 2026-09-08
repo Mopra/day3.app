@@ -57,6 +57,7 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
   // someone made rather than one they inherited.
   const [canSend, setCanSend] = useState(false);
   const [canManageWebhooks, setCanManageWebhooks] = useState(false);
+  const [canEnroll, setCanEnroll] = useState(false);
   const [creating, setCreating] = useState(false);
   // The one-time reveal: set right after create, cleared when dismissed.
   const [freshKey, setFreshKey] = useState<string | null>(null);
@@ -128,6 +129,11 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
                   {k.scopes?.includes("webhooks:manage") && (
                     <Badge variant="secondary" className="text-xs">
                       Can manage webhooks
+                    </Badge>
+                  )}
+                  {k.scopes?.includes("automations:enroll") && (
+                    <Badge variant="secondary" className="text-xs">
+                      Can enroll in automations
                     </Badge>
                   )}
                 </div>
@@ -247,6 +253,22 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
                     </span>
                   </span>
                 </label>
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2.5 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 size-4 accent-primary"
+                    checked={canEnroll}
+                    onChange={(e) => setCanEnroll(e.target.checked)}
+                  />
+                  <span>
+                    <span className="font-medium">Allow enrolling in automations</span>
+                    <span className="block text-muted-foreground">
+                      Lets this key add a contact to a live automation from your own backend, for
+                      example when a trial starts. Enrolling someone sends them every email in the
+                      flow, so treat it like sending.
+                    </span>
+                  </span>
+                </label>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setCreateOpen(false)}>
@@ -262,6 +284,7 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
                         scopes: [
                           ...(canSend ? ["campaigns:send"] : []),
                           ...(canManageWebhooks ? ["webhooks:manage"] : []),
+                          ...(canEnroll ? ["automations:enroll"] : []),
                         ],
                       });
                       setFreshKey(res.key);

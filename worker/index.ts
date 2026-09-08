@@ -37,6 +37,14 @@ const SWEEP_SCHEDULER = "cron-15min";
 // the default, not spin up a NaN-concurrency worker.
 const CONCURRENCY = envInt("WORKER_CONCURRENCY", 8, 1, 64);
 
+// The automation dispatcher tick (docs/automations-design.md §5.2). Its own
+// repeatable job, not a branch of the 15-minute sweep: a welcome email that
+// arrives up to 15 minutes after signup reads as broken. Bounded at 15s so a
+// typo cannot turn it into a hot loop, and at 10 min so it stays a dispatcher
+// rather than a batch.
+const AUTOMATION_TICK_SCHEDULER = "automation-tick";
+const AUTOMATION_TICK_SECONDS = envInt("AUTOMATION_TICK_SECONDS", 60, 15, 600);
+
 function makeConnection(): IORedis {
   const url = process.env.REDIS_URL;
   if (!url) throw new Error("REDIS_URL is not set");
@@ -176,6 +184,24 @@ await queue.upsertJobScheduler(
   { name: SWEEP_JOB, data: {} },
 );
 logger.info("cron sweep scheduled", { scheduler: SWEEP_SCHEDULER, pattern: "every 15 min" });
+
+// The tick is an ordinary queue message (type: automation_tick) so it routes
+// through handleQueueMessage like everything else. attempts: 1 because the next
+// tick IS the retry; a failed pass is dead-lettered into job_logs where it is
+// visible instead of retried five times on top of the following tick.
+await queue.upsertJobScheduler(
+  AUTOMATION_TICK_SCHEDULER,
+  { every: AUTOMATION_TICK_SECONDS * 1000 },
+  {
+    name: "automation_tick",
+    data: { type: "automation_tick" } satisfies QueueMessage,
+    opts: { priority: jobPriorityFor("automation_tick"), attempts: 1 },
+  },
+);
+logger.info("automation tick scheduled", {
+  scheduler: AUTOMATION_TICK_SCHEDULER,
+  everySeconds: AUTOMATION_TICK_SECONDS,
+});
 
 // Worker liveness signal: write a Redis heartbeat now and on an interval. The
 // /api/health endpoint on the web tier reads this key to detect a dead worker

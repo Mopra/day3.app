@@ -40,6 +40,14 @@ stay in the app UI. Receiver contract and the signature algorithm:
 `test/webhooks.test.ts`, `test/v1-webhooks-route.test.ts`,
 `test/webhook-signature.test.ts`, `test/webhook-url.test.ts`.
 
+**Added 2026-09-08: automations** (§2.7): `GET /v1/automations` lists the
+workspace's flows and `POST /v1/automations/{id}/enroll` puts one contact into a
+live one from the caller's own backend ("trial started", "feature never used").
+Enrolling is gated on a third scope, `automations:enroll`: it puts mail in a
+stranger's inbox on the flow's own schedule. The graph, settings and enrollment
+list stay app-only in Phase 1 (`docs/automations-design.md` §9). Tests:
+`test/automations-api.test.ts`, `test/automations-service.test.ts`.
+
 ---
 
 ## 1. Fundamentals
@@ -82,8 +90,14 @@ Authorization: Bearer day3_live_x7Kj9mP2...
 - **Schema**: new `api_keys` table — `id`, `account_id`, `name`, `key_hash`,
   `key_prefix`, `created_by` (Clerk user id), `last_used_at` (updated at most
   once/minute to avoid write amplification), `revoked_at`, `created_at`.
-- **Scopes**: v1 ships a single implicit scope (full audience access). The
-  column can be added later; the create endpoint takes no `scopes` param yet.
+- **Scopes**: the base grant covers reading and writing content (audiences,
+  contacts, fields, segments, topics, campaign drafts). Three opt-in scopes
+  exist, each for an action whose blast radius leaves the account and cannot be
+  undone: `campaigns:send` (send or schedule a campaign), `webhooks:manage`
+  (endpoints are a standing feed of every address mailed), and
+  `automations:enroll` (enrolling someone commits to sending them a whole flow).
+  Scopes are chosen when a key is minted and never edited; a key without one gets
+  `403 insufficient_scope` naming the fix. See `src/api/v1/scopes.ts`.
 - **Management**: keys are created/revoked in the web app on the **API keys**
   page, admin-role only. No key-management endpoints in the public API itself (a
   key must not be able to mint keys).
@@ -611,6 +625,74 @@ suppression export — silently makes the whole audience unmailable). Guardrails
 - Suppressing an email does **not** delete existing contact rows; those
   contacts simply become unmailable (and batch/create for that email returns
   `409 email_suppressed`), matching internal behavior.
+
+### 2.7 Automations
+
+```
+GET  /v1/automations                    list, newest first; ?status=, ?limit=, ?after=
+POST /v1/automations/{id}/enroll        enroll one contact (scope: automations:enroll)
+```
+
+An automation is a published flow (welcome series, trial onboarding) that a
+contact runs through on the flow's own schedule. The canvas, settings, versions
+and enrollment list are app-only in Phase 1; the API exposes exactly what an
+integrator needs to fire a flow from their own backend.
+
+Automation object:
+
+```json
+{
+  "id": "aut_...", "object": "automation",
+  "name": "Trial onboarding",
+  "status": "active",              // draft | active | paused | archived
+  "trigger": "api",                // audience_join | api
+  "audience_id": "aud_...",
+  "live_version": 2,               // null until first published
+  "sandbox": false,                // true when published by a free org (members only)
+  "created_at": "2026-09-01T08:00:00.000Z",
+  "updated_at": "2026-09-08T10:00:00.000Z"
+}
+```
+
+`trigger` says whether the flow also starts on its own: `audience_join` fires as
+people become subscribed in the audience, `api` only when this endpoint (or the
+app's manual enroll) is called. Both accept `/enroll`. The list needs no scope
+(it names flows, not people) and hides `archived` unless `?status=archived`.
+
+**`POST /v1/automations/{id}/enroll`** requires the `automations:enroll` scope.
+
+```json
+{ "email": "jane@acme.com",
+  "attributes": { "trial_ends": "2026-09-15", "plan": "trial" } }   // optional
+```
+
+- The contact must be `subscribed` in the automation's audience. When
+  `attributes` is present the contact is created (or, if it exists, its
+  attributes shallow-merged) first, under exactly the rules of
+  `POST /v1/audiences/{id}/contacts?upsert=true`: keys auto-register as fields,
+  a `null` value deletes a key, a suppressed address is `409 email_suppressed`,
+  and a new contact counts against the free-tier cap (`403 plan_limit_reached`).
+  Without `attributes` a missing contact is reported, never created, so enrolling
+  can never quietly grow a list.
+- The automation must be `active`; anything else is `409 invalid_request` with a
+  message saying to publish or resume it in Day3.
+- Response `200`:
+
+```json
+{ "object": "enrollment_result", "outcome": "enrolled", "enrollment_id": "aen_..." }
+```
+
+`outcome` is one of `enrolled`, `already_enrolled` (re-entry mode refused a
+second run), `not_subscribed` (missing, unsubscribed, bounced or pending in the
+audience), `suppressed`, `entry_filter_no_match`, `sandbox_not_member` (a free
+org may only enroll its own members), `automation_not_active`, `wrong_audience`.
+Only `enrolled` made a row; every other outcome is a `200` because the request
+was valid and the answer is data, not an error.
+
+- `Idempotency-Key` supported. A retried enroll with the same key replays the
+  stored outcome rather than evaluating re-entry a second time.
+- Enrollment emails draw on the plan's monthly email allowance through the same
+  `reserveQuota()` as campaigns; the free tier runs the flow in sandbox mode.
 
 ---
 

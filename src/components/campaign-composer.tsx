@@ -281,13 +281,25 @@ export type CampaignFormValues = {
   theme: CampaignTheme;
 };
 
+// What the composer is editing. A campaign owns everything on the page; an
+// automation send node owns only the message (subject, preview text, body): its
+// From identity, audience, topic, theme and footer live on the automation, so in
+// that mode those header rows are hidden rather than shown as dead controls.
+export type ComposerVariant = "campaign" | "automation-node";
+
 export function CampaignComposer({
   initial,
+  initialValues,
+  variant = "campaign",
   onAutosave,
   titleBadge,
   titleActions,
 }: {
   initial?: Campaign;
+  // Seed values for a composer that is not editing a campaign row (an automation
+  // send node). Ignored when `initial` is given. `name` is shown as a static title.
+  initialValues?: Partial<CampaignFormValues>;
+  variant?: ComposerVariant;
   // Called a beat after each edit to persist the draft (partial drafts are fine).
   // This is the only save mechanism — there is no manual Save button. Should save
   // quietly (no toast/navigation churn). Omit to disable autosave.
@@ -298,6 +310,7 @@ export function CampaignComposer({
   titleActions?: ReactNode;
 }) {
   const api = useApi();
+  const nodeMode = variant === "automation-node";
   // AI availability + the org's budget live in a shared context so the single
   // budget meter (in the sidebar) and this composer stay in sync. We refresh it
   // after each AI action and disable the AI buttons when the budget is spent.
@@ -341,7 +354,9 @@ export function CampaignComposer({
   // Open by default for a brand-new campaign (structure to start from beats a blank
   // canvas, and it's the one "this already looks good" moment available on the free
   // tier, which carries no AI allowance); dismissible, and reopenable from the toolbar.
-  const [templatesOpen, setTemplatesOpen] = useState(!initial);
+  const [templatesOpen, setTemplatesOpen] = useState(
+    !initial && !initialValues?.htmlBody?.trim(),
+  );
   // A template picked while the body already had content — held until the user
   // confirms, since applying one replaces the whole body and theme.
   const [pendingTemplate, setPendingTemplate] = useState<CampaignTemplate | null>(null);
@@ -379,11 +394,16 @@ export function CampaignComposer({
   // memoized so we don't mint new section ids on every render.
   const initialSections = useMemo(
     () =>
-      !initial
-        ? starterSections()
-        : initial.sections && initial.sections.length > 0
+      initial
+        ? initial.sections && initial.sections.length > 0
           ? initial.sections
-          : htmlBodyToSections(initial.htmlBody),
+          : htmlBodyToSections(initial.htmlBody)
+        : initialValues?.sections && initialValues.sections.length > 0
+          ? initialValues.sections
+          : initialValues?.htmlBody?.trim()
+            ? htmlBodyToSections(initialValues.htmlBody)
+            : starterSections(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [initial],
   );
 
@@ -420,11 +440,12 @@ export function CampaignComposer({
             fromName: "",
             fromEmail: "",
             replyTo: "",
-            sections: initialSections,
-            htmlBody: serializeSections(initialSections),
             textBody: "",
             footerText: DEFAULT_FOOTER_TEXT,
-            theme: { ...DEFAULT_THEME },
+            ...initialValues,
+            sections: initialSections,
+            htmlBody: serializeSections(initialSections),
+            theme: initialValues?.theme ?? { ...DEFAULT_THEME },
           },
     });
 
@@ -882,21 +903,27 @@ export function CampaignComposer({
             sizer span mirrors the text) so the status badge hugs the title
             instead of being pushed to the far edge by a flex-1 field. */}
         <div className="flex min-w-0 items-center gap-x-3">
-          <div className="grid max-w-full items-center text-2xl font-semibold tracking-tight">
-            <span
-              aria-hidden
-              className="invisible col-start-1 row-start-1 min-w-[8rem] max-w-full whitespace-pre sm:min-w-[12rem]"
-            >
-              {name?.trim() ? name : "Untitled campaign"}
-            </span>
-            <input
-              aria-label="Campaign name"
-              size={1}
-              className="col-start-1 row-start-1 w-full min-w-0 border-0 bg-transparent p-0 outline-none placeholder:text-muted-foreground/40 focus:outline-none focus-visible:outline-none focus-visible:ring-0"
-              placeholder="Untitled campaign"
-              {...register("name")}
-            />
-          </div>
+          {nodeMode ? (
+            <h2 className="min-w-0 truncate text-2xl font-semibold tracking-tight">
+              {name?.trim() || "Email"}
+            </h2>
+          ) : (
+            <div className="grid max-w-full items-center text-2xl font-semibold tracking-tight">
+              <span
+                aria-hidden
+                className="invisible col-start-1 row-start-1 min-w-[8rem] max-w-full whitespace-pre sm:min-w-[12rem]"
+              >
+                {name?.trim() ? name : "Untitled campaign"}
+              </span>
+              <input
+                aria-label="Campaign name"
+                size={1}
+                className="col-start-1 row-start-1 w-full min-w-0 border-0 bg-transparent p-0 outline-none placeholder:text-muted-foreground/40 focus:outline-none focus-visible:outline-none focus-visible:ring-0"
+                placeholder="Untitled campaign"
+                {...register("name")}
+              />
+            </div>
+          )}
           {titleBadge}
         </div>
         {/* Test / Schedule / Submit & send is ~320px of buttons — more than a
@@ -1080,6 +1107,7 @@ export function CampaignComposer({
               : undefined,
         }}
       >
+        {!nodeMode && (
         <HeaderRow label="From" htmlFor="senderSelect">
           {senders.length > 0 ? (
             <Select
@@ -1132,7 +1160,9 @@ export function CampaignComposer({
             </button>
           )}
         </HeaderRow>
+        )}
 
+        {!nodeMode && (
         <HeaderRow label="Reply-To" htmlFor="replyTo">
           <Input
             id="replyTo"
@@ -1142,7 +1172,9 @@ export function CampaignComposer({
             {...register("replyTo")}
           />
         </HeaderRow>
+        )}
 
+        {!nodeMode && (
         <HeaderRow label="To">
           <Select
             items={audienceItems}
@@ -1200,8 +1232,9 @@ export function CampaignComposer({
             </>
           )}
         </HeaderRow>
+        )}
 
-        {audienceTopics.length > 0 && (
+        {!nodeMode && audienceTopics.length > 0 && (
           <HeaderRow label="Topic">
             <Select
               items={{
@@ -1371,10 +1404,20 @@ export function CampaignComposer({
             aria-label="Footer text"
             rows={2}
             placeholder={DEFAULT_FOOTER_TEXT}
+            readOnly={nodeMode}
             className="resize-none border-0 bg-transparent px-0 text-xs text-muted-foreground shadow-none focus-visible:ring-0 dark:bg-transparent"
             {...register("footerText")}
           />
           <div className="mt-1.5 space-y-1 text-xs text-muted-foreground/70">
+            {nodeMode && (
+              <p className="flex items-center gap-1.5">
+                <Lock className="size-3 shrink-0" />
+                <span>
+                  Footer wording is shared by every email in this automation. Change it in
+                  Settings.
+                </span>
+              </p>
+            )}
             {companyNameDefault ? (
               <p className="flex flex-wrap items-center gap-1.5 text-amber-600 dark:text-amber-500">
                 <AlertTriangle className="size-3 shrink-0" />
@@ -1439,7 +1482,7 @@ export function CampaignComposer({
       </div>
       </div>
 
-      {(audiences.length === 0 || domains.length === 0) && (
+      {!nodeMode && (audiences.length === 0 || domains.length === 0) && (
         <p className="text-xs text-muted-foreground">
           {audiences.length === 0 && (
             <>

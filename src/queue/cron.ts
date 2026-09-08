@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, lt, or, sql } 
 import type { Db } from "../db/client";
 import {
   accounts,
+  automationEnrollments,
   campaignRecipients,
   campaigns,
   jobLogs,
@@ -151,6 +152,91 @@ export async function sweepTransactionalEmails(
   }
 
   return { failed: stuck.length + givenUp.length, requeued: stale.length };
+}
+
+// Automation enrollments need the same two recoveries as the send ledger.
+//
+//   1. `sending` with a stale lock: the send job died between claiming the
+//      enrollment and moving its cursor. The email may or may not have left
+//      (the ledger row, if one exists, is failed by failStuckRecipients on the
+//      same sweep), so the enrollment becomes `failed` with the reason on
+//      lastError, and NEVER goes back to `active`: re-dispatching the node could
+//      mail the same person twice. Same window, same rule as campaigns.
+//   2. `active` and due for longer than a tick could plausibly miss: the
+//      backstop for a lost advance job or a tick that ran out of budget. The
+//      advance handler is a no-op unless the row is still due, so re-enqueueing
+//      every sweep is harmless.
+const AUTOMATION_BACKSTOP_MS = 5 * 60 * 1000;
+const AUTOMATION_BACKSTOP_PAGE = 500;
+export async function sweepAutomationEnrollments(
+  db: Db,
+  jobsQueue: JobQueue,
+  now: Date,
+): Promise<{ failed: number; requeued: number }> {
+  const lockCutoff = new Date(now.getTime() - STUCK_LOCK_MINUTES * 60 * 1000).toISOString();
+  const stuck = await db
+    .update(automationEnrollments)
+    .set({
+      status: "failed",
+      lastError: "send did not complete (stuck lock)",
+      lockedAt: null,
+      updatedAt: nowIso(),
+    })
+    .where(
+      and(eq(automationEnrollments.status, "sending"), lt(automationEnrollments.lockedAt, lockCutoff)),
+    )
+    .returning({ id: automationEnrollments.id });
+
+  // A failed enrollment can leave a `pending` ledger row behind: the send
+  // handler gives the row back on a provably-unsent provider result and throws
+  // for BullMQ to retry, so when the retries run out the row stays pending with
+  // nobody left to claim it. Resolve it so the canvas does not count it as
+  // in-flight forever. Its reservation (if one is still held) is left alone: a
+  // pending row cannot say whether the handler released it, and over-counting
+  // is the accepted safe side of the quota ledger.
+  if (stuck.length > 0) {
+    await db
+      .update(campaignRecipients)
+      .set({
+        status: "failed",
+        error: "enrollment failed before the send was attempted (stuck lock)",
+        updatedAt: nowIso(),
+      })
+      .where(
+        and(
+          inArray(
+            campaignRecipients.automationEnrollmentId,
+            stuck.map((s) => s.id),
+          ),
+          eq(campaignRecipients.status, "pending"),
+        ),
+      );
+  }
+
+  const dueCutoff = new Date(now.getTime() - AUTOMATION_BACKSTOP_MS).toISOString();
+  const overdue = await db
+    .select({ id: automationEnrollments.id, accountId: automationEnrollments.accountId })
+    .from(automationEnrollments)
+    .where(
+      and(eq(automationEnrollments.status, "active"), lt(automationEnrollments.nextRunAt, dueCutoff)),
+    )
+    .orderBy(asc(automationEnrollments.nextRunAt))
+    .limit(AUTOMATION_BACKSTOP_PAGE);
+  let requeued = 0;
+  for (const row of overdue) {
+    try {
+      await jobsQueue.send({
+        type: "advance_automation_enrollment",
+        enrollmentId: row.id,
+        accountId: row.accountId,
+      });
+      requeued += 1;
+    } catch (err) {
+      // Next sweep (or the next tick) picks it up.
+      console.error(`[cron] automation advance re-enqueue failed for ${row.id}:`, err);
+    }
+  }
+  return { failed: stuck.length, requeued };
 }
 
 // Storage hygiene: transactional bodies are full HTML documents; after the
@@ -908,6 +994,10 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
   await stage("reconcile", () => reconcileSendingCampaigns(db, queue));
   const rescued = (await stage("rescue_pipeline", () => rescueStuckPipelineCampaigns(db, queue, now))) ?? 0;
   const webhooks = (await stage("webhook_deliveries", () => sweepWebhookDeliveries(db, queue, now))) ?? 0;
+  const automation = (await stage("automations", () => sweepAutomationEnrollments(db, queue, now))) ?? {
+    failed: 0,
+    requeued: 0,
+  };
 
   // SES re-check only when this process has SES configured. Two passes: domains
   // still working towards verification, and (far more slowly) domains that got
@@ -944,6 +1034,8 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
       domainsVerified,
       domainsRegressed,
       webhooks,
+      automationFailed: automation.failed,
+      automationRequeued: automation.requeued,
       daily: isDaily,
     },
   });

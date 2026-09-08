@@ -5,7 +5,12 @@
 // worker (campaigns silently stop sending) is detected before customers notice.
 import type { Redis } from "ioredis";
 
-export const HEARTBEAT_KEY = "day3:worker:heartbeat";
+// Namespaced by queue when QUEUE_NAME is overridden (a dev worker on the shared
+// Redis must not report the production worker alive), plain on the default so
+// the key production monitors already read is unchanged.
+const queueName = process.env.QUEUE_NAME?.trim() || "day3-jobs";
+export const HEARTBEAT_KEY =
+  queueName === "day3-jobs" ? "day3:worker:heartbeat" : `day3:worker:heartbeat:${queueName}`;
 
 // How often the worker writes its heartbeat.
 export const HEARTBEAT_INTERVAL_MS = 30_000;

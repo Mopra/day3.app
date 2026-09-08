@@ -630,6 +630,17 @@ Campaigns (newsletters — one email to a whole audience)
   at least a minute ahead. Same scope, same consequences, just later.
 - \`DELETE /campaigns/{id}/schedule\` — back to draft. Needs no scope.
 
+Automations (published flows a contact runs through; built in the app, driven here)
+- \`GET  /automations\`: list, newest first. \`trigger\` is \`audience_join\` or \`api\`;
+  only \`status: "active"\` flows accept enrollments.
+- \`POST /automations/{id}/enroll\`: body \`{ "email": "jane@acme.com", "attributes": {...} }\`.
+  Enrolls one contact in an active flow from your own backend (trial started, plan
+  changed, and so on). With \`attributes\` an unknown contact is created in the flow's
+  audience first, as \`subscribed\`. Requires a key with the \`automations:enroll\` scope,
+  because it puts mail in a stranger's inbox. Response
+  \`{ "outcome": "enrolled" | "already_enrolled" | "not_subscribed" | "sandbox_not_member" | ..., "enrollment_id" }\`.
+  Only \`enrolled\` created a run; the others explain why not. Honors \`Idempotency-Key\`.
+
 Suppressions (account-wide, not per audience)
 - \`GET  /suppressions\` — list
 - \`GET  /suppressions/{email}\` — 200 with the reason, or 404 if not suppressed

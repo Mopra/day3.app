@@ -135,3 +135,61 @@ export function campaignStatusTone(status: string): CampaignBadgeTone {
       return "neutral"; // draft
   }
 }
+
+// Automation lifecycle statuses and the enrollment statuses of the people inside
+// one. Kept beside the campaign labels so the two lists read as one product:
+// "Active" means the same thing on both.
+const AUTOMATION_STATUS_LABELS: Record<string, string> = {
+  draft: "Draft",
+  active: "Active",
+  paused: "Paused",
+  archived: "Archived",
+};
+
+export function automationStatusLabel(status: string): string {
+  return AUTOMATION_STATUS_LABELS[status] ?? cap(statusLabel(status));
+}
+
+// Same tone vocabulary as campaignStatusTone: olive for "running and healthy",
+// clay for "mail is not flowing and you did that", plain grey for a draft, an
+// outline for the archive so it recedes without disappearing.
+export function automationStatusTone(status: string): CampaignBadgeTone {
+  switch (status) {
+    case "active":
+      return "success";
+    case "paused":
+      return "destructive";
+    case "archived":
+      return "info";
+    default:
+      return "neutral"; // draft
+  }
+}
+
+// An enrollment is one person's trip through an automation. "active" covers both
+// running and sleeping on a wait, which to the reader is simply "in progress".
+const ENROLLMENT_STATUS_LABELS: Record<string, string> = {
+  active: "In progress",
+  sending: "Sending",
+  completed: "Completed",
+  exited: "Exited",
+  failed: "Failed",
+};
+
+export function enrollmentStatusLabel(status: string): string {
+  return ENROLLMENT_STATUS_LABELS[status] ?? cap(statusLabel(status));
+}
+
+export function enrollmentStatusTone(status: string): CampaignBadgeTone {
+  switch (status) {
+    case "active":
+    case "sending":
+      return "progress";
+    case "completed":
+      return "success";
+    case "failed":
+      return "destructive";
+    default:
+      return "neutral"; // exited
+  }
+}

@@ -9,7 +9,7 @@ import { ApiError } from "./errors";
 // column changed nothing for keys already in the wild.
 //
 // A scope exists for one reason: an action whose blast radius reaches outside
-// this account and cannot be undone. There are two.
+// this account and cannot be undone. There are three.
 //
 //   campaigns:send — submit, schedule, or send a campaign to its audience.
 //
@@ -38,8 +38,15 @@ import { ApiError } from "./errors";
 // The signing secret is NOT readable over the API at any scope — reveal and
 // rotate stay in the app UI behind a session. A leaked key that could read the
 // secret could forge our events into the customer's own receiver.
+//
+//   automations:enroll: enroll a contact in a live automation.
+//
+// Same reasoning as campaigns:send: it puts mail in a stranger's inbox. An
+// enrollment is a promise to send that contact every email in the flow, on the
+// flow's own schedule, with no further call from the key holder. Reading the
+// automation list needs no scope (it names flows, not people).
 
-export const API_SCOPES = ["campaigns:send", "webhooks:manage"] as const;
+export const API_SCOPES = ["campaigns:send", "webhooks:manage", "automations:enroll"] as const;
 export type ApiScope = (typeof API_SCOPES)[number];
 
 export function isApiScope(value: string): value is ApiScope {
@@ -68,6 +75,15 @@ export function keyHasScope(key: Pick<ApiKey, "scopes">, scope: ApiScope): boole
   return parseScopes(key.scopes).includes(scope);
 }
 
+// What the human has to switch on when minting the replacement key, per scope.
+const SCOPE_FIX: Record<ApiScope, string> = {
+  "campaigns:send": "Sending is off by default: create a new key with sending enabled in Day3 under API keys.",
+  "webhooks:manage":
+    "Webhook management is off by default: create a new key with webhooks enabled in Day3 under API keys.",
+  "automations:enroll":
+    "Enrolling is off by default: create a new key with automation enrollment enabled in Day3 under API keys.",
+};
+
 // Guard for a scoped route. The message names the fix (mint a key that has it)
 // because the caller is often an agent relaying the error to a human who has to
 // go and do exactly that.
@@ -76,6 +92,6 @@ export function requireScope(key: Pick<ApiKey, "scopes">, scope: ApiScope): void
   throw new ApiError(
     403,
     "insufficient_scope",
-    `This API key is missing the \`${scope}\` scope. Sending is off by default: create a new key with sending enabled in Day3 under API keys.`,
+    `This API key is missing the \`${scope}\` scope. ${SCOPE_FIX[scope]}`,
   );
 }

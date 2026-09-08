@@ -11,6 +11,7 @@ import { safeParseSegmentFilter, segmentFilterCondition } from "@/lib/segment-fi
 import { isEmailSuppressed } from "@/services/suppression";
 import { registerAudienceFields } from "@/services/audience-fields";
 import { subscriberHeadroom, subscriberLimitMessage } from "@/services/subscriber-limit";
+import { enrollAudienceJoin } from "@/services/automation-enroll";
 
 const ListSubscribersSchema = z.object({
   status: z.string().optional(),
@@ -121,5 +122,12 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
   if (inserted.length === 0) {
     throw new HttpError(409, "This email is already in the audience");
   }
+  // A manual add is an audience join. Best-effort, after the write; the hook
+  // enqueues through the web tier's producer queue and never throws.
+  await enrollAudienceJoin(db, null, {
+    accountId: account.id,
+    audienceId: audience.id,
+    subscriberIds: [inserted[0].id],
+  });
   return json({ ok: true, id: inserted[0].id }, 201);
 });

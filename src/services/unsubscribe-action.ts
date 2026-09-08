@@ -27,15 +27,13 @@ export async function applyUnsubscribe(
       .where(eq(subscribers.id, subscriber.id));
   }
 
-  await addSuppression(db, {
-    accountId: payload.accountId,
-    email: payload.email,
-    reason: "unsubscribe",
-    source: payload.campaignId ?? "unsubscribe-page",
-  });
-
+  // The ledger row (shared by campaign and automation sends) is what says which
+  // campaign or automation the unsubscribe belongs to; the token carries only
+  // the row id for automation mail.
+  let ledger: { campaignId: string | null; automationId: string | null; automationNodeKey: string | null } | null =
+    null;
   if (payload.campaignRecipientId) {
-    await db
+    const [row] = await db
       .update(campaignRecipients)
       .set({ status: "unsubscribed", unsubscribedAt: now, updatedAt: now })
       .where(
@@ -43,14 +41,29 @@ export async function applyUnsubscribe(
           eq(campaignRecipients.id, payload.campaignRecipientId),
           eq(campaignRecipients.accountId, payload.accountId),
         ),
-      );
+      )
+      .returning({
+        campaignId: campaignRecipients.campaignId,
+        automationId: campaignRecipients.automationId,
+        automationNodeKey: campaignRecipients.automationNodeKey,
+      });
+    ledger = row ?? null;
   }
+
+  await addSuppression(db, {
+    accountId: payload.accountId,
+    email: payload.email,
+    reason: "unsubscribe",
+    source: payload.campaignId ?? ledger?.automationId ?? "unsubscribe-page",
+  });
 
   await db.insert(emailEvents).values({
     id: newId("evt"),
     accountId: payload.accountId,
-    campaignId: payload.campaignId ?? null,
+    campaignId: payload.campaignId ?? ledger?.campaignId ?? null,
     campaignRecipientId: payload.campaignRecipientId ?? null,
+    automationId: ledger?.automationId ?? null,
+    automationNodeKey: ledger?.automationNodeKey ?? null,
     eventType: "unsubscribe",
     email: payload.email,
     provider: "ses",

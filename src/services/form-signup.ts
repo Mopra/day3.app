@@ -8,6 +8,7 @@ import type { JobQueue } from "../queue/messages";
 import { isEmailSuppressed } from "./suppression";
 import { countAccountSubscribers } from "./subscriber-limit";
 import { notifyAccountThrottled } from "./notifications";
+import { enrollAudienceJoin } from "./automation-enroll";
 
 // Every public signup surface (hosted page, iframe, raw HTML form, future API)
 // funnels through submitFormSignup. It is the single place a public signup is
@@ -128,6 +129,14 @@ export async function submitFormSignup(
       await enqueueConfirmation(queue, subscriberId, form.accountId);
       return { outcome: "pending", subscriberId };
     }
+    // Single opt-in: the row is `subscribed` now, so this is the audience join.
+    // Under double opt-in the join fires from confirmFormSignup instead.
+    await enrollAudienceJoin(db, queue, {
+      accountId: form.accountId,
+      audienceId: form.audienceId,
+      subscriberIds: [subscriberId],
+      formId: form.id,
+    });
     return { outcome: "subscribed", subscriberId };
   }
 
@@ -163,6 +172,12 @@ export async function submitFormSignup(
     .set({ status: "subscribed", confirmedAt: now, updatedAt: now })
     .where(eq(subscribers.id, existing.id));
   await bumpCounters(db, form.id, { submit: false, confirmed: true });
+  await enrollAudienceJoin(db, queue, {
+    accountId: form.accountId,
+    audienceId: form.audienceId,
+    subscriberIds: [existing.id],
+    formId: form.id,
+  });
   return { outcome: "subscribed", subscriberId: existing.id };
 }
 

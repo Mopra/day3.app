@@ -62,6 +62,8 @@ serves the UI and the API routes; a separate long-running Node worker
    (`src/api/v1/scopes.ts`). Everything else a key can do is the base grant.
    When you add a public endpoint, ask whether it puts mail in a stranger's
    inbox: if so it is scoped, if not it isn't. Test sends deliberately are not.
+   `POST /v1/automations/{id}/enroll` is scoped (`automations:enroll`) by that
+   test: it starts a flow of real mail to one address. `GET /v1/automations` is not.
 
 ## Page data loading
 
@@ -181,6 +183,29 @@ page share a single account lookup instead of one per caller.
   would throw on. `scripts/review-reputation-pauses.ts` re-adjudicates existing
   pauses; it judges over the account's whole history, not the trailing window,
   because a paused account's window is empty by construction.
+- **Automation waits live in Postgres, never as BullMQ delayed jobs.** A wait is
+  `automation_enrollments.next_run_at` plus the partial index on it; Redis only
+  carries ID-only "advance now" messages. A delayed job would break hard rule 2 (a
+  Redis flush silently drops every in-flight enrollment with nothing to rebuild
+  from) and a 5-day wait for 50k subscribers would be 50k durable Redis keys per
+  node. The 60 s `automation_tick` is the durable backstop; enrollment enqueues an
+  immediate `advance_automation_enrollment` for latency. Do not add a third clock.
+- **Quota exhaustion holds an automation enrollment, it never skips the node.**
+  `next_run_at` moves ~1 h out with `hold_reason` set (same for past_due /
+  sending disabled / risk-paused), because a late welcome email is recoverable
+  and a dropped one is not. The hold is bounded: past 7 days on one node the send
+  is written as `skipped` / `too_stale` and the cursor moves on, so an account
+  that upgrades weeks later does not blast a month of stale onboarding at once.
+  Keep both halves; most tools ship one.
+- **The dispatcher claims round-robin by account, not by a global
+  `ORDER BY next_run_at`.** With unlimited runs, one org importing 50k contacts
+  into a welcome flow would otherwise occupy every tick and starve every other
+  tenant's welcome email behind it. `automation_tick` takes at most
+  `AUTOMATION_TICK_PER_ACCOUNT` (2000) due enrollments per account per tick and
+  moves to the next account; the overflow is deferred to the next tick, never
+  dropped. That per-account cap is also the fair-use ceiling `PRODUCT.md §6.19`
+  publishes, so change the number in both places. Stuck `sending` enrollments
+  are swept to `failed`, never back to `active` (the campaign rule).
 - **Suppression is add-only everywhere except one route.** `POST /v1/suppressions`
   (and `addSuppressions`) only ever adds; the single undo is
   `DELETE /api/suppressions/{email}` behind a session (the Suppressions tab of

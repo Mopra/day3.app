@@ -54,3 +54,40 @@ features — migration copy in domain setup, suppression-list import (bulk-load
 into the existing `suppression_entries` machinery), domain warm-up ramping
 (daily caps reusing the send-batch pause/resume path), and a customer-facing
 "getting into the inbox" doc. Build order and open questions in the doc.
+
+---
+
+## Automations Phase 2 (after the 2026-09-08 Phase 1 ship)
+
+**Status:** not started · **Priority:** demand-driven; Phase 1 covers welcome, onboarding and win-back flows
+
+Phase 1 shipped the canvas with trigger / send / wait / branch / end nodes, audience-join
+and API-enroll triggers, versions, templates, People and Stats. Full rationale in
+[automations-design.md](automations-design.md) (§9 phasing, §11 open items). What is left,
+in rough build order:
+
+- **Wait-for-event node** (`wait_for`): wait up to N days for a click/open or a filter
+  match, exits `matched` / `timeout`. Implemented as a wait whose due time is the timeout
+  and whose condition is re-checked on each tick. The node a linear list cannot express.
+- **Split node** (`split`): percentage A/B by deterministic hash of the subscriber id,
+  with per-arm reporting on the Stats tab.
+- **Set field node** (`set_field`): write a `subscribers.attributes` value from the flow,
+  so loops and state machines work without a graph variable system.
+  All three are added to `AUTOMATION_NODE_KINDS`, `PORTS_BY_KIND` and the config union in
+  `src/lib/automation-graph.ts` together with the executor dispatch, never stubbed.
+- **Segment-join and topic-join triggers**: need the write-hook evaluator
+  (`evaluate_automation_triggers { subscriberId }` on every subscriber write, plus a
+  nightly bounded reconcile for date comparisons crossing midnight), design §6.2. The
+  schema enum already carries the values; the API and UI refuse them until this lands.
+- **Move in-flight people to a new version**: node keys are stable across versions, so
+  most cursors map cleanly; the action needs a count of unmappable cursors (their node was
+  deleted) and exits those with `version_retired`. Design §2.
+- **Redis-metered fair-use ceiling + "pinned at ceiling" notification**: Phase 1 enforces
+  fairness only with the dispatcher's per-account per-tick cap
+  (`AUTOMATION_TICK_PER_ACCOUNT`). Design §4.2 and §11 items 5 and 6.
+- **Rename `campaign_recipients`** (to `sends` or similar): it is the shared ledger for
+  campaign and automation mail (AGENTS.md gotcha). Mechanical but wide; best done in one
+  PR with nothing else in it.
+- Later, deliberately: date-field triggers, "describe the flow you want" AI graph
+  generation, and an HTTP-request node (needs its own design: SSRF surface, retries,
+  secret storage).

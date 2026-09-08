@@ -12,6 +12,9 @@ import { sendFormConfirmation } from "./handlers/send-form-confirmation";
 import { sendTransactionalEmail } from "./handlers/send-transactional";
 import { purgeAccount } from "./handlers/purge-account";
 import { deliverWebhook } from "./handlers/deliver-webhook";
+import { runAutomationTick } from "./handlers/automation-tick";
+import { advanceAutomationEnrollment } from "./handlers/automation-advance";
+import { sendAutomationNode } from "./handlers/automation-send";
 
 // Everything a queue handler can need, injected by the caller. The BullMQ worker
 // process (worker/index.ts) builds this once and routes every job through
@@ -53,6 +56,15 @@ function jobContext(message: QueueMessage): { entityType: string; entityId: stri
       return {
         entityType: "webhook_delivery",
         entityId: message.deliveryId,
+        accountId: message.accountId,
+      };
+    case "automation_tick":
+      return { entityType: "automation_tick", entityId: "tick" };
+    case "advance_automation_enrollment":
+    case "send_automation_node":
+      return {
+        entityType: "automation_enrollment",
+        entityId: message.enrollmentId,
         accountId: message.accountId,
       };
   }
@@ -123,6 +135,19 @@ async function dispatchQueueMessage(message: QueueMessage, deps: QueueDeps): Pro
       });
     case "deliver_webhook":
       return deliverWebhook(message, { db, queue: deps.queue });
+    case "automation_tick":
+      await runAutomationTick({ db, queue: deps.queue, shouldAbort: deps.shouldAbort });
+      return;
+    case "advance_automation_enrollment":
+      return advanceAutomationEnrollment(message, { db, queue: deps.queue });
+    case "send_automation_node":
+      return sendAutomationNode(message, {
+        db,
+        queue: deps.queue,
+        emailProvider: deps.emailProvider,
+        appUrl: deps.appUrl,
+        unsubscribeSecret: deps.unsubscribeSecret,
+      });
     case "process_email_event":
       // Provider event ingestion is webhook-driven for now; this exists so
       // the message type is routed when async event processing is added.

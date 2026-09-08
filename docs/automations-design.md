@@ -1,25 +1,44 @@
 # Day3 Automations — design
 
-Status: **Phase 1 in progress** (design agreed 2026-08-03, build started
-2026-08-16).
+Status: **Phase 1 shipped 2026-09-08** (design agreed 2026-08-03, build started
+2026-08-16). `PRODUCT.md §6.19` is the product description; this document keeps
+the rationale.
 
-Landed so far:
+Landed:
 
-- `src/lib/automation-graph.ts` — the node vocabulary, per-kind config schemas,
-  publish validator, and the prose outline renderer. Database-free, like
-  `lib/segment-filter.ts`, so the canvas, the API and the worker all validate a
-  graph with one implementation.
-- Schema + `migrations/0031_sleepy_leader.sql` — `automations`,
+- `src/lib/automation-graph.ts`: the node vocabulary, per-kind config schemas,
+  publish validator (SCC cycle check), and the prose outline renderer.
+  Database-free, like `lib/segment-filter.ts`, so the canvas, the API and the
+  worker validate a graph with one implementation.
+- Schema + `migrations/0031_sleepy_leader.sql`: `automations`,
   `automation_versions`, `automation_nodes`, `automation_edges`,
-  `automation_enrollments`, plus the send-ledger and `email_events` changes
-  described in §3.
+  `automation_enrollments`, plus the shared-ledger and `email_events` changes in §3.
+- The tick engine (§5): `automation_tick` every 60 s, `advance_automation_enrollment`,
+  `send_automation_node`; waits in `next_run_at`; round-robin claim by account with
+  a per-account per-tick cap; quota holds with the 7-day staleness cutoff; loop
+  guards; stuck-`sending` sweep to `failed`.
+- Triggers (§6): audience join (form signup/confirm, manual add, CSV import,
+  `POST /v1/audiences/{id}/contacts`, optional form narrowing) and
+  `POST /v1/automations/{id}/enroll` behind the `automations:enroll` scope, plus
+  `GET /v1/automations`.
+- Session API under `/api/automations`: publish-time validation, per-send-node
+  risk review, the campaign gates (domain, address, plan), free tier in sandbox mode.
+- The canvas (§8): React Flow at `/automations/{id}`, node inspector, send nodes in
+  the composer, Publish dialog, People tab (Run now / Exit / Enroll a contact),
+  Stats tab with per-node counters and skips by reason, Settings tab.
+- Four templates: Welcome email, Welcome series, Trial onboarding, Win back.
+- Docs: `PRODUCT.md` (§2, §4, §5, §6.14, §6.19, §7.1, §9, §10.1), `AGENTS.md` gotchas.
 
-Still to build: the tick engine (§5), the triggers and enroll endpoint (§6), the
-canvas (§8), templates, and the `PRODUCT.md` updates in §10.
+Not landed, tracked in §11 and `docs/backlog.md`: the Phase 2 nodes and triggers
+(§9), cursor migration of in-flight enrollments to a new version (§2), the
+Redis-metered rate ceiling and the "pinned at ceiling" notification (§4.2), and
+the `campaign_recipients` rename (§3.1).
 
 Decided: a **node canvas with branches**, not a linear list. Automations and
-automation **runs are unlimited on every paid tier** — no per-tier metering —
-protected by a documented fair-use rate ceiling and hard loop guards instead.
+automation **runs are unlimited on every tier**, with no per-tier metering,
+protected by a documented fair-use ceiling and hard loop guards instead. In
+Phase 1 that ceiling is the dispatcher's per-account per-tick cap (§4.2), not the
+Redis limiter this document originally recommended.
 
 ### Corrections to this document, made during implementation
 
@@ -402,6 +421,22 @@ automation is running much faster than expected — this usually means a loop")
 plus an ops alert. In practice this fires on a misconfigured cycle, never on real
 usage.
 
+**As built (2026-09-08).** Phase 1 ships the ceiling as the dispatcher's
+per-account per-tick cap from §5.3, not as a Redis GCRA: `automation_tick`
+claims at most `AUTOMATION_TICK_PER_ACCOUNT` (default 2,000) due enrollments per
+account per `AUTOMATION_TICK_SECONDS` (default 60) tick, then moves to the next
+account, and anything over the cap waits for the next tick. That is 2,000 node
+executions per minute per org, well under the 10,000 recommended above, and it
+already has the property that matters: it defers and never drops, and there is
+no Redis in the path to blip. It has no burst allowance and no separate
+enrollments-per-minute figure: a 50k import enrolls in one pass and then drains
+at 2,000 people per minute. `PRODUCT.md §6.19` publishes the 2,000 figure,
+because §4.3 says to publish the number that is enforced. The Redis-metered
+ceiling with a burst budget, and the 15-minute "pinned at ceiling" notification
+plus ops alert, are follow-ups (§11, items 5 and 6); until they land, an org
+pinned at the cap is visible only as a growing backlog of due enrollments on the
+People tab.
+
 ### 4.3 Publish the number
 
 The ceiling goes in `PRODUCT.md` as a stated fair-use figure, not a hidden
@@ -751,5 +786,15 @@ their own and are being made now:
 3. **Should an automation target a segment directly** rather than an audience
    plus an entry filter? The filter covers it with one fewer concept, but "send
    this series to my Pro users" is how people say it out loud.
-4. **Tick cadence.** 60s proposed. 30s makes "immediate" feel instant even
-   without the enqueue-on-enroll shortcut, at double a trivial idle cost.
+4. ~~**Tick cadence.**~~ **Resolved (2026-09-08): 60 s**, as
+   `AUTOMATION_TICK_SECONDS`, with enqueue-on-enroll covering the immediate case.
+   Drop to 30 s only if the enqueue path proves unreliable in practice.
+5. **Redis-metered rate ceiling (§4.2).** Phase 1 enforces fairness with the
+   per-account per-tick cap only. The `lib/rate-limit.ts` GCRA with a burst
+   budget, failing open, is still worth adding once real load shows where the
+   per-tick cap bites: it would let one busy org burst past 2,000/min while other
+   tenants are idle, which a fixed per-tick cap cannot.
+6. **"Pinned at ceiling" notification (§4.2).** An org at the cap for 15
+   continuous minutes should be told ("an automation is running much faster than
+   expected, this usually means a loop") and ops alerted. Needs a per-account
+   deferred counter in the tick; not built.

@@ -8,6 +8,7 @@ import { canonicalizeEmail, isValidEmail } from "@/lib/csv";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { getSuppressedEmails } from "@/services/suppression";
 import { subscriberHeadroom, subscriberLimitMessage } from "@/services/subscriber-limit";
+import { enrollAudienceJoin } from "@/services/automation-enroll";
 
 // POST /api/audiences/[id]/subscribers/team — add every member of the
 // organization to this audience as a subscribed contact.
@@ -79,6 +80,14 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
     )
     .onConflictDoNothing()
     .returning({ id: subscribers.id });
+
+  // Each new member row is an audience join for the live automations on this
+  // audience (a welcome flow the team can watch arrive). Best-effort.
+  await enrollAudienceJoin(db, null, {
+    accountId: account.id,
+    audienceId: audience.id,
+    subscriberIds: inserted.map((r) => r.id),
+  });
 
   // `added` counts only the rows that were really new; the rest were already
   // contacts. The UI needs both numbers to say something true either way.

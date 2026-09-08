@@ -6,18 +6,24 @@ import {
   accountUsers,
   accounts,
   audiences,
+  automationEdges,
+  automationNodes,
+  automationVersions,
+  automations,
   campaigns,
   sendingDomains,
   senders,
   subscribers,
   type Account,
   type Audience,
+  type Automation,
   type Campaign,
   type Sender,
   type SendingDomain,
   type Subscriber,
 } from "../src/db/schema";
 import { newId, nowIso } from "../src/lib/ids";
+import type { AutomationGraph } from "../src/lib/automation-graph";
 import type { JobQueue, QueueMessage } from "../src/queue/messages";
 import type { ObjectStore, StoredObject } from "../src/lib/storage";
 import type { EmailProvider, SendEmailInput, SendEmailResult } from "../src/email/provider";
@@ -249,3 +255,101 @@ export const TEST_EMAILS = [
   "dana@example.com",
   "erik@example.com",
 ];
+
+/* ───────────────────────────── automations ────────────────────────────── */
+
+// A published automation with one live version holding `graph`. The rows mirror
+// what the publish route writes (version, nodes keyed by their stable key,
+// edges by key), so the engine under test reads exactly what production reads.
+export async function seedAutomation(
+  db: Db,
+  input: {
+    accountId: string;
+    audienceId: string;
+    graph: AutomationGraph;
+    status?: Automation["status"];
+    sandbox?: boolean;
+    reentry?: Automation["reentry"];
+    entryFilterJson?: string | null;
+    exitFilterJson?: string | null;
+    triggerFormId?: string | null;
+    sendWindowJson?: string | null;
+    timezone?: string;
+    sendingDomainId?: string | null;
+    fromName?: string | null;
+    fromEmail?: string | null;
+    topicId?: string | null;
+    name?: string;
+  },
+): Promise<{ automation: Automation; versionId: string }> {
+  const now = nowIso();
+  const automationId = newId("aut");
+  const versionId = newId("aev");
+  await db.insert(automationVersions).values({
+    id: versionId,
+    accountId: input.accountId,
+    automationId,
+    version: 1,
+    status: "published",
+    publishedAt: now,
+    createdAt: now,
+    updatedAt: now,
+  });
+  if (input.graph.nodes.length > 0) {
+    await db.insert(automationNodes).values(
+      input.graph.nodes.map((n, i) => ({
+        id: newId("aun"),
+        accountId: input.accountId,
+        automationVersionId: versionId,
+        key: n.key,
+        kind: n.kind,
+        configJson: JSON.stringify(n.config ?? {}),
+        label: n.label ?? null,
+        canvasX: 0,
+        canvasY: i * 100,
+        createdAt: now,
+        updatedAt: now,
+      })),
+    );
+  }
+  if (input.graph.edges.length > 0) {
+    await db.insert(automationEdges).values(
+      input.graph.edges.map((e) => ({
+        id: newId("aee"),
+        accountId: input.accountId,
+        automationVersionId: versionId,
+        fromNodeKey: e.fromKey,
+        port: e.port,
+        toNodeKey: e.toKey,
+        createdAt: now,
+      })),
+    );
+  }
+  await db.insert(automations).values({
+    id: automationId,
+    accountId: input.accountId,
+    audienceId: input.audienceId,
+    name: input.name ?? "Welcome series",
+    status: input.status ?? "active",
+    triggerKind: "audience_join",
+    triggerFormId: input.triggerFormId ?? null,
+    entryFilterJson: input.entryFilterJson ?? null,
+    exitFilterJson: input.exitFilterJson ?? null,
+    reentry: input.reentry ?? "once",
+    sendingDomainId: input.sendingDomainId ?? null,
+    fromName: input.fromName === undefined ? "Test Co" : input.fromName,
+    fromEmail: input.fromEmail === undefined ? "news@updates.test.co" : input.fromEmail,
+    sendWindowJson: input.sendWindowJson ?? null,
+    timezone: input.timezone ?? "UTC",
+    sandbox: input.sandbox ?? false,
+    topicId: input.topicId ?? null,
+    liveVersionId: versionId,
+    draftVersionId: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const automation = (await db.query.automations.findFirst({
+    where: (t, { eq }) => eq(t.id, automationId),
+  }))!;
+  return { automation, versionId };
+}

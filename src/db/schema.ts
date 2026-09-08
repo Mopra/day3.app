@@ -852,6 +852,10 @@ export const NOTIFICATION_KINDS = [
   // it verifies.
   "domain_verification_lost",
   "domain_return_path_lost",
+  // An automation enrollment hit the per-recipient visit or send cap and was
+  // exited (docs/automations-design.md §1.2). Throttled to once a day per
+  // automation, because a misdrawn loop fires it for every enrollment.
+  "automation_loop_guard",
 ] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
