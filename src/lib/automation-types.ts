@@ -32,6 +32,23 @@ export type EnrollmentCounts = {
   total: number;
 };
 
+// Which tab the detail page opens on. The parser lives here, not beside the view
+// that renders the tabs, because the SERVER page reads ?tab= and hands the result
+// over: every export of a `"use client"` module is compiled to a client
+// *reference*, so a server component that calls one throws at render ("Attempted
+// to call X() from the server but X is on the client"). It typechecks and it
+// builds — the page just 500s on every request. Anything both sides call belongs
+// in a plain module like this one.
+export type AutomationTab = "canvas" | "settings" | "people" | "stats";
+const AUTOMATION_TABS: AutomationTab[] = ["canvas", "settings", "people", "stats"];
+
+// The server page hands over whatever ?tab= said; anything else opens the canvas.
+export function parseAutomationTab(value: string | undefined): AutomationTab {
+  return value && AUTOMATION_TABS.includes(value as AutomationTab)
+    ? (value as AutomationTab)
+    : "canvas";
+}
+
 // One row of GET /api/automations (and the list the server page passes to the
 // view). `liveVersion` is null until the first publish.
 export type AutomationListRow = {

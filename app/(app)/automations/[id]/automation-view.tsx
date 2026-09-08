@@ -19,16 +19,12 @@ import { SandboxBadge } from "@/components/sandbox-notice";
 import { AutomationStatusBadge } from "@/components/ui/status-badge";
 import { useApi } from "@/lib/api";
 import type { GraphValidation } from "@/lib/automation-graph";
-import type { AutomationDetail, AutomationStats } from "@/lib/automation-types";
+import type {
+  AutomationDetail,
+  AutomationStats,
+  AutomationTab,
+} from "@/lib/automation-types";
 import type { Audience, Sender, SignupForm } from "@/lib/types";
-
-export type TabKey = "canvas" | "settings" | "people" | "stats";
-const TABS: TabKey[] = ["canvas", "settings", "people", "stats"];
-
-// The server page hands over whatever ?tab= said; anything else opens the canvas.
-export function parseTab(value: string | undefined): TabKey {
-  return value && TABS.includes(value as TabKey) ? (value as TabKey) : "canvas";
-}
 
 // Live numbers refresh on this cadence while the automation runs and the tab is
 // in front. Slow enough to be free, fast enough that "12 waiting here" is true.
@@ -42,7 +38,7 @@ export function AutomationView({
   forms,
 }: {
   initialDetail: AutomationDetail;
-  initialTab: TabKey;
+  initialTab: AutomationTab;
   audiences: Audience[];
   senders: Sender[];
   forms: SignupForm[];
@@ -55,8 +51,8 @@ export function AutomationView({
   // ?tab= keeps a deep link (and a refresh) on the same tab. Read on the server
   // and passed in, so a deep link to Settings never mounts the canvas first
   // (React Flow's measuring pass and a possible autosave) only to unmount it.
-  const [tab, setTab] = useState<TabKey>(initialTab);
-  function changeTab(next: TabKey) {
+  const [tab, setTab] = useState<AutomationTab>(initialTab);
+  function changeTab(next: AutomationTab) {
     setTab(next);
     const url = new URL(window.location.href);
     if (next === "canvas") url.searchParams.delete("tab");
@@ -251,7 +247,7 @@ export function AutomationView({
         </CollapsibleNotice>
       )}
 
-      <Tabs value={tab} onValueChange={(v) => changeTab(v as TabKey)}>
+      <Tabs value={tab} onValueChange={(v) => changeTab(v as AutomationTab)}>
         <TabsList>
           <TabsTrigger value="canvas">Canvas</TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>

@@ -3,7 +3,8 @@ import { requireAccount } from "@/api/context";
 import { listAudiences, listForms } from "@/api/lists";
 import { listSendersWithDomain } from "@/api/senders";
 import { getAutomationDetail } from "@/services/automations";
-import { AutomationView, parseTab } from "./automation-view";
+import { parseAutomationTab } from "@/lib/automation-types";
+import { AutomationView } from "./automation-view";
 
 // Server-rendered, see the note in ../../campaigns/page.tsx. The audiences,
 // senders and forms ride along for the Settings tab, so switching to it costs no
@@ -27,7 +28,7 @@ export default async function AutomationDetailPage({
   return (
     <AutomationView
       initialDetail={detail}
-      initialTab={parseTab(Array.isArray(tab) ? tab[0] : tab)}
+      initialTab={parseAutomationTab(Array.isArray(tab) ? tab[0] : tab)}
       audiences={audiences}
       senders={senders}
       forms={forms}
