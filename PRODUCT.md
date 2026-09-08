@@ -68,10 +68,11 @@ default path is the deliverable one.
   people who left elsewhere is the fastest way to wreck a new domain's reputation.
   The same doors open outward: everything you put in comes back out as CSV or JSON,
   so there is no lock-in. See **§10 Migrating to Day3**.
-- **Planned (designed, not yet shipped): Automations** — a node canvas with
-  triggers, branches, waits, and sends for onboarding and lifecycle email.
-  Automations and automation runs will be **unlimited on every paid tier** —
-  emails stay the only metered resource. Design: `docs/automations-design.md`.
+- **Automations: onboarding and lifecycle email on a node canvas.** A welcome
+  email, a welcome series, trial onboarding, a win-back flow: triggers, sends,
+  waits and branches drawn as a graph, published as an immutable version, run for
+  one person at a time. Automations and automation runs are **unlimited on every
+  tier**; emails stay the only metered resource. See §6.19.
 
 ## 3. Who it's for
 
@@ -120,8 +121,8 @@ $1 is viable monthly. The ladder holds roughly **55–70% gross margin** through
 Key pricing facts:
 
 - **Every org starts on the always-active Free tier.** It can do everything except
-  send: verify domains, add senders, import/collect subscribers, and draft
-  campaigns. **Sending requires a paid plan** (from $1/mo).
+  send: verify domains, add senders, import/collect subscribers, draft
+  campaigns, and build automations. **Sending requires a paid plan** (from $1/mo).
 - **The free tier is capped at 500 subscribers** (spam/abuse protection — a
   set-up-only account can't hoard a giant list). Paid tiers are unlimited. The cap
   is enforced on every insert path: manual add, CSV import, and public signup forms.
@@ -144,17 +145,26 @@ Key pricing facts:
   manually, e.g. via the plan metadata override).
 - **No per-contact / per-subscriber pricing.** Subscriber count does not affect price.
 - **Transactional email draws from the same monthly allowance.** One meter,
-  campaign or API send alike — an email is an email.
-- **Sandbox mode — how the free tier sends.** The free tier is not "no sending":
+  campaign or API send alike: an email is an email.
+- **Automation emails draw from the same monthly allowance.** A send node
+  reserves quota exactly as a campaign batch does, so an automation is never a
+  way around the plan's cap, and when the allowance is spent a flow **holds** its
+  next email and retries rather than skipping it (§6.19). Nothing else about an
+  automation is metered on any paid tier: not the number of automations, steps,
+  people enrolled, or steps executed. The free tier publishes automations in
+  **sandbox mode** (below): only the org's own members are enrolled, and their
+  emails count against the sandbox's 100/month.
+- **Sandbox mode: how the free tier sends.** The free tier is not "no sending":
   it runs the *real* send path, restricted to what protects the shared SES
   reputation. **Up to 100 emails/month, to the org's own members' addresses
-  only** — real SES delivery, real recipient rows, real open/click tracking, real
-  metrics. One allowance covers **every** surface: campaign sends, `POST
-  /v1/emails`, and test sends, all reserved against the same
-  `monthly_email_sent_count` ledger as a paid send. So a team can run a whole
-  campaign end to end — compose, review, send, watch the opens arrive — before
-  paying, and a developer can integrate the API against it. Upgrading lifts both
-  restrictions with no code change.
+  only**, with real SES delivery, real recipient rows, real open/click tracking
+  and real metrics. One allowance covers **every** surface: campaign sends,
+  automation sends, `POST /v1/emails`, and test sends, all reserved against the
+  same `monthly_email_sent_count` ledger as a paid send. So a team can run a whole
+  campaign end to end (compose, review, send, watch the opens arrive) before
+  paying, can watch a welcome automation deliver to a teammate, and a developer
+  can integrate the API against it. Upgrading lifts both restrictions with no
+  code change.
   - Sandbox campaigns are flagged `campaigns.sandbox` (stamped once, when the
     campaign leaves draft, so a mid-flight plan change can't re-target or
     re-meter a live send) and are badged **Sandbox** in the campaign list, on the
@@ -212,7 +222,7 @@ guards make that observable:
 |---------|-----------|
 | **Account** | The tenant. One per Clerk **organization**. Holds plan, usage, sending status, company mailing address, and a public `slug` for forms. |
 | **Account user** | A team member (Clerk user) belonging to an account, with a role (`admin` / `member`). |
-| **API key** | A bearer credential (`day3_live_…`) for the public API and the MCP server, minted by an org admin and shown once (only its hash is stored). Every key is scoped to one account. Its **base grant** covers reading and writing contacts, audiences and campaign *drafts*; the one elevated **scope**, `campaigns:send`, is required to send or schedule a campaign to a real audience and is chosen at creation, never added later. |
+| **API key** | A bearer credential (`day3_live_…`) for the public API and the MCP server, minted by an org admin and shown once (only its hash is stored). Every key is scoped to one account. Its **base grant** covers reading and writing contacts, audiences and campaign *drafts*; the elevated **scopes** are chosen at creation and never added later: `campaigns:send` (send or schedule a campaign to a real audience), `automations:enroll` (enroll an address in an automation, which starts a flow of real emails) and `webhooks:manage` (outbound webhook endpoints). |
 | **Audience** | A named list of subscribers. |
 | **Subscriber** | A contact in an audience. Status: `subscribed`, `pending` (awaiting double opt-in), `unsubscribed`, `bounced`, `complained`, or `suppressed`. Only `subscribed` contacts receive campaigns. |
 | **Sending domain** | A verified email-sending identity (e.g. `news.yourcompany.com`), set up via AWS SES with DKIM/SPF/DMARC DNS records. Campaigns and transactional sends both require a verified domain. Adding one auto-creates its first **sender**. **Globally exclusive:** one domain belongs to one account — the SES identity is shared across the whole platform, so a second account claiming it would inherit its verified status (and could send as it). |
@@ -226,6 +236,12 @@ guards make that observable:
 | **Suppression entry** | A blocklist record (per-account or global) that prevents sending to an address that unsubscribed, bounced, complained, or was manually suppressed. Account-scope entries are listed and removable on the **Suppressions** page (§6.7); global ones outlive the accounts that caused them and only support can lift them. |
 | **Import** | A CSV upload job that adds subscribers to an audience. |
 | **Risk review** | An automated spam/abuse assessment of a campaign before it sends: deterministic content checks, plus an optional AI pass that can only raise (never lower) the verdict. Produces a risk level and user-facing fix-it guidance. |
+| **Automation** | A flow of steps drawn as a graph on a canvas, entered at one **trigger**, that runs for one contact at a time (welcome series, trial onboarding, win-back). Belongs to one audience. Status: `draft`, `active`, `paused`, `archived`. Carries the trigger, entry/exit conditions, re-entry rule, From sender, theme, footer, timezone and send window. |
+| **Automation version** | An immutable snapshot of an automation's graph, made by **Publish**. The draft is edited freely; the live version keeps running untouched. Enrollments pin the version they entered on and finish on it. |
+| **Node** | One step in a version's graph: `trigger`, `send` (a whole email, authored in the composer), `wait`, `branch` (a filter or engagement condition, exits `yes` / `no`) or `end`. Identified by a stable key that survives edits and republishing, which is what makes per-step stats and "did they open the welcome email?" conditions possible. |
+| **Edge** | A connection from one node's named exit (`next`, `yes`, `no`) to the next node. Each exit has at most one edge; an exit with none ends the flow. |
+| **Enrollment** | One contact's passage through one automation version: which node they are on, when they next move, how many steps and emails they have had, and how they left. Status: `active` (running or waiting), `sending`, `completed`, `exited` (with a reason), `failed`. The row that makes once-only re-entry a database guarantee. |
+| **Automation send** | One email sent by a send node to one enrolled contact. Recorded on the same send ledger as campaign recipients (keyed by automation, enrollment and node instead of a campaign), so delivery status, opens, clicks, unsubscribes, suppression and webhooks all work identically. |
 
 ---
 
@@ -682,19 +698,55 @@ other. Each domain still opens to its own detail page.
 
 ### 6.10 Metrics (deliverability, reputation, engagement)
 A dedicated **Metrics** page (in the main nav) aggregates sending performance across
-all campaigns, with a filter to scope to a single campaign:
-- **KPI tiles:** sent, delivered, opened, clicked, bounced, complained, unsubscribed.
-- **Deliverability:** a sent → delivered → opened → clicked funnel with the delivery rate.
-- **Reputation:** bounce-rate and complaint-rate gauges scaled to the provider's review
-  thresholds (keep bounces under 5%, complaints under 0.1%), with a health status.
-- **Engagement:** open rate, click rate, and unsubscribe rate, measured against delivered mail.
-- **By campaign:** a sortable, searchable breakdown table of per-campaign rates.
+**every** send the account made, with a **source scope** selector — All sends /
+Campaigns / Automations / Transactional (API) — and, within the campaign and
+automation scopes, a second selector for one campaign or one automation.
 
-**Open tracking:** every sent email carries a per-recipient, HMAC-signed 1×1 tracking
-pixel served from `/api/track/open`. The first load stamps the recipient's `opened_at`
-and records one `open` event; repeat loads are no-ops, so opens are counted once per
-recipient. Privacy proxies (e.g. Apple Mail Privacy Protection) pre-load images, so open
-rates can be overstated — surfaced as a caveat in the UI.
+The page is split by what a number *means* rather than by who sent it, because the
+three kinds of mail do not share one shape:
+
+- **KPI tiles** (campaigns and automations): sent, delivered, opened, clicked,
+  bounced, complained, unsubscribed.
+- **Deliverability:** a sent → delivered → opened → clicked funnel with the delivery
+  rate.
+- **Reputation** *(never scope-filtered)*: bounce-rate and complaint-rate gauges over
+  the **same trailing window, the same thresholds and the same address-level counting
+  the auto-pause itself uses** (§6.7) — not a lifetime, campaign-only average scaled
+  to the provider's published review bar. It shows the pause thresholds inline
+  (bounces and the minimum count behind them, complaints likewise), says when volume
+  is still too low for the rates to mean anything, and carries a **by-source
+  breakdown** (Campaigns / Automations / Transactional) so an account whose numbers
+  are sliding can see which stream is responsible — a bad campaign audience is
+  cleaned, a bad API integration is fixed in the customer's own code. The split is
+  computed from the same reads as the headline, so it always adds up to it.
+- **Engagement:** open rate, click rate, and unsubscribe rate against delivered mail.
+  Campaigns and automations only, and labelled as such — transactional mail carries
+  no tracking.
+- **Transactional (API):** its own section, because the funnel does not apply. There
+  is no tracking pixel on a password reset, no tracked links in a receipt and no
+  unsubscribe on either, so opens/clicks/unsubscribes are absent rather than zero.
+  What it reports instead: volume **counted in addresses** (one API call can address
+  up to 50 people, and addresses are the unit the bandwidth meter and the provider
+  both use) alongside the API-call count, delivered / bounced / complained,
+  **"never sent"** (failed + suppressed — mail that never left, which usually means
+  the integration needs fixing rather than the address), queued, and a **by-sender**
+  breakdown grouped by From address, which in practice is one per feature
+  (billing@, security@, notifications@). Bounces and complaints are counted per
+  address from `email_events`, exactly as the reputation guard counts them, so the
+  two cards on the page cannot disagree. On the "All sends" scope this appears as a
+  compact summary with a link into the full view.
+- **By campaign** and **by automation:** sortable, searchable breakdown tables of
+  per-entity rates.
+
+Deep links: a sent campaign's "See opens & clicks" opens the page scoped to it
+(`?campaign=`), `?automation=` does the same for an automation, and `?source=api`
+opens the transactional view.
+
+**Open tracking:** every sent campaign or automation email carries a per-recipient,
+HMAC-signed 1×1 tracking pixel served from `/api/track/open`. The first load stamps the
+recipient's `opened_at` and records one `open` event; repeat loads are no-ops, so opens
+are counted once per recipient. Privacy proxies (e.g. Apple Mail Privacy Protection)
+pre-load images, so open rates can be overstated — surfaced as a caveat in the UI.
 
 **Click tracking:** content links in the body are rewritten per recipient to redirect
 through `/api/track/click`, which records the click and 302s to the destination. The
@@ -704,6 +756,10 @@ redirect. Only absolute http(s) links are tracked; the unsubscribe link is never
 rewritten. The first click stamps `clicked_at` (and back-fills `opened_at`, since a click
 proves an open) and records one `click` event; repeat clicks are no-ops. Per-link
 click breakdowns are not surfaced yet (the click event stores the URL for future use).
+
+Transactional mail is deliberately **not** open- or click-tracked: pixel-tracking a
+password reset is a privacy decision, not a metrics convenience. If it is ever wanted
+it belongs as an opt-in flag on `POST /v1/emails`, never as a default.
 
 ### 6.11 Activity (every email you sent)
 A dedicated **Activity** page (in the main nav) lists every email the account sent,
@@ -775,15 +831,26 @@ Full reference spec: `docs/api-v1-spec.md`.
   creation; only its SHA-256 hash is stored. Keys cannot manage keys (no key
   endpoints in the public API). Every key belongs to one organization and every
   request is scoped to it.
-- **Scopes:** the base grant is wide — read and write contacts, audiences and
-  campaign *drafts*. Exactly one action needs an explicit opt-in:
-  **`campaigns:send`**, which covers sending or scheduling a campaign to a real
-  audience. It is a checkbox at key creation ("Allow sending campaigns"), off by
-  default, and cannot be added to an existing key — granting it means minting a
-  new one, so a key's powers stay visible in the list rather than drifting. This
-  exists because of MCP (§6.17): a script does what its author wrote, but an
-  agent holding the same key decides for itself, and "email everyone" is not a
-  decision to hand over by default.
+- **Scopes:** the base grant is wide: read and write contacts, audiences and
+  campaign *drafts*, and list automations. Three actions need an explicit
+  opt-in, each chosen at key creation, off by default, and none can be added to
+  an existing key (granting one means minting a new one, so a key's powers stay
+  visible in the list rather than drifting). **`campaigns:send`** covers sending
+  or scheduling a campaign to a real audience. **`automations:enroll`** covers
+  `POST /v1/automations/{id}/enroll`, which starts a flow of real emails to one
+  address (§6.19). **`webhooks:manage`** covers webhook endpoints (§6.16). The
+  send scope exists because of MCP (§6.17): a script does what its author wrote,
+  but an agent holding the same key decides for itself, and "email everyone" is
+  not a decision to hand over by default.
+- **Automations over the API** (§6.19): `GET /v1/automations` lists the
+  account's automations (id, name, status, trigger, audience, live version) on
+  the base grant. `POST /v1/automations/{id}/enroll` with `{ "email",
+  "attributes"? }` enrolls one address, creating the contact as `subscribed` if
+  it is new and `attributes` are given (same rules as adding a contact), and
+  returns the `outcome` (`enrolled`, `already_enrolled`, `not_subscribed`,
+  `suppressed`, `entry_filter_no_match`, `automation_not_active`, ...) plus the
+  `enrollment_id`. Idempotent under `Idempotency-Key`. Building, publishing and
+  pausing an automation are app-only for now.
 - **The API keys page is also the documentation.** There is no separate docs site;
   everything needed to use the API sits below the key list, filled in with the
   account's real audience id:
@@ -1051,7 +1118,7 @@ organization, built to answer "what state am I in, and what should I do next?":
 
 **Navigation:** the sidebar is two short groups, split by a hairline and a quiet
 "Account" label. The work, in the order a send happens: Dashboard, Campaigns,
-Audiences (with the Suppressions tab), Forms, Activity (every send, campaign or
+Automations, Audiences (with the Suppressions tab), Forms, Activity (every send, campaign or
 API), Metrics, and Sending (Domains and Senders as two tabs). Then the account:
 Billing, API keys, Settings. The retired URLs (`/emails`, `/domains`, `/senders`,
 `/suppressions`) redirect to where their content now lives; `/domains/{id}` detail
@@ -1070,6 +1137,182 @@ scroll sideways within their own panel rather than dragging the page with them; 
 campaign builder's per-section controls (type, columns, alignment, background,
 duplicate, delete) are reachable by tapping into a section, since a touch screen has no
 hover.
+
+### 6.19 Automations: onboarding and lifecycle email on a canvas
+
+An **automation** is a small flow of steps that runs on its own for one person at a
+time: a welcome email the moment someone confirms their signup, a three-part
+onboarding series that stops the day they upgrade, a win-back nudge for people who
+stopped opening. It is drawn as a graph of **nodes** on a canvas, entered at one
+**trigger**, and each person who enters walks the graph independently. Campaigns
+are the one-to-many send; automations are the one-at-a-time send.
+
+**The canvas.** Every automation lives at `/automations/{id}` as a pan-and-zoom
+canvas (React Flow). Clicking a node opens an inspector panel beside the canvas
+rather than a modal, so the flow stays in view while a step is edited; a send node
+opens the full campaign composer (§6.1) as an overlay, because an automation email
+is the same section-and-column email with the same theme, merge tags, footer and
+test-send path. A **Summary** view renders the same graph as an indented outline in
+plain prose, which is how you review a flow you did not build and how support reads
+a customer's setup.
+
+**Node types (Phase 1).** Five kinds, each with named exits ("ports"); an exit with
+no connection simply ends the flow for that person.
+
+| Node | Exits | What it does |
+|---|---|---|
+| **Trigger** | `next` | Where people enter. Exactly one per automation; what fires it is set on the Settings tab. |
+| **Send** | `next` | One email, authored in the composer. Each person receives each email at most once, unless the node is explicitly marked **allow re-send** so a loop may mail it again on a later lap (off by default, because mailing someone the same thing twice by accident is the commoner bug). |
+| **Wait** | `next` | A pause of N minutes, hours or days (up to 365 days), optionally clamped into the automation's **send window** so a weekday, working-hours flow never fires at 3 a.m. Clamping only ever delays. |
+| **Branch** | `yes` / `no` | A condition. Either a **filter** built with the same condition builder as Segments (§6.3), or an **engagement** test on this automation's own earlier emails: opened / did not open / clicked / did not click a named email, or any email in the flow. |
+| **End** | none | An explicit stop. Optional, since an unconnected exit also ends the flow, but it reads better on a canvas. |
+
+Planned, not shipped: **Wait for event** (wait up to N days for a click or a filter
+match, then branch on whether it happened), **Split** (percentage A/B by a stable
+hash of the contact) and **Set field** (write a custom-field value from inside the
+flow).
+
+**One person, one position.** Each enrolled contact sits on exactly one node at a
+time and a branch sends them down exactly one exit, so there is never a "wait for
+both paths" state to reason about; two nodes may point at the same next node
+freely. **Loops are allowed** ("wait 30 days, check again, nudge again") with two
+protections. Publishing fails unless every loop passes through a wait of at least
+one hour, so a flow that spins without time passing cannot exist. And every
+enrollment carries hard caps of **200 node visits and 50 emails**, beyond which the
+person is exited with the reason `loop_guard`. The first protects the platform,
+the second protects the recipient.
+
+**Triggers.** Two in Phase 1:
+
+- **Someone joins the audience**: a contact becomes `subscribed` in the
+  automation's audience through any door Day3 has: a signup form (on confirmation
+  when double opt-in is on), a manual add, a CSV import, or
+  `POST /v1/audiences/{id}/contacts`. It can be narrowed to signups from **one
+  form** ("only the pricing-page form"). Because an import counts as joining,
+  publish a welcome automation *after* a migration import unless every imported
+  contact should receive it; the default once-only re-entry (below) means a
+  re-import can never send it a second time.
+- **You enroll them from your own code**: `POST /v1/automations/{id}/enroll` with
+  an `email` and optional `attributes` (§6.14). This is how a SaaS team's real
+  lifecycle events ("trial started", "trial ends in 3 days", "never created a
+  project") drive email without Day3 having to model them. It works on any active
+  automation regardless of what its trigger says, creates the contact in the
+  audience if the address is new and `attributes` are given, and is idempotent
+  under `Idempotency-Key`. It needs a key minted with the `automations:enroll`
+  scope, because it starts real mail to a real address.
+
+Planned: a contact joining a **segment** or a **topic** as a trigger.
+
+**Entry, exit and re-entry.** Three settings decide who is in the flow:
+
+- An optional **entry condition** (a segment-style filter) checked at the moment
+  of enrollment: "only people whose `plan` is `trial`".
+- An optional **exit condition**, checked before *every* step for everyone in the
+  flow: "stop when `plan` is `pro`". This is what stops a customer who just paid
+  from getting three more upgrade nudges. Unsubscribing, or landing on the
+  suppression list, exits a person instantly on the same check.
+- **Re-entry:** **once** (default: a person goes through an automation one time
+  ever, enforced by the database, so a re-import cannot re-trigger a welcome
+  series), **once at a time** (may re-enter after finishing) or **always** (for
+  API events that legitimately recur).
+
+Every exit records a reason (`unsubscribed`, `suppressed`, `not_subscribed`,
+`exit_filter`, `loop_guard`, `manual`, `automation_archived`, `version_retired`)
+that shows on the People tab.
+
+**Settings.** The **From** sender (a saved sender on a verified domain, §6.6),
+optional Reply-To, the footer wording, the email theme (§6.1), an optional
+**topic** the emails are sent under (honored the way a campaign's topic is), and
+the **timezone** plus **send window** that wait nodes clamp to. Settings apply to
+the automation, not to a version, so a changed From or footer reaches everyone
+already in the flow.
+
+**Versions and publishing.** Editing the canvas edits a **draft**; nobody is
+affected until you press **Publish**. Publishing validates the draft and refuses to
+go live on: no trigger or more than one, a loop with no one-hour wait, a send node
+with no subject or empty body, a branch that asks about an email no longer in the
+flow, more than 100 nodes, or a send node whose **risk review** (§6.1, run per send
+node at publish, never per recipient) comes back high, with the same fix-it
+guidance a blocked campaign gets. It warns, without blocking, on nodes not
+connected to the flow, exits with no connection, and a branch whose yes and no lead
+to the same place. Publishing also needs what a campaign send needs: a verified
+sending domain, a company mailing address, and a plan that can send (the free tier
+publishes in **sandbox mode**, §4, so only the org's own members are enrolled). A
+successful publish snapshots the graph as an **immutable version**; people already
+in the flow **finish on the version they entered**, and new entrants take the new
+one, so editing a live automation can never strand someone mid-flight. Moving
+in-flight people onto a new version is planned, not shipped. An automation can be
+**paused** (nobody new enters) and **resumed**, or **archived**, which exits
+everyone still in it.
+
+**Templates.** Four starters with draft copy already written and laid out, one
+click when creating an automation: **Welcome email** (a single send, the common
+case), **Welcome series**, **Trial onboarding** (with a "plan is pro" exit) and
+**Win back** (branching on whether earlier emails were opened). Like campaign
+templates they ship placeholders, never borrowed content, and cost nothing.
+
+**People.** The **People** tab lists everyone who has entered: status (`active`,
+`sending`, `completed`, `exited`, `failed`), the step they are on, when they next
+move, why they are held (if they are), how many steps and emails they have had,
+and why they left. Per row, **Run now** skips the current wait (the developer's
+way to test a three-day series in three minutes) and **Exit** removes them.
+**Enroll a contact** puts one existing contact into the flow by hand for a test
+run, and every send node has a test-email action that renders it with the
+automation's real From, theme and footer to addresses you name.
+
+**Stats.** The **Stats** tab, mirrored as badges on the canvas, shows per node how
+many people are sitting on it right now and, for send nodes, sent / delivered /
+opened / clicked / bounced / complained / unsubscribed / failed, plus **skipped
+broken out by reason**, because "why didn't this send?" is the first question
+anyone asks of an automation. Metrics (§6.10) reports automation mail too — as its
+own source scope and a **By automation** table — but only ever per automation; the
+per-node breakdown stays here, where the graph gives it meaning.
+
+**Unlimited automations. Unlimited runs. You pay for emails, not orchestration.**
+Every tier, including free, may build as many flows as it needs and run them for
+as many people as it likes; an automation email draws on the plan's monthly
+allowance exactly as a campaign email does (§4), and nothing else about an
+automation is metered. The protections behind that promise are stated rather than
+hidden:
+
+- **Fair use:** the dispatcher that advances flows runs every 60 seconds and
+  executes at most **2,000 node steps per account per tick**, claiming work
+  round-robin across accounts so one org's 50,000-row import can never delay
+  another org's welcome email. Work over the cap is **deferred to the next tick,
+  never dropped**; a very large burst simply catches up over the following
+  minutes. Real flows sit far below this.
+- **Loop guards:** the one-hour-wait rule and the 200-visit / 50-email caps above.
+- **Sanity ceilings**, the same on every tier: 100 nodes per automation, 50
+  automations per account. Reaching either means something has gone wrong, not
+  that a plan was outgrown.
+
+**When an email can't go out.** If the monthly allowance is spent (or the
+subscription is past due, or the account is paused for reputation) a person due
+for a send is **held**, not skipped: the flow retries hourly and the People tab
+shows the hold reason. A step held for more than **7 days** is skipped as
+`too_stale` and the person moves on, so an account that upgrades three weeks later
+does not blast a month of backed-up onboarding at once. Both halves are
+deliberate: a late welcome email is recoverable, a silently dropped one is not,
+and a month-old one is spam.
+
+**Compliance and plumbing.** An automation email is a campaign email in every
+respect that matters: canonical footer, mailing address, one-click unsubscribe
+with `List-Unsubscribe` headers, topic preferences, and suppression re-checked at
+send time. Each send is a row on the same ledger as campaign sends, so it appears
+in Activity (§6.11, under the *automations* source filter), fires the same outbound webhooks (§6.16, `data.object:
+"automation_send"`), and counts toward the account's bounce and complaint rates
+and the reputation auto-pause (§6.7) like any other mail. Waits live in Postgres,
+not in the job queue, so a queue outage delays a flow rather than losing anyone in
+it; enrollment also queues an immediate advance, so a zero-wait welcome email goes
+out within seconds rather than at the next tick.
+
+> Source of truth in code: the graph model and publish validator
+> `src/lib/automation-graph.ts`, wire types `src/lib/automation-types.ts`,
+> enrollment `src/services/automation-enroll.ts`, the `automation_tick` /
+> `advance_automation_enrollment` / `send_automation_node` jobs under
+> `src/queue/`, session routes `app/api/automations/**`, public routes
+> `app/api/v1/automations/**` (`automations:enroll`), UI
+> `app/(app)/automations/**`. Design and rationale: `docs/automations-design.md`.
 
 ---
 
@@ -1091,7 +1334,8 @@ Day3 is split into two cooperating tiers that share one Postgres database:
 - **Web tier (Vercel, Next.js 16 App Router):** serves the React 19 dashboard and the
   API route handlers. Enqueues jobs but runs no long-lived work or cron.
 - **Worker tier (VPS, `worker/index.ts`):** the only consumer of the BullMQ queue.
-  Drains the send queue and runs cron sweeps (every 15 min). Run under pm2/systemd/Docker.
+  Drains the send queue, runs the cron sweeps (every 15 min) and the 60-second
+  automation tick (§7.1). Run under pm2/systemd/Docker.
 - **Postgres (Supabase) is the single source of truth.** Queue messages carry IDs only,
   never content — the worker re-reads everything from Postgres.
 
@@ -1120,6 +1364,25 @@ rides the same queue at top priority (explicit per-type priorities keep a
 password reset from waiting behind a campaign drain). The same SNS webhook
 updates transactional emails' delivery status, and the same cron sweep recovers
 their crashed/lost sends.
+
+**The automation path** (§6.19) adds a scheduler beside the pipeline, not a
+second pipeline. An enrollment's whole schedule is one indexed column,
+`automation_enrollments.next_run_at`, held in Postgres (never a delayed queue
+job, so a Redis flush cannot lose anyone mid-flow). A repeatable
+`automation_tick` job runs every 60 seconds (`AUTOMATION_TICK_SECONDS`), claims
+due enrollments `FOR UPDATE SKIP LOCKED` round-robin by account with a
+per-account cap of 2,000 per tick (`AUTOMATION_TICK_PER_ACCOUNT`), and advances
+the cheap node kinds inline (wait, branch, end). The tick never sends: a send
+node flips the enrollment to `sending` and enqueues a `send_automation_node` job,
+which writes the recipient row on the shared `campaign_recipients` ledger,
+reserves monthly quota, renders through the same `renderCampaignEmail`, sends
+through the same paced `EmailProvider`, and then moves the cursor on. Enrollment
+also enqueues an `advance_automation_enrollment` job immediately, so the tick is
+the durable backstop rather than the latency path. Quota exhaustion holds the
+enrollment with hourly retries and a 7-day staleness cutoff; a sweep fails
+enrollments stuck in `sending` (never back to `active`, the campaign rule); and
+the SNS webhook, tracking pixels and one-click unsubscribe resolve an automation
+send through the same ledger lookup as a campaign send.
 
 ### 7.2 Reliability rules (non-negotiable)
 - **Idempotent jobs:** a retried message never duplicates a send. `campaign_recipients.status`
@@ -1181,6 +1444,10 @@ their crashed/lost sends.
    `POST /v1/emails` → watch each send on the Activity page (§6.11).
 7. **Draft an email from your editor:** point Claude Code / Cursor at `/api/mcp` with an
    API key → describe the email → open the draft in the composer and send (§6.17).
+8. **Set up a welcome email:** Automations → New → *Welcome email* template → pick the
+   audience → edit the email in the composer → send yourself the step → Publish → every
+   new confirmed signup receives it within about a minute; watch the People and Stats
+   tabs (§6.19).
 
 ---
 
@@ -1222,7 +1489,7 @@ data is worse than one that says what it dropped.
 | Per-contact engagement history (opens/clicks) | ❌ | Starts fresh. Metrics (§6.10) measures Day3 sends only |
 | Past campaign archives & their stats | ❌ | Stay with the old provider; export anything you want to keep before closing that account |
 | Email templates / HTML | ⚠️ Manual | Rebuild from Day3's five built-in templates (§6.1), or paste HTML into a `:::html` block over the API / MCP (§6.17) — Day3's builder is section-based, so a foreign HTML template imported wholesale would not stay editable |
-| Automations / drip flows | ❌ | Not shipped yet (§2, designed) |
+| Automations / drip flows | ⚠️ Rebuilt | Day3 has automations (§6.19), but no provider exports a flow in an importable form. Rebuild from the four templates or on the canvas with the Phase 1 nodes (trigger, send, wait, branch, end); wait-for-event, A/B split and set-field steps are planned, not shipped |
 | **Domain sending reputation** | ⚠️ Partly | Domain-level reputation and recipient engagement history follow the **subdomain** — reuse it and it comes with you. IP reputation does not: Day3 sends on AWS SES shared IPs (§10.6) |
 
 ### 10.2 Route A — CSV export/import (no code)
@@ -1400,7 +1667,8 @@ plan: sending to anyone outside the org, and importing more than 500 contacts.
   grow the volume over days, and keep sending consistently rather than in bursts.
 - **Never blast a stale list on day one.** The worst possible migration is a fresh
   subdomain plus a two-year-old import: bounces and complaints arrive together, and
-  sustained bad rates auto-pause the account (bounce < 5%, complaints < 0.1%).
+  sustained bad rates auto-pause the account (§6.7 — keep bounces under 4% and
+  complaints under 0.08%; the Metrics page shows both against those exact bars).
 - **Bring the bounces.** Addresses that already hard-bounced elsewhere will bounce here,
   against a domain with no history to absorb it.
 - **Existing DNS is never overwritten.** If another provider's Return-Path or a stricter

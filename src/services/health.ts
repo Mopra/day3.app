@@ -43,6 +43,20 @@ export const MIN_COMPLAINED_FOR_PAUSE = 3;
 // react far too slowly. Env-tunable; defaults to 14 days.
 export const HEALTH_WINDOW_DAYS = Math.max(1, Number(process.env.HEALTH_WINDOW_DAYS ?? "14"));
 
+// Which producer put the mail on the wire. Reputation is judged account-wide —
+// AWS sees one sender — but an account whose numbers are sliding needs to know
+// WHICH stream is doing it, because the fix differs completely: a bad campaign
+// audience is cleaned, a bad API integration is fixed in the customer's code.
+export const HEALTH_SOURCES = ["campaign", "automation", "api"] as const;
+export type HealthSource = (typeof HEALTH_SOURCES)[number];
+
+export type HealthSourceCounts = {
+  source: HealthSource;
+  attempted: number;
+  bounced: number;
+  complained: number;
+};
+
 export type AccountHealth = {
   attempted: number;
   bounced: number;
@@ -51,9 +65,33 @@ export type AccountHealth = {
   complaintRate: number;
   status: "normal" | "warning" | "paused";
   reason?: string;
+  // The same window, split by producer. Sums exactly to the totals above — it is
+  // built from the same three queries, not a second pass, so the Metrics page
+  // can show the split without any risk of it disagreeing with the headline.
+  bySource: HealthSourceCounts[];
 };
 
 const COUNTED_TX_STATUSES = ["sent", "delivered", "bounced", "complained"] as const;
+
+// The two ledgers share `campaign_recipients`, so which producer wrote a row is
+// a predicate rather than a column (see AGENTS.md — the table name is a
+// misnomer). `campaign_id` is the discriminator the Activity page uses too.
+const RECIPIENT_SOURCE_SQL = sql<HealthSource>`case when ${campaignRecipients.campaignId} is not null then 'campaign' else 'automation' end`;
+
+// One row per (message, address, event type) is what the email_events unique
+// index guarantees, so this counts ADDRESSES that went wrong rather than
+// messages. Exported because the Metrics page's transactional card has to count
+// its bounces the same way this does, or the two cards on one screen disagree.
+export const TX_BAD_ADDRESS_COUNT_SQL = sql<number>`count(distinct (${emailEvents.transactionalEmailId} || ':' || coalesce(${emailEvents.email}, '')))`;
+
+// Bounce events are recorded for soft bounces too (the SES webhook records
+// first and gates only the status flip on Permanent/Undetermined), so the
+// bounce type is filtered to match campaign semantics. `payload_json` is the raw
+// SNS notification held as text; a `::jsonb` cast would throw on any row that is
+// not parseable, so this matches the field textually instead — `bounceType`
+// appears exactly once in a bounce notification. The POSIX character class
+// avoids a backslash escape surviving the template literal.
+export const HARD_BOUNCE_ONLY_SQL = sql`(${emailEvents.eventType} <> 'bounce' OR ${emailEvents.payloadJson} ~ '"bounceType"[[:space:]]*:[[:space:]]*"(Permanent|Undetermined)"')`;
 
 export async function computeAccountHealth(db: Db, accountId: string): Promise<AccountHealth> {
   // Only count emails SENT within the trailing window. `sent_at` is set on the
@@ -63,6 +101,7 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
   const cutoff = new Date(Date.now() - HEALTH_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const rows = await db
     .select({
+      source: RECIPIENT_SOURCE_SQL,
       status: campaignRecipients.status,
       count: sql<number>`count(*)`.as("count"),
     })
@@ -80,7 +119,10 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
         ]),
       ),
     )
-    .groupBy(campaignRecipients.status);
+    // Grouping by the producer as well as the status costs nothing here (same
+    // index scan, one more grouping key) and is what lets this stay ONE query
+    // on the send path while still feeding the Metrics page its breakdown.
+    .groupBy(RECIPIENT_SOURCE_SQL, campaignRecipients.status);
 
   // Transactional (API) sends count toward the SAME reputation. They must:
   // AWS judges one bounce rate for the whole SES account, and the API is the
@@ -113,20 +155,10 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
   // index is for — so it is the honest source for "how many addresses actually
   // went wrong", and it makes transactional weigh the same as the per-recipient
   // campaign ledger.
-  //
-  // Bounce events are recorded for soft bounces too (the SES webhook records
-  // first and gates only the status flip on Permanent/Undetermined), so the
-  // bounce type is filtered here to match campaign semantics. `payload_json` is
-  // the raw SNS notification held as text; a `::jsonb` cast would throw on any
-  // row that is not parseable, so this matches the field textually instead —
-  // `bounceType` appears exactly once in a bounce notification. The POSIX
-  // character class avoids a backslash escape surviving the template literal.
   const txEventRows = await db
     .select({
       eventType: emailEvents.eventType,
-      count: sql<number>`count(distinct (${emailEvents.transactionalEmailId} || ':' || coalesce(${emailEvents.email}, '')))`.as(
-        "count",
-      ),
+      count: TX_BAD_ADDRESS_COUNT_SQL.as("count"),
     })
     .from(emailEvents)
     .innerJoin(transactionalEmails, eq(emailEvents.transactionalEmailId, transactionalEmails.id))
@@ -136,29 +168,39 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
         gte(transactionalEmails.sentAt, cutoff),
         inArray(transactionalEmails.status, [...COUNTED_TX_STATUSES]),
         inArray(emailEvents.eventType, ["bounce", "complaint"]),
-        sql`(${emailEvents.eventType} <> 'bounce' OR ${emailEvents.payloadJson} ~ '"bounceType"[[:space:]]*:[[:space:]]*"(Permanent|Undetermined)"')`,
+        HARD_BOUNCE_ONLY_SQL,
       ),
     )
     .groupBy(emailEvents.eventType);
 
-  const counts: Record<string, number> = {};
+  // Fold the three reads into one row per producer FIRST, then sum. Deriving the
+  // totals from the split (rather than computing them separately) is what makes
+  // the Metrics page's breakdown provably add up to the number that pauses the
+  // account.
+  const perSource = new Map<HealthSource, HealthSourceCounts>(
+    HEALTH_SOURCES.map((source) => [source, { source, attempted: 0, bounced: 0, complained: 0 }]),
+  );
   for (const r of rows) {
-    counts[r.status] = (counts[r.status] ?? 0) + Number(r.count);
+    // `unsubscribed` is an attempt that reached a mailbox — it counts in the
+    // denominator and nowhere else, exactly as it did before the split.
+    const entry = perSource.get(r.source as HealthSource);
+    if (!entry) continue;
+    const n = Number(r.count);
+    entry.attempted += n;
+    if (r.status === "bounced") entry.bounced += n;
+    if (r.status === "complained") entry.complained += n;
   }
-  const txCounts: Record<string, number> = {};
+  const api = perSource.get("api")!;
+  api.attempted = Number(txAttemptedRow?.count ?? 0);
   for (const r of txEventRows) {
-    txCounts[r.eventType] = Number(r.count);
+    if (r.eventType === "bounce") api.bounced = Number(r.count);
+    if (r.eventType === "complaint") api.complained = Number(r.count);
   }
 
-  const bounced = (counts.bounced ?? 0) + (txCounts.bounce ?? 0);
-  const complained = (counts.complained ?? 0) + (txCounts.complaint ?? 0);
-  const attempted =
-    (counts.sent ?? 0) +
-    (counts.delivered ?? 0) +
-    (counts.bounced ?? 0) +
-    (counts.complained ?? 0) +
-    (counts.unsubscribed ?? 0) +
-    Number(txAttemptedRow?.count ?? 0);
+  const bySource = [...perSource.values()];
+  const bounced = bySource.reduce((n, s) => n + s.bounced, 0);
+  const complained = bySource.reduce((n, s) => n + s.complained, 0);
+  const attempted = bySource.reduce((n, s) => n + s.attempted, 0);
 
   const bounceRate = attempted > 0 ? bounced / attempted : 0;
   const complaintRate = attempted > 0 ? complained / attempted : 0;
@@ -183,7 +225,7 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
     }
   }
 
-  return { attempted, bounced, complained, bounceRate, complaintRate, status, reason };
+  return { attempted, bounced, complained, bounceRate, complaintRate, status, reason, bySource };
 }
 
 // Pauses the account if its health thresholds are exceeded. Returns the health.

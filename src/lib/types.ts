@@ -353,6 +353,86 @@ export type CampaignMetricsRow = {
   counts: CampaignMetricCounts;
 };
 
+// The same aggregate for one automation. Automation sends share the recipient
+// ledger with campaigns, so they share the count shape too; what differs is that
+// an automation has no single send date — it sends continuously, so `lastSentAt`
+// is the most recent send it made.
+export type AutomationMetricsRow = {
+  automationId: string;
+  name: string;
+  status: string;
+  sandbox: boolean;
+  lastSentAt: string | null;
+  counts: CampaignMetricCounts;
+};
+
+// Transactional (API) send counts. A different shape from CampaignMetricCounts
+// on purpose: API mail carries no tracking pixel, no tracked links and no
+// unsubscribe, so opens/clicks/unsubscribes do not exist here and must not be
+// faked as zeroes in a shared type. What it has instead is `failed`/`suppressed`
+// — mail that never left, which for an integration is the number that matters —
+// and two units, because one API call can address up to 50 people.
+//
+// Every count is in ADDRESSES (the unit the bandwidth meter and SES both use)
+// except `messages`, which is the API-call count.
+export type TransactionalMetricCounts = {
+  messages: number;
+  emails: number;
+  sent: number;
+  delivered: number;
+  bounced: number;
+  complained: number;
+  failed: number;
+  suppressed: number;
+  queued: number;
+};
+
+export type TransactionalSenderRow = {
+  fromEmail: string;
+  lastSentAt: string | null;
+  counts: TransactionalMetricCounts;
+};
+
+export type TransactionalMetrics = {
+  totals: TransactionalMetricCounts;
+  senders: TransactionalSenderRow[];
+};
+
+// What the Metrics page shows in its Reputation card. This is deliberately the
+// account-wide, windowed number that the auto-pause itself computes
+// (services/health.ts) rather than anything the page derives: showing a
+// lifetime, campaign-only rate next to SES's published thresholds told users
+// they were healthy right up to the moment sending stopped. The thresholds ride
+// along so the view renders the bars against the real bar, and `bySource` says
+// which stream is responsible — the split sums to the totals by construction.
+export type ReputationSourceCounts = {
+  source: "campaign" | "automation" | "api";
+  attempted: number;
+  bounced: number;
+  complained: number;
+};
+
+export type ReputationSummary = {
+  windowDays: number;
+  attempted: number;
+  bounced: number;
+  complained: number;
+  bounceRate: number;
+  complaintRate: number;
+  status: "normal" | "warning" | "paused";
+  reason: string | null;
+  bySource: ReputationSourceCounts[];
+  thresholds: {
+    minAttempted: number;
+    bounceWarn: number;
+    bouncePause: number;
+    minBounced: number;
+    complaintWarn: number;
+    complaintPause: number;
+    minComplained: number;
+  };
+};
+
 // Pre-send warning: recipients in the target audience missing a personalization
 // field the campaign uses. `fallback` is what they'll see instead (null = blank).
 export type PersonalizationGap = {
