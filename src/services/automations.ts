@@ -82,6 +82,7 @@ import { getQueue } from "../queue/producer";
 import { enrollSubscriber, type EnrollSource } from "./automation-enroll";
 import { sendCampaignTest, type TestSendResult } from "./campaign-send";
 import { checkSendEligibility } from "./plans";
+import { sharedDomainSendError } from "./shared-domain";
 import { reviewCampaignRisk } from "./risk";
 
 // The automation service: everything the session routes under /api/automations
@@ -927,7 +928,10 @@ export async function publishAutomation(
     // here. SES would refuse the send anyway; fail at publish, with a fix.
     gate("The From address must use the selected sending domain. Pick a sender on that domain in the settings.");
   }
-  if (!account.companyAddress?.trim()) {
+  // Exempt on the shared Day3 domain, where the footer carries Day3's own
+  // registered address instead (services/footer-address.ts). Same carve-out the
+  // campaign gate makes, for the same reason.
+  if (!domain?.shared && !account.companyAddress?.trim()) {
     gate("Add your business mailing address in Settings before publishing. It is legally required in every email.");
   }
 
@@ -944,6 +948,16 @@ export async function publishAutomation(
   const sandbox = planSandboxMode(account.plan);
   if (!planCanSend(account.plan) && !sandbox) {
     gate("Your plan cannot send email. Upgrade to publish this automation.");
+  }
+
+  // The shared Day3 domain, checked here rather than at each send: an automation
+  // is published once and then sends unattended for months, so a plan change that
+  // takes the account out of sandbox must be caught before mail starts flowing,
+  // not silently on the thousandth enrollment. The send handler re-checks anyway
+  // (fail closed), but this is where the user can still do something about it.
+  if (domain) {
+    const sharedError = sharedDomainSendError(domain, { sandbox });
+    if (sharedError) gate(sharedError);
   }
 
   if (errors.length > 0) {

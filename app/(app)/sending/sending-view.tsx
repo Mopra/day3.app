@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Sender, SendingDomain } from "@/lib/types";
+import { SharedDomainCard } from "@/components/shared-domain-card";
 import { DomainsView } from "./domains-view";
 import { SendersView } from "./senders-view";
 
@@ -14,9 +15,13 @@ type TabKey = "domains" | "senders";
 export function SendingView({
   initialDomains,
   initialSenders,
+  sharedFromEmail,
 }: {
   initialDomains: SendingDomain[];
   initialSenders: Sender[];
+  // The Day3 test address, when the account has a usable one. Null turns the
+  // card off entirely (feature unconfigured, or cut off by an operator).
+  sharedFromEmail: string | null;
 }) {
   const [tab, setTab] = useState<TabKey>("domains");
   useEffect(() => {
@@ -47,6 +52,9 @@ export function SendingView({
           The domains you send from and the From identities your emails go out as.
         </p>
       </div>
+      {tab === "domains" && sharedFromEmail && (
+        <SharedDomainCard fromEmail={sharedFromEmail} disabled={false} />
+      )}
       {tab === "domains" ? (
         <DomainsView initialDomains={initialDomains} tabs={tabs} />
       ) : (

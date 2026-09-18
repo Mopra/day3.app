@@ -90,6 +90,11 @@ const HOLD_REASON_COPY: Record<string, { text: string; href?: string; cta?: stri
   from_identity_missing: { text: "no From address on this automation", cta: "Settings tab" },
   domain_not_verified: { text: "sending domain is not verified", href: "/domains", cta: "Domains" },
   domain_missing: { text: "sending domain was removed", cta: "Settings tab" },
+  shared_domain_not_sandbox: {
+    text: "the Day3 test address only reaches your own team; point this flow at your own domain",
+    href: "/sending",
+    cta: "Sending",
+  },
   sender_not_verified: { text: "the provider rejected the From address", href: "/domains", cta: "Domains" },
   provider_daily_limit: { text: "daily sending limit reached, retrying hourly" },
   provider_suspended: { text: "sending is suspended at the provider" },

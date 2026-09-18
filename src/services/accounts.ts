@@ -5,6 +5,8 @@ import { accountUsers, accounts, type Account } from "../db/schema";
 import type { JobQueue } from "../queue/messages";
 import { newId, nowIso } from "../lib/ids";
 import { restampAutomationSandbox } from "./automation-sandbox";
+import { ensureSharedDomain } from "./shared-domain";
+import { addMemberToTeamAudience, ensureTeamAudience } from "./team-audience";
 import {
   FREE_PLAN,
   entitlementsFor,
@@ -48,6 +50,20 @@ export async function reconcileMembership(
       target: [accountUsers.accountId, accountUsers.clerkUserId],
       set: { email: input.email.toLowerCase(), role: input.role, updatedAt: now },
     });
+
+  // A teammate invited after signup joins the seeded team audience too, so the
+  // sandbox sends everyone else gets reach them as well. Only that audience is
+  // touched (services/team-audience.ts). Best-effort: a membership must still
+  // reconcile if this cannot.
+  try {
+    const account = await db.query.accounts.findFirst({
+      columns: { id: true, plan: true },
+      where: eq(accounts.id, input.accountId),
+    });
+    if (account) await addMemberToTeamAudience(db, account, input.email);
+  } catch (err) {
+    console.error(`[provisioning] could not add ${input.email} to the team audience`, err);
+  }
 }
 
 // Removes a single membership (organizationMembership.deleted webhook).
@@ -283,6 +299,23 @@ export async function syncCurrentOrganization(
     email,
     role: roleFromClerk(auth.orgRole),
   });
+
+  // Day-one provisioning: a pre-verified Day3 sending domain and an audience
+  // seeded with the org's own members, so a brand new org can send itself a real
+  // email before it has published a DNS record or imported a contact (see
+  // docs/dashboard-day-zero-plan.md). Both are idempotent, so this also back-fills
+  // an account created before the feature existed, on its next sync.
+  //
+  // Deliberately best-effort and after the account row is returned-worthy: this
+  // runs on a sign-in path, and a hiccup provisioning a convenience must never be
+  // what stops someone getting into the app. The dashboard re-checks and the next
+  // sync tries again.
+  try {
+    await ensureSharedDomain(db, account);
+    await ensureTeamAudience(db, account);
+  } catch (err) {
+    console.error(`[provisioning] day-one setup failed for account ${account.id}`, err);
+  }
 
   return account;
 }

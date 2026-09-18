@@ -52,6 +52,23 @@ serves the UI and the API routes; a separate long-running Node worker
    separate counter. Note `planSandboxMode` is deliberately NOT `!planCanSend` —
    an unrecognized plan string must fail closed rather than earn a sandbox.
 
+   **A shared-domain send must be a sandbox send.** Every account is provisioned
+   with one pre-verified sending domain on an SES identity *we* own
+   (`src/services/shared-domain.ts`, `SHARED_SANDBOX_DOMAIN`), so a brand new org
+   can mail itself before it has touched DNS. That identity's reputation belongs
+   to every tenant at once, so `sharedDomainSendError` refuses anything that is
+   not provably a sandbox send, the same fail-closed reasoning as `planSandboxMode`,
+   and called from `campaignSendGateError`, the automation publish + send handler,
+   `POST /v1/emails`, and the test-send path (which names its own recipients, so it
+   is restricted to org members there too). The shared row is hidden from
+   `listDomains` and never satisfies `hasVerifiedDomain`: it is *our* domain, and
+   ticking the user's own domain step would retire the one piece of setup that
+   lets them reach real subscribers. Its footer carries Day3's postal address
+   (`src/services/footer-address.ts`: one resolver, because four render call
+   sites would drift), which is why `DAY3_POSTAL_ADDRESS` is required whenever the
+   domain is configured. An operator can cut one account off it without touching
+   anyone else (`sending_domains.shared_disabled_at`).
+
 5. **There are two front doors to every campaign action, and they must not
    diverge.** The app's session routes and the public v1 API (which the MCP
    server drives) both go through `src/services/campaign-send.ts` for

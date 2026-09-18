@@ -14,6 +14,7 @@ import {
 import { CampaignThemeSchema, safeParseTheme } from "../../lib/theme";
 import { newId, nowIso } from "../../lib/ids";
 import { getAudienceFieldFallbacks } from "../../services/audience-fields";
+import { footerAddress } from "../../services/footer-address";
 import { renderCampaignEmail, sanitizeHtml } from "../../services/render";
 import { ApiError } from "./errors";
 import { toIso } from "./serialize";
@@ -338,12 +339,29 @@ export async function renderCampaignPreview(
   const fieldFallbacks = campaign.audienceId
     ? await getAudienceFieldFallbacks(db, campaign.audienceId)
     : null;
+  // The preview must show the footer the send would really build, including
+  // whose postal address it carries, which depends on the sending domain
+  // (services/footer-address.ts). A preview that showed a blank address line for
+  // a shared-domain campaign would be reporting a compliance problem that is not
+  // there.
+  // Scoped by account_id as well as id (hard rule 3). The campaign is already
+  // account-scoped by its caller, but a tenant read that only filters on a
+  // foreign key is exactly the shape the scoping guard exists to catch.
+  const domain = campaign.sendingDomainId
+    ? ((await db.query.sendingDomains.findFirst({
+        columns: { shared: true },
+        where: and(
+          eq(sendingDomains.id, campaign.sendingDomainId),
+          eq(sendingDomains.accountId, campaign.accountId),
+        ),
+      })) ?? null)
+    : null;
   return renderCampaignEmail({
     campaign,
     theme: safeParseTheme(campaign.themeJson),
     subscriber: { email: "preview@example.com", firstName: "Alex", lastName: "Rivera" },
     companyName: account.name,
-    companyAddress: account.companyAddress,
+    companyAddress: footerAddress(account, domain),
     unsubscribeUrl: "#preview-unsubscribe",
     fieldFallbacks,
   });

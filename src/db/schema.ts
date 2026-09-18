@@ -18,6 +18,10 @@ import type { FormField } from "../lib/form-fields";
 // timestamptz for the old text ISO timestamps.)
 const tstz = (name: string) => timestamp(name, { withTimezone: true, mode: "string" });
 
+// Which starting path a new account said it was on. See accounts.onboardingPath.
+export const ONBOARDING_PATHS = ["has_list", "building_list"] as const;
+export type OnboardingPath = (typeof ONBOARDING_PATHS)[number];
+
 export const accounts = pgTable(
   "accounts",
   {
@@ -40,6 +44,13 @@ export const accounts = pgTable(
     pausedReason: text("paused_reason"),
 
     companyAddress: text("company_address"),
+
+    // Which first-run path the user chose: "has_list" (they arrive with
+    // subscribers to import) or "building_list" (they are starting from zero and
+    // need a signup form first). Null until asked. The onboarding checklist's
+    // audience step follows this answer, because "Import an audience" is a dead
+    // end for a team that has nobody to import yet.
+    onboardingPath: text("onboarding_path").$type<OnboardingPath>(),
 
     // Public, human-readable handle used in hosted signup-form URLs
     // (go.day3.app/<slug>/<form-slug>). Nullable: generated lazily the first time
@@ -79,6 +90,18 @@ export const sendingDomains = pgTable(
 
     provider: text("provider").notNull().default("ses"),
     providerIdentityId: text("provider_identity_id"),
+
+    // True for the Day3-owned shared sandbox domain provisioned with every
+    // account (services/shared-domain.ts): the thing that lets a brand new org
+    // send itself a real email before touching DNS. It is NOT a customer domain:
+    // the identity, and therefore the SES reputation behind it, belongs to every
+    // tenant at once. So a shared-domain send must be a sandbox send, checked in
+    // campaignSendGateError and fail-closed, and the row is hidden from the
+    // customer domain list. See docs/dashboard-day-zero-plan.md §A1.
+    shared: boolean("shared").notNull().default(false),
+    // Set by an operator to cut one tenant off the shared identity without
+    // touching anyone else (admin account page). Only meaningful when `shared`.
+    sharedDisabledAt: tstz("shared_disabled_at"),
 
     verificationStatus: text("verification_status").notNull().default("pending"),
     dkimStatus: text("dkim_status").notNull().default("pending"),
@@ -179,6 +202,12 @@ export const audiences = pgTable(
     id: text("id").primaryKey(),
     accountId: text("account_id").notNull(),
     name: text("name").notNull(),
+    // True for the one audience provisioned with the account and seeded with the
+    // org's own members (services/team-audience.ts). It is what makes a sandbox
+    // send work on day one without the user importing anything, and it is the
+    // only audience a teammate invited later is auto-added to. A new hire
+    // appearing in a customer list nobody put them on would be a bug.
+    seededTeam: boolean("seeded_team").notNull().default(false),
     createdAt: tstz("created_at").notNull(),
     updatedAt: tstz("updated_at").notNull(),
   },

@@ -1,10 +1,10 @@
 import type { NextRequest } from "next/server";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findDomain } from "@/api/finders";
 import { SenderFieldsSchema, validateSenderDomain, listSendersWithDomain } from "@/api/senders";
-import { senders } from "@/db/schema";
+import { senders, sendingDomains } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 
 export const GET = route(async () => {
@@ -21,10 +21,17 @@ export const POST = route(async (req: NextRequest) => {
   if (error) throw new HttpError(400, error);
 
   // The account's first sender becomes its default (so the composer preselects it).
+  //
+  // Counts senders on the account's OWN domains only. Every account is
+  // provisioned with a sender on the Day3 shared test address, and counting it
+  // here would mean a user's first real sender never becomes the default, so
+  // their campaigns would keep quietly preselecting our test address instead of
+  // the domain they just verified.
   const [{ count }] = await db
     .select({ count: sql<number>`count(*)`.as("count") })
     .from(senders)
-    .where(eq(senders.accountId, account.id));
+    .innerJoin(sendingDomains, eq(sendingDomains.id, senders.sendingDomainId))
+    .where(and(eq(senders.accountId, account.id), eq(sendingDomains.shared, false)));
   const isDefault = Number(count) === 0;
 
   const id = newId("snd");

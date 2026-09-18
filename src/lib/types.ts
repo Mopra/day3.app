@@ -38,12 +38,23 @@ export type AccountHealth = {
 
 // Server-computed onboarding/send state (mirrors services/onboarding.ts). Drives
 // the dashboard checklist and the actionable send-blocking messages.
+export type OnboardingPath = "has_list" | "building_list";
+
 export type OnboardingState = {
   billingActive: boolean;
   hasVerifiedDomain: boolean;
   hasSubscribers: boolean;
+  // Subscribers outside the seeded team audience: an audience the user built.
+  hasOwnSubscribers: boolean;
   hasCampaign: boolean;
   hasSentCampaign: boolean;
+  // Day-one state. canSendFirstEmail is "there is a working path to a real email
+  // right now, with nothing set up". See services/onboarding.ts.
+  hasSharedDomain: boolean;
+  teamAudienceId: string | null;
+  teamAudienceSize: number;
+  canSendFirstEmail: boolean;
+  onboardingPath: OnboardingPath | null;
   hasMailingAddress: boolean;
   accountPaused: boolean;
   canSend: boolean;
@@ -68,6 +79,11 @@ export type SendingDomain = {
   dnsAutoConfigured?: boolean;
   dnsWriteError?: string | null;
   adminOverrideVerified: boolean;
+  // The Day3-owned shared sandbox domain (services/shared-domain.ts). Only the
+  // admin domain list ever sees one: listDomains excludes it from the customer's
+  // own domains, and the app surfaces it as a test-address card instead.
+  shared?: boolean;
+  sharedDisabledAt?: string | null;
   createdAt: string;
   updatedAt?: string;
 };

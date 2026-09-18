@@ -24,6 +24,7 @@ import { formatDate } from "@/lib/format";
 import { CampaignStatusBadge } from "@/components/ui/campaign-status-badge";
 import { planCanSend, planLabel } from "@/lib/plans-catalog";
 import { OnboardingChecklist } from "@/components/onboarding-checklist";
+import { FirstSendView } from "@/components/first-send-view";
 import { UpgradeNudge, UsageBar, usageInfo } from "@/components/plan-usage";
 import type { Account, AccountHealth, CampaignListItem, OnboardingState } from "@/lib/types";
 
@@ -79,6 +80,15 @@ export function DashboardView({
 }) {
   const router = useRouter();
   const { organization } = useOrganization();
+
+  // Day zero is a different page, not a thinner one: until the account has sent
+  // something, the tiles below describe an account nobody has a question about
+  // yet, and the recent-campaigns table is an empty state where the product's
+  // whole pitch should be. See <FirstSendView> and
+  // docs/dashboard-day-zero-plan.md §A5.
+  if (!onboarding.hasSentCampaign) {
+    return <FirstSendView account={account} onboarding={onboarding} />;
+  }
 
   // Derived, once, so the value and footer of each card stay in sync.
   const canSend = planCanSend(account.plan);

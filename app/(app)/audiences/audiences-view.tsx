@@ -42,22 +42,15 @@ import {
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiPanel } from "@/components/api-panel";
-import { NextSteps } from "@/components/next-steps";
 import { useApi } from "@/lib/api";
 import { buildAudiencesPanelContent } from "@/lib/api-docs";
 import { formatDate } from "@/lib/format";
-import type { Audience, OnboardingState } from "@/lib/types";
+import type { Audience } from "@/lib/types";
 import { SuppressionsTab } from "./suppressions-tab";
 
 type TabKey = "audiences" | "suppressions";
 
-export function AudiencesView({
-  initialAudiences,
-  onboarding,
-}: {
-  initialAudiences: Audience[];
-  onboarding: OnboardingState;
-}) {
+export function AudiencesView({ initialAudiences }: { initialAudiences: Audience[] }) {
   const api = useApi();
   const router = useRouter();
   // Audiences | Suppressions. Reflected in ?tab= so the blocklist is deep-linkable
@@ -196,7 +189,6 @@ export function AudiencesView({
         </Dialog>
       </div>
 
-      <NextSteps onboarding={onboarding} hideWhenOn="audience" />
 
       {audiences.length > 0 && (
         <ListToolbar>

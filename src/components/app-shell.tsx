@@ -16,6 +16,8 @@ import { AiBudgetProvider, useAiBudget } from "@/components/ai-budget-context";
 import { HelpButton } from "@/components/help-button";
 import { NotificationBell } from "@/components/notification-bell";
 import { CommandPalette } from "@/components/command-palette";
+import { NextSteps } from "@/components/next-steps";
+import type { OnboardingState } from "@/lib/types";
 import { LayoutGridIcon } from "@/components/ui/animated-icons/layout-grid";
 import { MailCheckIcon } from "@/components/ui/animated-icons/mail-check";
 import { ChartColumnIcon } from "@/components/ui/animated-icons/chart-column";
@@ -190,7 +192,17 @@ const sessionSynced = new Set<string>();
 
 // `plan` is resolved by the server layout and passed in — it rides along on the
 // account lookup the page already does, so the pill costs no request of its own.
-export function AppShell({ children, plan }: { children: React.ReactNode; plan: string }) {
+export function AppShell({
+  children,
+  plan,
+  onboarding,
+}: {
+  children: React.ReactNode;
+  plan: string;
+  // Resolved by the server layout, same memoized account lookup as `plan`. Drives
+  // the setup strip above the page content; null when unavailable.
+  onboarding?: OnboardingState | null;
+}) {
   const api = useApi();
   const pathname = usePathname();
   const { orgId } = useAuth();
@@ -357,6 +369,10 @@ export function AppShell({ children, plan }: { children: React.ReactNode; plan: 
                 desktop m-5 + px-8 spends 26 % of the width on margin, which is
                 what makes a table or a form field feel cramped there. */}
             <main className="mx-3 mb-3 min-h-0 flex-1 overflow-auto rounded-2xl border border-border bg-card px-4 py-5 shadow-[0_18px_50px_-24px_oklch(0_0_0/0.85)] sm:mx-4 sm:mb-4 sm:px-6 md:m-5 md:px-8 md:py-6">
+              {/* Inside <main> rather than above it so the strip shares the page's
+                  gutter and reads as part of the content, not as a second bar of
+                  chrome. It renders nothing once onboarding is done. */}
+              {onboarding && <NextSteps onboarding={onboarding} />}
               {children}
             </main>
           </div>

@@ -170,10 +170,20 @@ Key pricing facts:
     re-meter a live send) and are badged **Sandbox** in the campaign list, on the
     campaign, and in Metrics. Their numbers count toward the metrics totals —
     they are real sends.
-  - Recipients are narrowed to the org roster at recipient-generation time. The
-    audience page's **"Add your team"** action puts the org's members in an
-    audience as contacts in one click, which is what makes a first sandbox send
-    reach anyone.
+  - Recipients are narrowed to the org roster at recipient-generation time. Every
+    new org is **provisioned with a team audience** already seeded with its
+    members, so a first sandbox send reaches somebody without any setup; the
+    audience page's **"Add your team"** action does the same thing on demand for
+    any other audience.
+  - **The first email needs no setup at all.** Every account also gets a
+    pre-verified **Day3 test address** on a domain we own, so a brand new org can
+    send itself a real email before publishing a DNS record, importing a contact,
+    or entering a postal address (mail from it carries Day3's own address, since
+    Day3 is the sender of record there). It is strictly a test address: it may
+    only ever carry sandbox mail, to the org's own team, and it never counts as
+    the user's verified domain. Reaching real subscribers still means verifying a
+    domain of your own, which is now step two rather than the first thing a new
+    user is asked to do.
   - A sandbox account whose allowance runs out is blocked with one shared
     message across all three surfaces; a risk pause still outranks the sandbox.
     An *unrecognized* plan value is not granted a sandbox — it fails closed.
@@ -1144,10 +1154,27 @@ the app.
 ### 6.18 Dashboard & getting around
 
 **The Dashboard** is the landing screen — a sending overview for the current
-organization, built to answer "what state am I in, and what should I do next?":
-- **Onboarding checklist** — the real first-run path (verify a sending domain → import
-  an audience → create a campaign → send your first campaign), with a completed count
-  and a CTA on the first unfinished step. It disappears as it's satisfied.
+organization, built to answer "what state am I in, and what should I do next?"
+
+**Before the first send it is a different page.** An account that has never sent
+gets a first-run screen built around one action: *Write my first email*, which
+opens a ready draft (a real template, addressed to the provisioned team audience,
+from the Day3 test address) so a new user watches a real email arrive before being
+asked to set anything up. Under it, three steps in the order that now matters
+(see it work, send from your own address, bring your subscribers in) and a
+labelled, number-free preview of what the page becomes once there is data to show
+(never mock figures a user could mistake for their own). After that first send,
+one question, asked once: *do you already have a list?* The answer points the
+audience step at a CSV import or a signup form, because "import an audience" is a
+dead end for a team with nobody to import yet.
+
+A one-line **setup strip** carries the same next step onto the other pages, so
+someone part-way through DNS still sees what is left; it hides itself on the
+dashboard and on whichever page fixes the step it names.
+
+Once the account has sent, the dashboard is the overview below:
+- **Onboarding checklist**: what remains of the first-run path, with a completed
+  count and a CTA on the first unfinished step. It disappears as it's satisfied.
 - **Three KPI tiles:** **Plan** (tier + subscription status, or a *Sandbox* badge on
   free, linking to billing), **Emails this month** (used / allowance with a usage bar and
   the remaining headroom), and **Sending status** — a single traffic light over the real
@@ -1495,8 +1522,11 @@ send through the same ledger lookup as a campaign send.
 
 ## 9. Key user flows
 
-1. **Onboarding:** sign up → create/join an organization → subscribe to a paid plan
-   → verify a sending domain → create an audience → create a campaign → send.
+1. **Onboarding:** sign up → create/join an organization → **send yourself a real
+   email straight away** (a starter template, to your own team, from the Day3 test
+   address, with nothing to configure) → verify a sending domain → bring in an
+   audience → send to real subscribers. Paying comes when you want to reach anyone
+   outside your own team.
 2. **Grow the list:** create a signup form → embed/share it → subscribers confirm
    (double opt-in) → they land in an audience.
 3. **Send a product update:** draft (optionally with AI) → test email → submit → Day3

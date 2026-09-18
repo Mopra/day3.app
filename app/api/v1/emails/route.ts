@@ -22,6 +22,7 @@ import {
   orgMemberEmails,
   SANDBOX_EXHAUSTED_MESSAGE,
 } from "@/services/sandbox";
+import { sharedDomainSendError } from "@/services/shared-domain";
 import { getSuppressedEmails } from "@/services/suppression";
 import {
   MAX_CUSTOM_HEADERS,
@@ -228,6 +229,14 @@ export const POST = apiRoute(async (req, ctx) => {
       `"${emailDomain(from.email)}" is not a verified sending domain on this account. Verify it under Domains in the dashboard first.`,
       { param: "from" },
     );
+  }
+
+  // The Day3 shared sandbox domain is pre-verified on every account, so without
+  // this an API key would be the way around the rule that it only ever carries
+  // sandbox mail. Fails closed (services/shared-domain.ts).
+  const sharedError = sharedDomainSendError(domain, { sandbox });
+  if (sharedError) {
+    throw new ApiError(403, "domain_not_verified", sharedError, { param: "from" });
   }
 
   // Sandbox recipients must be the org's own members (the local roster synced

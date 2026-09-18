@@ -4,7 +4,8 @@ import { requireAccount } from "@/api/context";
 import { findDomain } from "@/api/finders";
 import { sendingDomains } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
-import { dkimWindowClosed, parseDnsRecords } from "@/lib/domain";
+import { dkimWindowClosed, parseDnsRecords, registrableRoot } from "@/lib/domain";
+import { detectRegistrar } from "@/services/dns-registrar";
 import { publishToCloudflare } from "@/services/dns-publish";
 import { resolveRecords } from "@/services/dns-resolve";
 import { ensureMailFrom, getDomainIdentity, restartDkim } from "@/services/ses-identity";
@@ -92,10 +93,15 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
       return json({
         domain: fresh,
         dns: fresh ? await dnsFor(fresh) : { records: [], requiredResolved: false },
+        registrar: await detectRegistrar(registrableRoot(row.domain)),
       });
     } catch (err) {
       console.error("[domains] SES GetEmailIdentity failed:", err);
     }
   }
-  return json({ domain: row, dns: await dnsFor(row) });
+  return json({
+    domain: row,
+    dns: await dnsFor(row),
+    registrar: await detectRegistrar(registrableRoot(row.domain)),
+  });
 });

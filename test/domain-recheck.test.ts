@@ -369,3 +369,70 @@ describe("recheckVerifiedDomains", () => {
     expect(await recheckVerifiedDomains(db, fetcher)).toBe(1);
   });
 });
+
+describe("domain_verified notification", () => {
+  // The whole promise of the background re-check is that a user can paste the
+  // records and walk away. Nothing kept that promise until this notification.
+  it("notifies the account once when a pending domain verifies", async () => {
+    const db = await testDb();
+    const account = await seedAccount(db);
+    await seedDomain(db, account.id, {
+      domain: "updates.test.co",
+      verificationStatus: "pending",
+      dkimStatus: "pending",
+      dnsRecordsJson: JSON.stringify(RECORDS),
+    });
+
+    await recheckPendingDomains(db, fakeFetcher({ "updates.test.co": verifiedState() }));
+
+    const rows = await db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.accountId, account.id));
+    const verified = rows.filter((n) => n.kind === "domain_verified");
+    expect(verified).toHaveLength(1);
+    expect(verified[0].title).toContain("updates.test.co");
+  });
+
+  // A later sweep finds the domain already verified and must say nothing: the
+  // claimed-transition guard is what makes the notification exactly-once.
+  it("does not notify again on a later sweep", async () => {
+    const db = await testDb();
+    const account = await seedAccount(db);
+    await seedDomain(db, account.id, {
+      domain: "updates.test.co",
+      verificationStatus: "pending",
+      dkimStatus: "pending",
+      dnsRecordsJson: JSON.stringify(RECORDS),
+    });
+
+    const fetcher = fakeFetcher({ "updates.test.co": verifiedState() });
+    await recheckPendingDomains(db, fetcher);
+    await recheckPendingDomains(db, fetcher);
+
+    const rows = await db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.accountId, account.id));
+    expect(rows.filter((n) => n.kind === "domain_verified")).toHaveLength(1);
+  });
+
+  it("says nothing when the domain is still pending", async () => {
+    const db = await testDb();
+    const account = await seedAccount(db);
+    await seedDomain(db, account.id, {
+      domain: "updates.test.co",
+      verificationStatus: "pending",
+      dkimStatus: "pending",
+      dnsRecordsJson: JSON.stringify(RECORDS),
+    });
+
+    await recheckPendingDomains(db, fakeFetcher({ "updates.test.co": pendingState() }));
+
+    const rows = await db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.accountId, account.id));
+    expect(rows).toHaveLength(0);
+  });
+});

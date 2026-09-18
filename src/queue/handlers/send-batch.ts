@@ -34,6 +34,7 @@ import {
 import { getSuppressedEmails, addSuppression } from "../../services/suppression";
 import { emitWebhookEvent } from "../../services/webhook-events";
 import { getAudienceFieldFallbacks } from "../../services/audience-fields";
+import { footerAddress } from "../../services/footer-address";
 import { enforceAccountHealth } from "../../services/health";
 import { notifyCampaignPaused, notifyCampaignSent } from "../../services/notifications";
 import { releaseReservation, reserveQuota } from "../../services/quota";
@@ -248,7 +249,24 @@ export async function sendCampaignBatch(
   let skipped = 0;
 
   if (claimed.length > 0) {
-    const result = await sendToClaimed(claimed, account, campaign, deps);
+    // Resolved once per batch, not per recipient: which postal address the
+    // footer carries depends on whether this campaign leaves from the shared
+    // Day3 domain or the customer's own (services/footer-address.ts), and that
+    // is fixed for the campaign.
+    const domain = await db.query.sendingDomains.findFirst({
+      columns: { shared: true },
+      where: and(
+        eq(sendingDomains.id, campaign.sendingDomainId),
+        eq(sendingDomains.accountId, account.id),
+      ),
+    });
+    const result = await sendToClaimed(
+      claimed,
+      account,
+      footerAddress(account, domain ?? null),
+      campaign,
+      deps,
+    );
     sent = result.sent;
     failed = result.failed;
     skipped = result.skipped;
@@ -408,6 +426,9 @@ function parseEventError(payloadJson: string | null | undefined): string | null 
 async function sendToClaimed(
   claimed: CampaignRecipient[],
   account: { id: string; name: string; companyAddress: string | null },
+  // Resolved by the caller (services/footer-address.ts): the account's own
+  // address, or Day3's when the campaign leaves from the shared sandbox domain.
+  companyAddress: string,
   campaign: Campaign,
   deps: SendBatchDeps,
 ): Promise<{ sent: number; failed: number; skipped: number }> {
@@ -552,7 +573,7 @@ async function sendToClaimed(
           attributes: subscriber?.attributes,
         },
         companyName: account.name,
-        companyAddress: account.companyAddress,
+        companyAddress,
         unsubscribeUrl: unsubUrl,
         openTrackingUrl: openUrl,
         linkTracking,

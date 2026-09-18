@@ -51,6 +51,7 @@ import {
   writeSkippedLedgerRow,
   type EngineDeps,
 } from "../../services/automation-engine";
+import { footerAddress } from "../../services/footer-address";
 import { enforceAccountHealth } from "../../services/health";
 import {
   clickTrackingUrl,
@@ -61,6 +62,7 @@ import {
 import { releaseReservation, reserveQuota } from "../../services/quota";
 import { extractTrackableLinks, renderCampaignEmail } from "../../services/render";
 import { SANDBOX_MONTHLY_ALLOWANCE, orgMemberEmails } from "../../services/sandbox";
+import { sharedDomainSendError } from "../../services/shared-domain";
 import { addSuppression, isEmailSuppressed } from "../../services/suppression";
 import { signUnsubscribeToken, unsubscribeUrl } from "../../services/unsubscribe";
 import { emitWebhookEvent } from "../../services/webhook-events";
@@ -213,10 +215,13 @@ export async function sendAutomationNode(
   // The From name falls back to the account name the way the campaign
   // composer does; only a missing address is a reason to hold.
   const fromName = automation.fromName?.trim() || account?.name || "";
+  // Loaded once and reused for the footer address below, rather than queried
+  // twice for one recipient.
+  const domain = await loadSendingDomain(db, automation);
   const hold =
     accountHoldReason(account, enrollment.sandbox) ??
     (!automation.fromEmail || !fromName ? "from_identity_missing" : null) ??
-    (await domainHoldReason(db, automation));
+    domainHoldReason(domain, automation, enrollment.sandbox);
   if (hold) {
     await holdOrSkip(db, engine, enrollment, automation, graph, node, hold, subscriber.email);
     return;
@@ -302,7 +307,7 @@ export async function sendAutomationNode(
         attributes: subscriber.attributes,
       },
       companyName: account!.name,
-      companyAddress: account!.companyAddress,
+      companyAddress: footerAddress(account!, domain ?? null),
       unsubscribeUrl: unsubUrl,
       openTrackingUrl: openUrl,
       linkTracking,
@@ -733,16 +738,49 @@ function providerHoldReason(error: string): string | null {
 // An operator's override counts as verified, exactly as it does at publish and
 // on the campaign send gate: publish and send must agree on what "verified"
 // means, or an overridden domain publishes fine and then never sends.
-async function domainHoldReason(db: Db, automation: Automation): Promise<string | null> {
+type SendDomainRow = {
+  verificationStatus: string;
+  adminOverrideVerified: boolean;
+  shared: boolean;
+  sharedDisabledAt: string | null;
+};
+
+/** The automation's sending domain, or null when it has none configured. */
+async function loadSendingDomain(
+  db: Db,
+  automation: Automation,
+): Promise<SendDomainRow | null | undefined> {
   if (!automation.sendingDomainId) return null;
-  const domain = await db.query.sendingDomains.findFirst({
-    columns: { verificationStatus: true, adminOverrideVerified: true },
-    where: and(
-      eq(sendingDomains.id, automation.sendingDomainId),
-      eq(sendingDomains.accountId, automation.accountId),
-    ),
-  });
+  return (
+    (await db.query.sendingDomains.findFirst({
+      columns: {
+        verificationStatus: true,
+        adminOverrideVerified: true,
+        shared: true,
+        sharedDisabledAt: true,
+      },
+      where: and(
+        eq(sendingDomains.id, automation.sendingDomainId),
+        eq(sendingDomains.accountId, automation.accountId),
+      ),
+    })) ?? undefined
+  );
+}
+
+function domainHoldReason(
+  domain: SendDomainRow | null | undefined,
+  automation: Automation,
+  sandbox: boolean,
+): string | null {
+  if (!automation.sendingDomainId) return null;
   if (!domain) return "domain_missing";
+  // The shared Day3 domain may only carry sandbox mail. Publish checks this too,
+  // but an account can leave sandbox (an upgrade, a plan fix) long after a flow
+  // went live, and this handler is the last thing between that and a stranger's
+  // inbox, so it re-asks rather than trusting the publish-time answer. A hold,
+  // not a skip: the user upgrades to reach real people, and the fix is to point
+  // the automation at their own verified domain (§5.6).
+  if (sharedDomainSendError(domain, { sandbox })) return "shared_domain_not_sandbox";
   return domain.verificationStatus === "verified" || domain.adminOverrideVerified
     ? null
     : "domain_not_verified";

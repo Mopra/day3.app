@@ -131,6 +131,18 @@ function adminRoutes(): AdminRoute[] {
       }),
     },
     {
+      // The shared-domain kill switch: an operator cutting one tenant off the
+      // Day3 test address without touching anyone else.
+      path: "accounts/[id]/shared-domain",
+      importPath: "../app/api/admin/accounts/[id]/shared-domain/route",
+      method: "POST",
+      build: async () => ({
+        url: `http://localhost/api/admin/accounts/${seeded.accountId}/shared-domain`,
+        params: { id: seeded.accountId },
+        body: { disabled: true },
+      }),
+    },
+    {
       path: "accounts/[id]/pause",
       importPath: "../app/api/admin/accounts/[id]/pause/route",
       method: "POST",

@@ -1,11 +1,10 @@
 import { requireAccount } from "@/api/context";
 import { listCampaigns } from "@/api/lists";
-import { computeOnboardingState } from "@/services/onboarding";
 import { CampaignsView } from "./campaigns-view";
 
-// Server-rendered list. The rows and the onboarding strip are read here and handed
-// to the client component as props, so the page paints its real content on the
-// first frame.
+// Server-rendered list. The rows are read here and handed to the client component
+// as props, so the page paints its real content on the first frame. (The setup
+// strip is resolved once in the layout now, not per page.)
 //
 // The client-fetch-on-mount version this replaces cost two SERIAL round trips per
 // navigation: one for the RSC payload (which carried nothing but a reference to the
@@ -17,9 +16,6 @@ import { CampaignsView } from "./campaigns-view";
 // component re-reads it after a mutation, and it's the same list either way.
 export default async function CampaignsPage() {
   const { db, account } = await requireAccount();
-  const [campaigns, onboarding] = await Promise.all([
-    listCampaigns(db, account.id),
-    computeOnboardingState(db, account),
-  ]);
-  return <CampaignsView initialCampaigns={campaigns} onboarding={onboarding} />;
+  const campaigns = await listCampaigns(db, account.id);
+  return <CampaignsView initialCampaigns={campaigns} />;
 }

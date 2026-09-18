@@ -31,6 +31,7 @@ import {
   relativeHost,
 } from "@/lib/domain";
 import type { DnsRecord, SendingDomain } from "@/lib/types";
+import type { RegistrarGuide } from "@/services/dns-registrar";
 
 const POLL_MS = 12_000;
 // Tight early polling to catch SES the instant it verifies, then settle to POLL_MS.
@@ -82,6 +83,9 @@ export function DomainSetupGuide({
   const [checking, setChecking] = useState(false);
   const [lastChecked, setLastChecked] = useState<Date | null>(null);
   const [dns, setDns] = useState<DnsStatus>({ records: [], requiredResolved: false });
+  // Best guess at the DNS host, from the nameservers (services/dns-registrar.ts).
+  // Advisory: null just means the help block shows its full provider list.
+  const [registrar, setRegistrar] = useState<RegistrarGuide | null>(null);
   // Always show the relative ("subdomain only") form: it's what the hosted DNS
   // dashboards the vast majority of users have (Cloudflare, GoDaddy, Namecheap,
   // Route 53, Google) expect — they append the zone themselves. Pasting the full
@@ -109,12 +113,14 @@ export function DomainSetupGuide({
     async (opts?: { manual?: boolean }) => {
       setChecking(true);
       try {
-        const res = await api.post<{ domain: SendingDomain; dns?: DnsStatus }>(
-          `/api/domains/${domain.id}/check`,
-          {},
-        );
+        const res = await api.post<{
+          domain: SendingDomain;
+          dns?: DnsStatus;
+          registrar?: RegistrarGuide | null;
+        }>(`/api/domains/${domain.id}/check`, {});
         if (res?.domain) onChange(res.domain);
         if (res?.dns) setDns(res.dns);
+        if (res?.registrar !== undefined) setRegistrar(res.registrar);
         setLastChecked(new Date());
         if (opts?.manual && res?.domain) {
           const next = domainState(res.domain);
@@ -347,7 +353,7 @@ export function DomainSetupGuide({
           </div>
         )}
 
-        <HelpSection root={root} />
+        <HelpSection root={root} registrar={registrar} />
       </div>
     </div>
   );
@@ -1191,7 +1197,7 @@ function CopyField({ label, value }: { label: string; value: string }) {
 
 /* ----------------------------------------------------------------------------- */
 
-function HelpSection({ root }: { root: string }) {
+function HelpSection({ root, registrar }: { root: string; registrar: RegistrarGuide | null }) {
   return (
     <details className="group rounded-xl border bg-card">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium">
@@ -1206,8 +1212,23 @@ function HelpSection({ root }: { root: string }) {
             <span className="font-medium text-foreground">{root}</span> and open its DNS settings.
             Add each record above with its Type, Name/Host, and Value. Leave TTL at the default.
           </p>
+          {/* When the nameserver lookup identified the DNS host, lead with it:
+              "find your provider in this list" is the step that most often stalls
+              a non-technical user, and we already know the answer. The full list
+              stays below as the fallback (and for anyone whose NS we don't map). */}
+          {registrar && (
+            <a
+              href={registrar.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/5 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-primary/10"
+            >
+              Looks like {registrar.name} hosts your DNS. Open their guide
+              <ExternalLink className="size-3" />
+            </a>
+          )}
           <div className="mt-2 flex flex-wrap gap-2">
-            {PROVIDER_DOCS.map((p) => (
+            {PROVIDER_DOCS.filter((p) => p.name !== registrar?.name).map((p) => (
               <a
                 key={p.name}
                 href={p.href}

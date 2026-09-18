@@ -798,6 +798,19 @@ export async function recheckPendingDomains(
     .orderBy(sql`${sendingDomains.lastCheckedAt} asc nulls first`)
     .limit(DOMAIN_RECHECK_MAX);
 
+  // One account can have several domains verify in the same sweep; read each
+  // account once (same pattern as the verified sweep below).
+  const accountCache = new Map<string, Account | undefined>();
+  const accountFor = async (accountId: string): Promise<Account | undefined> => {
+    if (!accountCache.has(accountId)) {
+      accountCache.set(
+        accountId,
+        await db.query.accounts.findFirst({ where: eq(accounts.id, accountId) }),
+      );
+    }
+    return accountCache.get(accountId);
+  };
+
   let verified = 0;
   for (const domain of pending) {
     try {
@@ -807,11 +820,41 @@ export async function recheckPendingDomains(
       // optional Return-Path (mailFromStatus), so the setup guide reflects the
       // latest SES state even when only deliverability moved.
       if (identityMoved(domain, state)) {
-        await db
+        // Claim the transition on the status we read, exactly as the verified
+        // sweep does. The notification below is the user-visible half of this
+        // write: a concurrent sweep that already applied the same move must not
+        // announce it twice, and a later sweep that finds the domain still
+        // verified must not announce it at all.
+        const claimed = await db
           .update(sendingDomains)
           .set({ ...identityFields(state), lastCheckedAt: now, updatedAt: now })
-          .where(eq(sendingDomains.id, domain.id));
-        if (state.verificationStatus === "verified") verified += 1;
+          .where(
+            and(
+              eq(sendingDomains.id, domain.id),
+              eq(sendingDomains.verificationStatus, domain.verificationStatus),
+            ),
+          )
+          .returning({ id: sendingDomains.id });
+        if (claimed.length === 0) continue;
+
+        if (state.verificationStatus === "verified") {
+          verified += 1;
+          // The whole promise of the setup guide's background re-check is that
+          // you can paste the records and walk away. Nothing kept that promise
+          // before this: the user had to sit on the page, or guess and come back.
+          const account = await accountFor(domain.accountId);
+          if (account) {
+            await notifyAccount(db, account, {
+              kind: "domain_verified",
+              title: `${domain.domain} is verified`,
+              body:
+                "Your DNS records checked out, so email can now go out from this domain. " +
+                "Pick it as your From address on a campaign and you are ready to send.",
+              ctaHref: `/domains/${domain.id}`,
+              ctaLabel: "See the domain",
+            });
+          }
+        }
       } else {
         // Nothing moved, but the read still happened. Stamp it so the ordering
         // above advances to the rows queued behind this one.

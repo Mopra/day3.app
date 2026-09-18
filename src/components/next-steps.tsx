@@ -1,32 +1,48 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { ArrowRight } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { OnboardingState } from "@/lib/types";
 
-// A one-line "here's your next move" strip, fed by the same server-computed
-// onboarding state as the dashboard checklist. Dropped onto the domain, audience,
-// and campaign pages so the golden path never dead-ends — a founder who just
-// verified a domain sees "Import your audience →" without hunting for the nav.
-// Renders nothing once the account has sent its first campaign (onboarding done),
-// or when the current step is the one the page is already on (avoid pointing a
-// user at the page they're looking at).
+// The "here's your next move" strip, fed by the same server-computed onboarding
+// state as the dashboard's checklist.
+//
+// It lives in <AppShell> rather than on individual pages because setup is where
+// a new user spends their first session, and the checklist was only on the
+// dashboard: someone part-way through DNS on /sending had no idea what came next
+// or how much was left. Now the thread follows them. It renders nothing once the
+// account has sent its first campaign, and nothing on the page that would fix
+// the step it is pointing at (including the dashboard, which shows the full
+// checklist and does not need a one-line echo of it).
+//
+// Order matches <FirstSendView>: see an email work, then your own domain, then a
+// real audience. DNS is not step one any more.
+
 type Step = { key: string; href: string; label: string; hint: string };
 
 export function NextSteps({
   onboarding,
-  hideWhenOn,
+  className,
 }: {
   onboarding: OnboardingState;
-  // The step key this page represents, so we don't tell the user to go where they
-  // already are (e.g. hide the "verify a domain" nudge on the domains page).
-  hideWhenOn?: Step["key"];
+  className?: string;
 }) {
+  const pathname = usePathname();
   if (onboarding.hasSentCampaign) return null;
 
   const steps: Step[] = [
+    ...(onboarding.canSendFirstEmail
+      ? [
+          {
+            key: "first-send",
+            href: "/dashboard",
+            label: "Send yourself your first email",
+            hint: "Nothing to set up. It goes to your team and nobody else.",
+          },
+        ]
+      : []),
     {
       key: "domain",
       href: "/sending",
@@ -35,15 +51,21 @@ export function NextSteps({
     },
     {
       key: "audience",
-      href: "/audiences",
-      label: "Import your audience",
-      hint: "Add the subscribers you want to email.",
+      href: onboarding.onboardingPath === "building_list" ? "/forms" : "/audiences",
+      label:
+        onboarding.onboardingPath === "building_list"
+          ? "Start collecting subscribers"
+          : "Import your audience",
+      hint:
+        onboarding.onboardingPath === "building_list"
+          ? "Publish a signup form and share the link."
+          : "Add the subscribers you want to email.",
     },
     {
       key: "address",
       href: "/settings",
       label: "Add your business address",
-      hint: "It's required by law in every email footer.",
+      hint: "It's required by law in every email to your subscribers.",
     },
     {
       key: "campaign",
@@ -54,27 +76,40 @@ export function NextSteps({
   ];
 
   const done: Record<string, boolean> = {
+    "first-send": onboarding.hasSentCampaign,
     domain: onboarding.hasVerifiedDomain,
-    audience: onboarding.hasSubscribers,
+    audience: onboarding.hasOwnSubscribers,
     address: onboarding.hasMailingAddress,
     campaign: onboarding.hasCampaign,
   };
 
   const next = steps.find((s) => !done[s.key]);
-  if (!next || next.key === hideWhenOn) return null;
+  if (!next) return null;
+  // Don't point someone at the page they are already on, and don't compete with
+  // the dashboard's own checklist.
+  if (pathname === "/dashboard" || pathname.startsWith(next.href)) return null;
+
+  const remaining = steps.filter((s) => !done[s.key]).length;
 
   return (
-    <Card className="border-primary/40 bg-primary/[0.03]">
-      <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-sm font-medium">Next: {next.label}</p>
-          <p className="mt-0.5 text-sm text-muted-foreground">{next.hint}</p>
-        </div>
-        <Button render={<Link href={next.href} />} className="shrink-0">
-          {next.label}
-          <ArrowRight className="size-4" />
-        </Button>
-      </CardContent>
-    </Card>
+    <Link
+      href={next.href}
+      className={cn(
+        "group mb-5 flex items-center gap-3 rounded-lg border border-primary/30 bg-primary/[0.04] px-3 py-2 transition-colors hover:bg-primary/[0.07]",
+        className,
+      )}
+    >
+      <span className="min-w-0 flex-1 text-sm">
+        <span className="font-medium">Next: {next.label}</span>{" "}
+        <span className="text-muted-foreground">{next.hint}</span>
+      </span>
+      <span className="hidden shrink-0 text-xs text-muted-foreground tabular-nums sm:inline">
+        {remaining} left
+      </span>
+      <ArrowRight
+        className="size-4 shrink-0 text-primary transition-transform group-hover:translate-x-0.5"
+        aria-hidden
+      />
+    </Link>
   );
 }

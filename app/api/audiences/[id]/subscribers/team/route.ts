@@ -1,14 +1,9 @@
 import { route, json, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
-import { accountUsers, subscribers } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { newId, nowIso } from "@/lib/ids";
-import { canonicalizeEmail, isValidEmail } from "@/lib/csv";
 import { enforceRateLimit } from "@/lib/rate-limit";
-import { getSuppressedEmails } from "@/services/suppression";
-import { subscriberHeadroom, subscriberLimitMessage } from "@/services/subscriber-limit";
-import { enrollAudienceJoin } from "@/services/automation-enroll";
+import { subscriberLimitMessage } from "@/services/subscriber-limit";
+import { addTeamToAudience } from "@/services/team-audience";
 
 // POST /api/audiences/[id]/subscribers/team — add every member of the
 // organization to this audience as a subscribed contact.
@@ -20,10 +15,9 @@ import { enrollAudienceJoin } from "@/services/automation-enroll";
 // useful on paid plans too (teams routinely want themselves on the list), so
 // it isn't plan-gated.
 //
-// The roster is read server-side from account_users; the request carries no
-// addresses, so this can't be used to inject arbitrary contacts. Re-running it
-// is a no-op for members already present (onConflictDoNothing), which makes it
-// safe to offer as a plain button with no confirmation.
+// The work itself lives in services/team-audience.ts because account
+// provisioning seeds an audience through the same path, and "which contacts does
+// adding your team create" must not have two answers.
 export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
   const { id } = await params;
   const { db, account } = await requireAccount();
@@ -32,64 +26,16 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
   const audience = await findAudience(db, account.id, id);
   if (!audience) throw new HttpError(404, "Not found");
 
-  const members = await db
-    .select({ email: accountUsers.email })
-    .from(accountUsers)
-    .where(eq(accountUsers.accountId, account.id));
-
-  const emails = [
-    ...new Set(
-      members.map((m) => canonicalizeEmail(m.email)).filter((email) => isValidEmail(email)),
-    ),
-  ];
-  if (emails.length === 0) {
-    throw new HttpError(400, "We couldn't find any members on your organization to add.");
+  const result = await addTeamToAudience(db, account, audience.id);
+  if (!result.ok) {
+    if (result.reason === "no_members") {
+      throw new HttpError(400, "We couldn't find any members on your organization to add.");
+    }
+    if (result.reason === "all_suppressed") {
+      throw new HttpError(409, "Everyone on your team is on the suppression list.");
+    }
+    throw new HttpError(403, subscriberLimitMessage(account.plan));
   }
 
-  // A teammate who hard-bounced or complained stays off the list — the
-  // suppression list outranks convenience, exactly as it does on import.
-  const suppressed = await getSuppressedEmails(db, account.id, emails);
-  const addable = emails.filter((email) => !suppressed.has(email));
-  if (addable.length === 0) {
-    throw new HttpError(409, "Everyone on your team is on the suppression list.");
-  }
-
-  // Free-tier subscriber cap still applies; adding the team is the one case
-  // where an account at its cap should get a clear message rather than a
-  // silently short insert.
-  const headroom = await subscriberHeadroom(db, account.id, account.plan);
-  if (headroom < 1) throw new HttpError(403, subscriberLimitMessage(account.plan));
-
-  const now = nowIso();
-  const inserted = await db
-    .insert(subscribers)
-    .values(
-      addable.slice(0, headroom).map((email) => ({
-        id: newId("sub"),
-        accountId: account.id,
-        audienceId: audience.id,
-        email,
-        firstName: null,
-        lastName: null,
-        attributes: null,
-        status: "subscribed" as const,
-        source: "manual",
-        createdAt: now,
-        updatedAt: now,
-      })),
-    )
-    .onConflictDoNothing()
-    .returning({ id: subscribers.id });
-
-  // Each new member row is an audience join for the live automations on this
-  // audience (a welcome flow the team can watch arrive). Best-effort.
-  await enrollAudienceJoin(db, null, {
-    accountId: account.id,
-    audienceId: audience.id,
-    subscriberIds: inserted.map((r) => r.id),
-  });
-
-  // `added` counts only the rows that were really new; the rest were already
-  // contacts. The UI needs both numbers to say something true either way.
-  return json({ ok: true, added: inserted.length, teamSize: emails.length });
+  return json({ ok: true, added: result.added, teamSize: result.teamSize });
 });

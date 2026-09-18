@@ -9,9 +9,13 @@ import { checkSendEligibility } from "./plans";
 import { releaseReservation, reserveQuota } from "./quota";
 import {
   accountSandboxMode,
+  orgMemberEmails,
   SANDBOX_EXHAUSTED_MESSAGE,
   SANDBOX_MONTHLY_ALLOWANCE,
 } from "./sandbox";
+import { sharedDomainSendError } from "./shared-domain";
+import { footerAddress } from "./footer-address";
+import { canonicalizeEmail } from "../lib/csv";
 import { getAudienceFieldFallbacks } from "./audience-fields";
 import { renderCampaignEmail } from "./render";
 import { safeParseTheme } from "../lib/theme";
@@ -81,6 +85,24 @@ export async function sendCampaignTest(
   // concurrent tests can't both squeeze past the last unit of allowance. What
   // doesn't actually send is given back below.
   const sandbox = accountSandboxMode(account);
+
+  // A test send is the one place a caller names its own recipients, which is
+  // exactly why the shared Day3 domain has to be checked here too: without this,
+  // "send a test" would be the way to put mail from our shared identity into any
+  // stranger's inbox. On the shared domain a test may only reach the org's own
+  // members, the same people a sandbox campaign reaches.
+  if (domain.shared) {
+    const sharedError = sharedDomainSendError(domain, { sandbox });
+    if (sharedError) throw new HttpError(403, sharedError);
+    const members = await orgMemberEmails(db, account.id);
+    const outside = toEmails.filter((email) => !members.has(canonicalizeEmail(email)));
+    if (outside.length > 0) {
+      throw new HttpError(
+        403,
+        `The Day3 test address only sends to your own team. Not on your team: ${outside.join(", ")}. Verify your own sending domain to send anywhere else.`,
+      );
+    }
+  }
   if (sandbox) {
     const granted = await reserveQuota(db, account.id, toEmails.length, SANDBOX_MONTHLY_ALLOWANCE);
     if (granted < toEmails.length) {
@@ -109,7 +131,7 @@ export async function sendCampaignTest(
       theme: safeParseTheme(campaign.themeJson),
       subscriber: { email: toEmail, firstName: "Test", lastName: "Recipient" },
       companyName: account.name,
-      companyAddress: account.companyAddress,
+      companyAddress: footerAddress(account, domain),
       unsubscribeUrl: unsubscribeUrl(process.env.APP_URL ?? "", token),
       fieldFallbacks,
     });

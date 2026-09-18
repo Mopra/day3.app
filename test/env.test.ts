@@ -255,3 +255,45 @@ describe("secret accessors fail fast (no empty-key signer)", () => {
     expect(requireAppUrl()).toBe(VALID.APP_URL);
   });
 });
+
+describe("shared sandbox domain env pairing", () => {
+  // The shared domain and Day3's postal address are one setting in two
+  // variables: mail from the shared domain carries Day3's address in its footer,
+  // which the law requires to be there. A deployment configured with one and not
+  // the other would send real mail with a blank address line, so it must not
+  // boot.
+  it("rejects a shared domain with no postal address", () => {
+    resetEnvCache();
+    expect(() =>
+      validateEnv("web", { ...VALID, SHARED_SANDBOX_DOMAIN: "sandbox.day3.app" } as NodeJS.ProcessEnv),
+    ).toThrow(/DAY3_POSTAL_ADDRESS/);
+  });
+
+  it("accepts the pair", () => {
+    resetEnvCache();
+    expect(() =>
+      validateEnv("web", {
+        ...VALID,
+        SHARED_SANDBOX_DOMAIN: "sandbox.day3.app",
+        DAY3_POSTAL_ADDRESS: "Day3 ApS, 1 Example Way, Copenhagen",
+      } as NodeJS.ProcessEnv),
+    ).not.toThrow();
+  });
+
+  it("accepts neither (the feature is off)", () => {
+    resetEnvCache();
+    expect(() => validateEnv("web", { ...VALID } as NodeJS.ProcessEnv)).not.toThrow();
+  });
+
+  // The worker renders the footer on every campaign and automation send, so the
+  // rule has to hold on that tier too.
+  it("enforces the pair on the worker profile", () => {
+    resetEnvCache();
+    expect(() =>
+      validateEnv("worker", {
+        ...WORKER_VALID,
+        SHARED_SANDBOX_DOMAIN: "sandbox.day3.app",
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/DAY3_POSTAL_ADDRESS/);
+  });
+});

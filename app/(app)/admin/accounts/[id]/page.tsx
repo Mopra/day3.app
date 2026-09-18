@@ -203,9 +203,18 @@ export default function AdminAccountPage() {
               <TableBody>
                 {domains.map((d) => (
                   <TableRow key={d.id}>
-                    <TableCell className="font-medium">{d.domain}</TableCell>
+                    <TableCell className="font-medium">
+                      {d.domain}
+                      {d.shared && (
+                        <span className="ml-2 text-xs text-muted-foreground">Day3 test address</span>
+                      )}
+                    </TableCell>
                     <TableCell>
-                      {d.adminOverrideVerified ? (
+                      {d.shared ? (
+                        <Badge variant={d.sharedDisabledAt ? "destructive" : "secondary"}>
+                          {d.sharedDisabledAt ? "cut off" : "shared"}
+                        </Badge>
+                      ) : d.adminOverrideVerified ? (
                         <Badge>verified (override)</Badge>
                       ) : (
                         <Badge
@@ -216,15 +225,36 @@ export default function AdminAccountPage() {
                       )}
                     </TableCell>
                     <TableCell className="text-right">
-                      {!d.adminOverrideVerified && d.verificationStatus !== "verified" && (
+                      {/* The shared identity's reputation is every tenant's, so an
+                          operator needs a lever narrower than pausing the whole
+                          account. Override-verify is meaningless here (the row is
+                          verified by construction), so the shared row gets this
+                          instead. */}
+                      {d.shared ? (
                         <Button
                           size="xs"
-                          variant="outline"
+                          variant={d.sharedDisabledAt ? "outline" : "destructive"}
                           disabled={busy}
-                          onClick={() => act(`/api/admin/domains/${d.id}/override-verify`)}
+                          onClick={() =>
+                            act(`/api/admin/accounts/${id}/shared-domain`, {
+                              disabled: !d.sharedDisabledAt,
+                            })
+                          }
                         >
-                          Override verify
+                          {d.sharedDisabledAt ? "Restore access" : "Cut off"}
                         </Button>
+                      ) : (
+                        !d.adminOverrideVerified &&
+                        d.verificationStatus !== "verified" && (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() => act(`/api/admin/domains/${d.id}/override-verify`)}
+                          >
+                            Override verify
+                          </Button>
+                        )
                       )}
                     </TableCell>
                   </TableRow>

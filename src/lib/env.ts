@@ -62,6 +62,19 @@ const fullSchema = z.object({
   EMAIL_PROVIDER: z.string().optional(),
   AWS_REGION: z.string().optional(), // required only when EMAIL_PROVIDER=ses
   SES_SNS_TOPIC_ARN: z.string().optional(), // required only when EMAIL_PROVIDER=ses (web tier)
+  // --- Shared sandbox domain, OPTIONAL. The Day3-owned domain a brand new org
+  // sends its first email from, before it has verified anything of its own (see
+  // docs/dashboard-day-zero-plan.md §A1). Unset = the feature is off and every
+  // account starts on the old "verify a domain first" path, which is what
+  // self-hosters and the test suite want.
+  //
+  // DAY3_POSTAL_ADDRESS is required alongside it (cross-checked below): on the
+  // shared domain Day3 is the sender of record, so Day3's own registered address
+  // is what goes in the footer. CAN-SPAM requires *an* address in every
+  // marketing email, so a shared domain configured without one would ship mail
+  // with an empty footer line. Fail the boot instead.
+  SHARED_SANDBOX_DOMAIN: z.string().optional(),
+  DAY3_POSTAL_ADDRESS: z.string().optional(),
   // --- AI (OpenRouter) — OPTIONAL. Powers the campaign drafting/assist helpers.
   // When OPENROUTER_API_KEY is unset, the AI features are hidden and the app runs
   // exactly as before (the assist routes return 503), so this is never required
@@ -94,6 +107,10 @@ const workerSchema = fullSchema.pick({
   UNSUBSCRIBE_SECRET: true,
   EMAIL_PROVIDER: true,
   AWS_REGION: true,
+  // The worker renders the footer on every campaign and automation send, so it
+  // is the tier that actually needs the shared domain's postal address.
+  SHARED_SANDBOX_DOMAIN: true,
+  DAY3_POSTAL_ADDRESS: true,
   AI_REVIEW_MODE: true,
   OPENROUTER_API_KEY: true,
   OPENROUTER_RISK_MODEL: true,
@@ -169,15 +186,35 @@ function aiReviewRefinement(
   }
 }
 
+// The shared sandbox domain and Day3's postal address are one setting in two
+// variables. A deployment that configures the domain but not the address would
+// send real mail with an empty address line in the footer, legally the one thing
+// the footer must carry. Caught at boot rather than in somebody's inbox.
+function sharedDomainRefinement(
+  env: { SHARED_SANDBOX_DOMAIN?: string; DAY3_POSTAL_ADDRESS?: string },
+  ctx: z.RefinementCtx,
+) {
+  if (env.SHARED_SANDBOX_DOMAIN?.trim() && !env.DAY3_POSTAL_ADDRESS?.trim()) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["DAY3_POSTAL_ADDRESS"],
+      message:
+        "DAY3_POSTAL_ADDRESS is required when SHARED_SANDBOX_DOMAIN is set: mail from the shared domain carries Day3's own postal address in its footer",
+    });
+  }
+}
+
 const schemas = {
   web: fullSchema
     .superRefine(sesRegionRefinement)
     .superRefine(sesTopicRefinement)
-    .superRefine(dnsKeyRefinement),
+    .superRefine(dnsKeyRefinement)
+    .superRefine(sharedDomainRefinement),
   worker: workerSchema
     .superRefine(sesRegionRefinement)
     .superRefine(aiReviewRefinement)
-    .superRefine(dnsKeyRefinement),
+    .superRefine(dnsKeyRefinement)
+    .superRefine(sharedDomainRefinement),
 } as const;
 
 let cached: Partial<Record<EnvProfile, Env>> = {};

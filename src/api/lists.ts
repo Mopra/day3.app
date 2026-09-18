@@ -66,11 +66,17 @@ export async function listAudiences(db: Db, accountId: string) {
     .orderBy(desc(audiences.createdAt));
 }
 
+// The account's OWN sending domains. The Day3 shared sandbox row is deliberately
+// excluded: it is not a domain the customer set up, cannot be edited or deleted
+// by them, and listing it among their domains would read as "you already
+// verified something": it would retire, in one stroke, the one setup step that lets
+// them reach real subscribers. It is surfaced on its own (sharedDomainCard), as
+// what it is: a test address.
 export async function listDomains(db: Db, accountId: string) {
   return db
     .select()
     .from(sendingDomains)
-    .where(eq(sendingDomains.accountId, accountId))
+    .where(and(eq(sendingDomains.accountId, accountId), eq(sendingDomains.shared, false)))
     .orderBy(desc(sendingDomains.createdAt));
 }
 

@@ -10,6 +10,7 @@ import { SectionsSchema, serializeSections, type CampaignSection } from "../lib/
 import { CampaignThemeSchema, type CampaignThemeInput } from "../lib/theme";
 import { campaignRecipientScope } from "../services/recipient-scope";
 import { orgMemberEmails } from "../services/sandbox";
+import { sharedDomainSendError } from "../services/shared-domain";
 import { segments, topics } from "../db/schema";
 
 export const CampaignFieldsSchema = z.object({
@@ -187,16 +188,9 @@ export async function campaignSendGateError(
   // pause or a bewildering zero-recipient "sent".
   opts: { sandbox?: boolean } = {},
 ): Promise<string | null> {
-  // CAN-SPAM (and equivalents) require a valid physical postal address in every
-  // marketing email. The footer renders {{company_address}} from the account, so
-  // a blank address ships a non-compliant email — and repeated complaints over
-  // missing footers are a fast path to SES suspension. Refuse to send until set.
   const account = await db.query.accounts.findFirst({
     where: eq(accounts.id, accountId),
   });
-  if (!account?.companyAddress?.trim()) {
-    return "Add your business mailing address in Settings before sending — it's legally required in every email.";
-  }
 
   const domain = await db.query.sendingDomains.findFirst({
     where: and(
@@ -204,6 +198,28 @@ export async function campaignSendGateError(
       eq(sendingDomains.accountId, accountId),
     ),
   });
+
+  // The shared Day3 sandbox domain is checked before anything else: its identity
+  // is one we own and every tenant draws on, so "may this send touch it at all?"
+  // outranks the account's own paperwork. Fails closed (services/shared-domain.ts).
+  if (domain) {
+    const sharedError = sharedDomainSendError(domain, { sandbox: opts.sandbox === true });
+    if (sharedError) return sharedError;
+  }
+
+  // CAN-SPAM (and equivalents) require a valid physical postal address in every
+  // marketing email. The footer renders {{company_address}} from the account, so
+  // a blank address ships a non-compliant email, and repeated complaints over
+  // missing footers are a fast path to SES suspension. Refuse to send until set.
+  //
+  // Exempt on the shared domain: there Day3 is the sender of record and the
+  // footer carries Day3's own registered address instead (services/footer-address.ts),
+  // so a brand new account is not sent hunting for its company's postal address
+  // before it can watch a single email work.
+  if (!domain?.shared && !account?.companyAddress?.trim()) {
+    return "Add your business mailing address in Settings before sending. It's legally required in every email.";
+  }
+
   const domainVerified =
     domain && (domain.verificationStatus === "verified" || domain.adminOverrideVerified);
   if (!domainVerified) return "Sending domain is not verified";

@@ -30,13 +30,12 @@ import {
   useListController,
 } from "@/components/ui/data-list";
 import { MenuItem, MenuSeparator } from "@/components/ui/menu";
-import { NextSteps } from "@/components/next-steps";
 import { useApi } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { CampaignStatusBadge } from "@/components/ui/campaign-status-badge";
 import { SandboxBadge } from "@/components/sandbox-notice";
 import { campaignStatusLabel } from "@/lib/format";
-import type { CampaignListItem, OnboardingState } from "@/lib/types";
+import type { CampaignListItem } from "@/lib/types";
 
 // A campaign mid-send can't be deleted (the worker is reading its rows); pause
 // it first. Everything else — drafts, scheduled, paused, sent, failed — is fair
@@ -45,13 +44,7 @@ function canDelete(status: string): boolean {
   return status !== "sending" && status !== "generating_recipients";
 }
 
-export function CampaignsView({
-  initialCampaigns,
-  onboarding,
-}: {
-  initialCampaigns: CampaignListItem[];
-  onboarding: OnboardingState;
-}) {
+export function CampaignsView({ initialCampaigns }: { initialCampaigns: CampaignListItem[] }) {
   const api = useApi();
   const router = useRouter();
   // Seeded from the server render, then owned locally so a delete can drop a row
@@ -82,8 +75,8 @@ export function CampaignsView({
       toast.success("Campaign deleted");
       setCampaigns((cs) => cs.filter((c) => c.id !== confirm.id));
       setConfirm(null);
-      // Re-run the server component so the list (and the onboarding strip, which
-      // can flip on the last campaign going away) reflects the delete.
+      // Re-run the server component so the list (and the layout's setup strip,
+      // which can flip on the last campaign going away) reflects the delete.
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't delete campaign");
@@ -127,7 +120,6 @@ export function CampaignsView({
         <Button render={<Link href="/campaigns/new">New campaign</Link>} />
       </div>
 
-      <NextSteps onboarding={onboarding} hideWhenOn="campaign" />
 
       {campaigns.length > 0 && (
         <ListToolbar>
