@@ -315,6 +315,25 @@ export async function sendAutomationNode(
     return;
   }
 
+  // Stamp the attempt before the provider call (same hinge as sendCampaignBatch):
+  // the stuck-lock sweep fails a stamped row and returns an unstamped one to
+  // pending. RETURNING nothing means the sweep already took this row from us
+  // (this job stalled past the lock window) and, on the same sweep, failed the
+  // enrollment — nothing here is ours to act on any more, and sending now would
+  // put an email behind a ledger row that says failed.
+  const stamped = await db
+    .update(campaignRecipients)
+    .set({ attemptedAt: nowIso() })
+    .where(and(eq(campaignRecipients.id, ledger.id), eq(campaignRecipients.status, "sending")))
+    .returning({ id: campaignRecipients.id });
+  if (stamped.length === 0) {
+    log.warn("automation ledger row left the job before its send (swept as stale?)", {
+      ledgerId: ledger.id,
+    });
+    await skip("ledger row was no longer claimed by this job at send time");
+    return;
+  }
+
   // From here the email may be at the provider. If send() throws, the ledger
   // row stays `sending` and the enrollment stays `sending`: the stuck-lock
   // sweeps fail both, the side that can never duplicate.
@@ -552,7 +571,7 @@ async function claimLedgerRow(
   }
   const [claimed] = await db
     .update(campaignRecipients)
-    .set({ status: "sending", lockedAt: now, updatedAt: now })
+    .set({ status: "sending", lockedAt: now, attemptedAt: null, updatedAt: now })
     .where(and(eq(campaignRecipients.id, id), eq(campaignRecipients.status, "pending")))
     .returning();
   return claimed ?? null;
@@ -564,7 +583,7 @@ async function claimLedgerRow(
 async function unclaimLedgerRow(db: Db, ledgerId: string, now: string): Promise<void> {
   await db
     .update(campaignRecipients)
-    .set({ status: "pending", lockedAt: null, updatedAt: now })
+    .set({ status: "pending", lockedAt: null, attemptedAt: null, updatedAt: now })
     .where(and(eq(campaignRecipients.id, ledgerId), eq(campaignRecipients.status, "sending")));
 }
 

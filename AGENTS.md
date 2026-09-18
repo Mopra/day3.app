@@ -114,9 +114,17 @@ page share a single account lookup instead of one per caller.
   inserts when the row count is large.
 - Clerk: the React SDK is `@clerk/nextjs`; `@clerk/backend` is used server-side.
   Billing APIs are beta — pin versions.
-- Recipients stuck in `sending` (crashed batch) are swept to `failed` by cron,
-  never back to `pending` — resending could duplicate. The sweep also releases
-  the swept rows' quota reservation, auto-resumes campaigns paused by machine
+- Recipients stuck in `sending` (crashed batch) are resolved by the cron sweep
+  on `campaign_recipients.attempted_at`, which the send handlers stamp in a
+  guarded write immediately before each provider call: a stale row WITH the
+  stamp is swept to `failed`, never back to `pending` (the email may have left;
+  resending could duplicate), while a stale row WITHOUT it provably never
+  reached the provider and goes back to `pending` for the reconcile stage to
+  re-fan out. A batch sends serially, so a crash costs at most one recipient per
+  lane, not the whole claimed batch. Keep the stamp immediately before the
+  provider call and keep it guarded on `status = 'sending'`: RETURNING nothing
+  means the sweep already took the row and it must not be sent. The sweep also
+  releases the swept rows' quota reservation, auto-resumes campaigns paused by machine
   codes (`rate_limit` / `daily_limit` / `quota` — see `campaigns.paused_code`;
   user pauses never auto-resume), and re-enqueues the driving job for campaigns
   stranded in `pending_review` / `approved` / `generating_recipients`.

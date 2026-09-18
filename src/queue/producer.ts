@@ -4,7 +4,7 @@ import { logger } from "../lib/logger";
 import {
   DEFAULT_JOB_OPTIONS,
   QUEUE_NAME,
-  jobPriorityFor,
+  jobOptionsFor,
   type JobQueue,
   type QueueMessage,
 } from "./messages";
@@ -70,10 +70,7 @@ export function getQueue(): JobQueue {
   const q = getBullQueue();
   return {
     async send(message: QueueMessage, opts?: { delayMs?: number }) {
-      await q.add(message.type, message, {
-        priority: jobPriorityFor(message.type),
-        ...(opts?.delayMs ? { delay: opts.delayMs } : {}),
-      });
+      await q.add(message.type, message, jobOptionsFor(message.type, opts));
     },
   };
 }

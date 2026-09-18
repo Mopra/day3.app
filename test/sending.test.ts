@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { sendCampaignBatch } from "../src/queue/handlers/send-batch";
 import { generateCampaignRecipients } from "../src/queue/handlers/generate-recipients";
+import { failStuckRecipients } from "../src/queue/cron";
+import type { Db } from "../src/db/client";
+import type { SendEmailInput, SendEmailResult } from "../src/email/provider";
 import { campaignRecipients, campaigns, accounts, notifications, subscribers } from "../src/db/schema";
 import { addSuppression } from "../src/services/suppression";
 import { campaignPersonalizationGaps } from "../src/api/campaigns";
@@ -127,7 +130,14 @@ describe("send_campaign_batch", () => {
       .from(campaignRecipients)
       .where(eq(campaignRecipients.campaignId, campaign.id));
     expect(rows.filter((r) => r.status === "sent")).toHaveLength(2);
-    expect(rows.filter((r) => r.status === "sending")).toHaveLength(1);
+    const inFlight = rows.filter((r) => r.status === "sending");
+    expect(inFlight).toHaveLength(1);
+    // The in-flight row carries the pre-send stamp — that is what tells the
+    // stuck-lock sweep it is ambiguous — while the rows handed back are clean.
+    expect(inFlight[0].attemptedAt).toBeTruthy();
+    expect(rows.filter((r) => r.status === "pending").every((r) => r.attemptedAt === null)).toBe(
+      true,
+    );
     expect(rows.filter((r) => r.status === "pending")).toHaveLength(2);
     const account1 = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
     expect(account1?.monthlyEmailSentCount).toBe(2);
@@ -146,6 +156,93 @@ describe("send_campaign_batch", () => {
       .where(eq(campaignRecipients.campaignId, campaign.id));
     expect(rows.filter((r) => r.status === "sent")).toHaveLength(4);
     expect(rows.filter((r) => r.status === "sending")).toHaveLength(1);
+
+    // Time passes; the sweep finds the ambiguous row with a stale lock. It is
+    // attempted, so it fails — it is never resent, whatever else happens.
+    await db
+      .update(campaignRecipients)
+      .set({ lockedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString() })
+      .where(eq(campaignRecipients.id, inFlight[0].id));
+    expect(await failStuckRecipients(db)).toEqual({ failed: 1, restored: 0 });
+    const swept = await db.query.campaignRecipients.findFirst({
+      where: eq(campaignRecipients.id, inFlight[0].id),
+    });
+    expect(swept?.status).toBe("failed");
+  });
+
+  it("a whole batch killed before any send is restored to pending by the sweep, not failed", async () => {
+    const { db, account, campaign } = await setupSendingCampaign();
+    // Simulate a hard kill right after the claim: rows sit in `sending` with a
+    // lock and no attempt stamp (the process died before the loop started).
+    await db
+      .update(campaignRecipients)
+      .set({
+        status: "sending",
+        lockedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+        attemptedAt: null,
+      })
+      .where(eq(campaignRecipients.campaignId, campaign.id));
+
+    expect(await failStuckRecipients(db)).toEqual({ failed: 0, restored: 5 });
+
+    // And a fresh batch sends all of them — nobody lost their email to the crash.
+    const provider = new RecordingProvider();
+    await sendCampaignBatch(
+      { campaignId: campaign.id, accountId: account.id, batchSize: 25 },
+      deps(db, new FakeQueue(), provider),
+    );
+    expect(provider.sent).toHaveLength(5);
+    const fresh = await db.query.campaigns.findFirst({ where: eq(campaigns.id, campaign.id) });
+    expect(fresh?.status).toBe("sent");
+  });
+
+  it("never sends a claimed recipient the sweep took away mid-batch", async () => {
+    const { db, account, campaign } = await setupSendingCampaign();
+    // A provider that, during the FIRST send, flips another claimed row to
+    // `failed` behind the batch's back — what the stuck-lock sweep does to a
+    // batch that stalled past the lock window. The batch must notice the row is
+    // no longer its own (the guarded attempt stamp claims nothing) and skip it.
+    class SweepingProvider extends RecordingProvider {
+      constructor(private db: Db, private victim: () => Promise<string>) {
+        super();
+      }
+      async send(input: SendEmailInput): Promise<SendEmailResult> {
+        if (this.sent.length === 0) {
+          const id = await this.victim();
+          await this.db
+            .update(campaignRecipients)
+            .set({ status: "failed", error: "send attempt did not complete (stuck lock)" })
+            .where(eq(campaignRecipients.id, id));
+        }
+        return super.send(input);
+      }
+    }
+    let victimEmail = "";
+    const provider = new SweepingProvider(db, async () => {
+      // Any claimed row other than the one currently being sent.
+      const rows = await db
+        .select()
+        .from(campaignRecipients)
+        .where(
+          and(eq(campaignRecipients.campaignId, campaign.id), eq(campaignRecipients.status, "sending")),
+        );
+      const victim = rows.find((r) => r.attemptedAt === null)!;
+      victimEmail = victim.email;
+      return victim.id;
+    });
+
+    await sendCampaignBatch(
+      { campaignId: campaign.id, accountId: account.id, batchSize: 25 },
+      deps(db, new FakeQueue(), provider),
+    );
+    expect(provider.sent).toHaveLength(4);
+    expect(provider.sent.map((s) => s.toEmail)).not.toContain(victimEmail);
+    const rows = await db
+      .select()
+      .from(campaignRecipients)
+      .where(eq(campaignRecipients.campaignId, campaign.id));
+    expect(rows.find((r) => r.email === victimEmail)?.status).toBe("failed");
+    expect(rows.filter((r) => r.status === "sent")).toHaveLength(4);
   });
 
   it("skips suppressed recipients at send time", async () => {

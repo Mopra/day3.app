@@ -108,15 +108,69 @@ export function laneCountFor(pending: number): number {
 // same code is deployed there, dead-letters anything it does not recognise).
 export const QUEUE_NAME = process.env.QUEUE_NAME?.trim() || "day3-jobs";
 
-// Per-type BullMQ priority (lower number = processed sooner). Transactional
-// emails (password resets, receipts) must never wait behind a big campaign
-// drain, so they jump the line. CRITICAL BullMQ subtlety: jobs added WITHOUT a
-// priority are processed before ALL prioritized jobs — so every message gets an
-// explicit priority; prioritizing only the transactional type would do the
-// exact opposite of what it reads like. Both producers (src/queue/producer.ts
-// and worker/index.ts) must pass this to queue.add.
+// Per-type BullMQ priority (lower number = processed sooner). Three tiers:
+//
+//   1  someone is waiting on this exact email right now: a transactional send
+//      (password reset, receipt) and a double opt-in confirmation (the person is
+//      sitting on the "check your inbox" page). These must never wait behind a
+//      campaign drain.
+//   5  time-sensitive but not someone-is-staring: automation dispatch and sends
+//      (a welcome email that arrives 10 minutes late reads as broken) and the
+//      customer's outbound webhooks (their app is waiting for the event).
+//  10  bulk: campaign pipeline stages and the send batches themselves, plus
+//      imports and purges. A batch delayed by a minute is invisible.
+//
+// CRITICAL BullMQ subtlety: jobs added WITHOUT a priority are processed before
+// ALL prioritized jobs — so every message gets an explicit priority;
+// prioritizing only the urgent types would do the exact opposite of what it
+// reads like. Both producers (src/queue/producer.ts and worker/index.ts) must
+// pass jobOptionsFor to queue.add.
 export function jobPriorityFor(type: QueueMessage["type"]): number {
-  return type === "send_transactional" ? 1 : 10;
+  switch (type) {
+    case "send_transactional":
+    case "send_form_confirmation":
+      return 1;
+    case "automation_tick":
+    case "advance_automation_enrollment":
+    case "send_automation_node":
+    case "deliver_webhook":
+      return 5;
+    default:
+      return 10;
+  }
+}
+
+// Retry budget per type, on top of DEFAULT_JOB_OPTIONS.backoff (exponential
+// from 5 s: 5, 10, 20, 40, 80, 160, 320 …). The default 5 attempts cover about
+// 75 s of trouble, which is right for a campaign batch — the cron sweep
+// restores its rows within 15 min anyway, and rows never duplicate. A
+// transactional email or a confirmation has a person waiting and no faster
+// rescue (the sweep re-enqueues a stranded transactional row on its 15-min
+// cadence; a confirmation has no ledger at all), so it rides out a longer
+// provider or database blip on its own: 8 attempts ≈ 10.5 minutes. Retrying is
+// safe for both — their handlers only send from an unclaimed row / a pending
+// subscriber, so a redelivery after a lost response never double-sends.
+export function jobAttemptsFor(type: QueueMessage["type"]): number {
+  switch (type) {
+    case "send_transactional":
+    case "send_form_confirmation":
+      return 8;
+    default:
+      return DEFAULT_JOB_OPTIONS.attempts;
+  }
+}
+
+// The per-add options both producers pass to queue.add. One function so the
+// web tier and the worker can never disagree on how a message type is queued.
+export function jobOptionsFor(
+  type: QueueMessage["type"],
+  opts?: { delayMs?: number },
+): { priority: number; attempts: number; delay?: number } {
+  return {
+    priority: jobPriorityFor(type),
+    attempts: jobAttemptsFor(type),
+    ...(opts?.delayMs ? { delay: opts.delayMs } : {}),
+  };
 }
 
 // Bounded retry + backoff policy applied to every enqueued job. Retries are

@@ -36,43 +36,58 @@ const SWEEP_PAGE = 100; // campaigns examined per sweep per stage (ordered oldes
 // with the setup-guide UI (lib/domain) so both agree on when a domain has gone
 // stale and needs a manual re-check.
 
-// Recipients stuck in "sending" belong to a crashed batch. The email may or
-// may not have left — re-sending could duplicate, so they become "failed",
-// never "pending" again. Live batches refresh lockedAt mid-batch (see
-// send-batch.ts refreshLocks), so a row this stale really is abandoned.
+// Recipients stuck in "sending" belong to a crashed batch (worker killed,
+// dead-lettered after a long outage). Live batches refresh lockedAt mid-batch
+// (see send-batch.ts refreshLocks), so a row this stale really is abandoned.
+// What happens to it depends on `attempted_at`, which the send handlers stamp
+// in a guarded write immediately before each provider call:
 //
-// Their quota reservation is released here: a crashed batch never ran its
-// flush, so the reservation for these rows is still held — without this, every
-// crash permanently inflates the account's usage counter by up to a batch. (At
-// most one row per crashed lane may actually have reached the provider — the
-// crash-between-send-and-write window — so this can under-count by ≤1 per
-// crash, a far smaller error than over-counting by ~100.)
-async function failStuckRecipients(db: Db): Promise<number> {
+//   - attempted_at SET: the email may or may not have left. Re-sending could
+//     duplicate, so the row becomes "failed", never "pending" again. A batch
+//     sends serially, so at most ONE row per crashed lane is in this state.
+//   - attempted_at NULL: the row was claimed but its send never started. It
+//     provably never reached the provider, so it goes back to "pending" and the
+//     reconcile stage re-fans the campaign out. Before the stamp existed, every
+//     one of these was failed too, and a single worker crash cost up to
+//     SEND_LANES × SEND_BATCH_SIZE recipients their email.
+//
+// Both groups release their quota reservation: a crashed batch never ran its
+// flush, so the reservation for every claimed row is still held. Restored rows
+// will be reserved again by the batch that re-claims them; failed rows never
+// send. (The ≤1 attempted row per lane may actually have gone out, so the
+// counter can under-count by that much per crash — far smaller than the
+// over-count of a whole batch.)
+export async function failStuckRecipients(
+  db: Db,
+): Promise<{ failed: number; restored: number }> {
   const cutoff = new Date(Date.now() - STUCK_LOCK_MINUTES * 60 * 1000).toISOString();
-  const updated = await db
+  const stale = and(eq(campaignRecipients.status, "sending"), lt(campaignRecipients.lockedAt, cutoff));
+
+  const failed = await db
     .update(campaignRecipients)
     .set({
       status: "failed",
       error: "send attempt did not complete (stuck lock)",
+      lockedAt: null,
       updatedAt: nowIso(),
     })
-    .where(
-      and(eq(campaignRecipients.status, "sending"), lt(campaignRecipients.lockedAt, cutoff)),
-    )
-    .returning({
-      id: campaignRecipients.id,
-      campaignId: campaignRecipients.campaignId,
-      accountId: campaignRecipients.accountId,
-    });
+    .where(and(stale, isNotNull(campaignRecipients.attemptedAt)))
+    .returning({ accountId: campaignRecipients.accountId });
+
+  const restored = await db
+    .update(campaignRecipients)
+    .set({ status: "pending", lockedAt: null, attemptedAt: null, updatedAt: nowIso() })
+    .where(and(stale, isNull(campaignRecipients.attemptedAt)))
+    .returning({ accountId: campaignRecipients.accountId });
 
   const byAccount = new Map<string, number>();
-  for (const row of updated) {
+  for (const row of [...failed, ...restored]) {
     byAccount.set(row.accountId, (byAccount.get(row.accountId) ?? 0) + 1);
   }
   for (const [accountId, count] of byAccount) {
     await releaseReservation(db, accountId, count);
   }
-  return updated.length;
+  return { failed: failed.length, restored: restored.length };
 }
 
 // Transactional emails need the same crash-recovery treatment as campaign
@@ -983,7 +998,10 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
     }
   };
 
-  const failed = (await stage("fail_stuck", () => failStuckRecipients(db))) ?? 0;
+  const stuck = (await stage("fail_stuck", () => failStuckRecipients(db))) ?? {
+    failed: 0,
+    restored: 0,
+  };
   const transactional = (await stage("transactional", () => sweepTransactionalEmails(db, queue, now))) ?? {
     failed: 0,
     requeued: 0,
@@ -1026,7 +1044,8 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
     status: errors.length > 0 ? "failed" : "completed",
     error: errors.length > 0 ? errors.join("; ") : undefined,
     payload: {
-      stuckFailed: failed,
+      stuckFailed: stuck.failed,
+      stuckRestored: stuck.restored,
       transactionalFailed: transactional.failed,
       transactionalRequeued: transactional.requeued,
       released,

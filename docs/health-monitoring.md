@@ -142,22 +142,34 @@ The worker (`npm run worker` → `worker/index.ts`) writes the Redis heartbeat a
 logs `"worker ready"` / `"cron sweep scheduled"` on startup. Run it under a
 supervisor that restarts on crash:
 
-**pm2** (matches the go-live runbook — `pm2 restart day3-worker`):
+**pm2** (matches the go-live runbook — `pm2 restart day3-worker`). Use the
+checked-in process file, not a bare `pm2 start "npm run worker"`: the file sets
+`kill_timeout` to 60 s, and pm2's default of **1.6 s** turns every restart into a
+crash from the worker's point of view (SIGKILL before the in-flight batch can
+hand its rows back — see "Graceful shutdown" below).
 
 ```bash
-pm2 start "npm run worker" --name day3-worker
-pm2 save                      # persist across reboots
+cd /opt/day3
+pm2 start ecosystem.config.cjs
+pm2 save                      # persist the process list
+pm2 startup                   # ONCE per machine: prints the systemd command that
+                              # makes pm2 itself come back after a reboot — run it.
 # pm2 auto-restarts on crash; inspect with:
 pm2 logs day3-worker
 pm2 status
 ```
+
+Without `pm2 startup`, `pm2 save` alone does nothing on reboot: the VPS comes
+back with no worker, the heartbeat goes stale, and nothing sends until someone
+logs in. Verify with `sudo reboot` once, then `pm2 status` after the box is back.
 
 **systemd** alternative (`/etc/systemd/system/day3-worker.service`):
 
 ```ini
 [Unit]
 Description=Day3 BullMQ worker
-After=network-online.target
+After=network-online.target redis-server.service
+Wants=network-online.target
 
 [Service]
 WorkingDirectory=/opt/day3
@@ -165,10 +177,29 @@ EnvironmentFile=/opt/day3/.env.worker
 ExecStart=/usr/bin/npm run worker
 Restart=always
 RestartSec=5
+# Give the drain time to finish (the worker bounds itself at 45 s).
+KillSignal=SIGTERM
+TimeoutStopSec=60
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+### Graceful shutdown (what a restart costs)
+
+On SIGTERM the worker flips a `draining` flag, stops fetching new jobs, and lets
+the active ones finish or hand back. A send batch checks the flag between
+recipients: the one send in flight completes (SES request timeout 15 s), the rest
+of the batch returns to `pending`, and the follow-up batch is enqueued as normal,
+so a deploy costs nothing but a pause. The drain is bounded at
+`WORKER_SHUTDOWN_DEADLINE_MS` (45 s); anything still active at the deadline is
+left for the sweep exactly as after a hard crash. The supervisor's kill timeout
+must be **longer** than that deadline, which is what the settings above ensure.
+
+A hard kill (crash, OOM, power loss) is also safe, just slower: claimed rows sit
+in `sending` until the 15-minute sweep, which returns the ones whose send never
+started to `pending` and fails only the (at most one per lane) whose provider
+call was in flight. `docs/delivery-resilience.md` has the full failure matrix.
 
 ```bash
 sudo systemctl enable --now day3-worker

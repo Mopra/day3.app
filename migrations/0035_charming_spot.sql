@@ -1,0 +1,2 @@
+ALTER TABLE "campaign_recipients" ADD COLUMN "attempted_at" timestamp with time zone;--> statement-breakpoint
+CREATE INDEX "idx_campaign_recipients_sending_locked" ON "campaign_recipients" USING btree ("locked_at") WHERE status = 'sending';

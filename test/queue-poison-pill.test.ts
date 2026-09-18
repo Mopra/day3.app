@@ -215,3 +215,34 @@ describe("poison-pill safety", () => {
     expect(rows[0].jobType).toBe("send_campaign_batch");
   });
 });
+
+describe("per-type job options", () => {
+  it("puts someone-is-waiting mail first, automations and webhooks next, bulk last", async () => {
+    const { jobPriorityFor, jobAttemptsFor, jobOptionsFor } = await import("../src/queue/messages");
+    expect(jobPriorityFor("send_transactional")).toBe(1);
+    expect(jobPriorityFor("send_form_confirmation")).toBe(1);
+    expect(jobPriorityFor("send_automation_node")).toBe(5);
+    expect(jobPriorityFor("advance_automation_enrollment")).toBe(5);
+    expect(jobPriorityFor("automation_tick")).toBe(5);
+    expect(jobPriorityFor("deliver_webhook")).toBe(5);
+    expect(jobPriorityFor("send_campaign_batch")).toBe(10);
+    expect(jobPriorityFor("review_campaign")).toBe(10);
+    expect(jobPriorityFor("process_import")).toBe(10);
+
+    // Every type carries an explicit priority: an unprioritized job would jump
+    // ahead of ALL prioritized ones in BullMQ.
+    expect(Number.isFinite(jobOptionsFor("purge_account").priority)).toBe(true);
+
+    // The mail a person is waiting on rides out a longer blip on its own.
+    expect(jobAttemptsFor("send_transactional")).toBe(8);
+    expect(jobAttemptsFor("send_form_confirmation")).toBe(8);
+    expect(jobAttemptsFor("send_campaign_batch")).toBe(DEFAULT_JOB_OPTIONS.attempts);
+
+    expect(jobOptionsFor("deliver_webhook", { delayMs: 60_000 })).toEqual({
+      priority: 5,
+      attempts: DEFAULT_JOB_OPTIONS.attempts,
+      delay: 60_000,
+    });
+    expect(jobOptionsFor("deliver_webhook")).not.toHaveProperty("delay");
+  });
+});

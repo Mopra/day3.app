@@ -246,6 +246,13 @@
       "when": 1789745731142,
       "tag": "0034_keen_famine",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1789749575834,
+      "tag": "0035_charming_spot",
+      "breakpoints": true
     }
   ]
 }

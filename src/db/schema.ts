@@ -610,6 +610,16 @@ export const campaignRecipients = pgTable(
     status: text("status").$type<RecipientStatus>().notNull().default("pending"),
 
     lockedAt: tstz("locked_at"),
+    // Stamped by the send handlers immediately BEFORE the provider call, in its
+    // own guarded write. This is the crash-recovery hinge: a row found `sending`
+    // with a stale lock and attempted_at NULL provably never reached the
+    // provider (the batch claims rows in bulk, then sends them one at a time),
+    // so the stuck-lock sweep can return it to `pending` instead of failing it.
+    // A row WITH the stamp is ambiguous (the email may have left) and stays on
+    // the never-duplicate side: failed. Without this, one worker crash cost a
+    // whole claimed batch per lane (up to SEND_LANES × SEND_BATCH_SIZE
+    // recipients) marked failed for an email that was never attempted.
+    attemptedAt: tstz("attempted_at"),
     sentAt: tstz("sent_at"),
     deliveredAt: tstz("delivered_at"),
     openedAt: tstz("opened_at"),
@@ -630,6 +640,13 @@ export const campaignRecipients = pgTable(
     index("idx_campaign_recipients_campaign_status").on(t.campaignId, t.status),
     index("idx_campaign_recipients_account_status").on(t.accountId, t.status),
     index("idx_campaign_recipients_provider_message_id").on(t.providerMessageId),
+    // The stuck-lock sweep's own index: `WHERE status = 'sending' AND locked_at <
+    // cutoff` every 15 minutes. Rows in `sending` are a few hundred at most, while
+    // the table grows by every email the platform ever sent, so without a partial
+    // index the sweep is a full scan of the send ledger four times an hour.
+    index("idx_campaign_recipients_sending_locked")
+      .on(t.lockedAt)
+      .where(sql`status = 'sending'`),
     // THE duplicate-safety anchor for automations, and the direct analogue of
     // uq_campaign_recipients_campaign_email: an enrollment can hold at most one
     // send row per node per lap, so a re-run tick, a retried job, or a crashed

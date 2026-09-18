@@ -91,7 +91,7 @@ async function unlockRecipients(db: Db, ids: string[]): Promise<void> {
     const chunk = ids.slice(i, i + 80);
     await db
       .update(campaignRecipients)
-      .set({ status: "pending", lockedAt: null, updatedAt: nowIso() })
+      .set({ status: "pending", lockedAt: null, attemptedAt: null, updatedAt: nowIso() })
       .where(
         and(inArray(campaignRecipients.id, chunk), eq(campaignRecipients.status, "sending")),
       );
@@ -221,9 +221,12 @@ export async function sendCampaignBatch(
   // recipients of a campaign share a single created_at (generate-recipients
   // stamps the whole audience with one timestamp), so ordering bought nothing
   // and forced Postgres to sort every remaining pending row on every claim.
+  // attemptedAt is cleared on claim: a row that came back to pending from an
+  // earlier batch (rate limit, transient error) must not carry that batch's
+  // stamp into this one, or a crash here would fail it as "attempted".
   const claimed = await db
     .update(campaignRecipients)
-    .set({ status: "sending", lockedAt: nowIso(), updatedAt: nowIso() })
+    .set({ status: "sending", lockedAt: nowIso(), attemptedAt: null, updatedAt: nowIso() })
     .where(
       inArray(
         campaignRecipients.id,
@@ -555,6 +558,30 @@ async function sendToClaimed(
         linkTracking,
         fieldFallbacks,
       });
+
+      // Stamp the attempt BEFORE the provider call, in its own guarded write.
+      // Two jobs: (1) it is what lets the stuck-lock sweep tell "claimed but
+      // never attempted" (safe to return to pending) from "attempted, outcome
+      // unknown" (must stay failed) after a crash — see failStuckRecipients;
+      // (2) RETURNING nothing means the row is no longer ours (the sweep failed
+      // it as stale while this batch was stalled, or it was otherwise moved),
+      // and sending it now would put an email behind a ledger row that says
+      // otherwise. Skip it; the sweep has already released its reservation.
+      const stamped = await db
+        .update(campaignRecipients)
+        .set({ attemptedAt: nowIso() })
+        .where(
+          and(eq(campaignRecipients.id, recipient.id), eq(campaignRecipients.status, "sending")),
+        )
+        .returning({ id: campaignRecipients.id });
+      if (stamped.length === 0) {
+        logger.warn("recipient left the batch before its send (swept as stale?)", {
+          campaignId: campaign.id,
+          recipientId: recipient.id,
+        });
+        skipped++;
+        continue;
+      }
 
       handedOff = true;
       const result = await emailProvider.send({

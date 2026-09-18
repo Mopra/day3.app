@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
   JOB_LOG_RETENTION_DAYS,
+  failStuckRecipients,
   pruneJobLogs,
   rescueStuckPipelineCampaigns,
   resumePausedCampaigns,
@@ -46,7 +47,7 @@ async function seedRecipients(
   db: Db,
   accountId: string,
   campaignId: string,
-  rows: { status: string; lockedAt?: string | null }[],
+  rows: { status: string; lockedAt?: string | null; attemptedAt?: string | null }[],
 ) {
   await db.insert(campaignRecipients).values(
     rows.map((r, i) => ({
@@ -56,6 +57,7 @@ async function seedRecipients(
       email: `r${i}@example.com`,
       status: r.status as "pending",
       lockedAt: r.lockedAt ?? null,
+      attemptedAt: r.attemptedAt ?? null,
       createdAt: nowIso(),
       updatedAt: nowIso(),
     })),
@@ -63,7 +65,7 @@ async function seedRecipients(
 }
 
 describe("stuck-lock sweep", () => {
-  it("fails stale sending rows (never back to pending), spares fresh locks, and releases their quota", async () => {
+  it("fails stale ATTEMPTED rows (never back to pending), restores stale UNATTEMPTED rows, spares fresh locks, releases quota", async () => {
     const { db, account, domain, audience } = await setup({ monthlyEmailSentCount: 5 });
     const campaign = await seedCampaign(db, {
       accountId: account.id,
@@ -72,8 +74,11 @@ describe("stuck-lock sweep", () => {
       status: "sending",
     });
     await seedRecipients(db, account.id, campaign.id, [
-      { status: "sending", lockedAt: minutesAgo(20) }, // crashed batch
-      { status: "sending", lockedAt: minutesAgo(20) }, // crashed batch
+      // crashed batch, provider call had started → ambiguous → failed
+      { status: "sending", lockedAt: minutesAgo(20), attemptedAt: minutesAgo(20) },
+      // crashed batch, claimed but never attempted → provably unsent → pending
+      { status: "sending", lockedAt: minutesAgo(20) },
+      { status: "sending", lockedAt: minutesAgo(20) },
       { status: "sending", lockedAt: minutesAgo(1) }, // live batch — must be spared
       { status: "pending" },
     ]);
@@ -86,21 +91,83 @@ describe("stuck-lock sweep", () => {
       .from(campaignRecipients)
       .where(eq(campaignRecipients.campaignId, campaign.id));
     const failed = rows.filter((r) => r.status === "failed");
-    // The duplicate firewall: crashed rows go to failed — the email may have
-    // left — and are NEVER returned to pending, where they would be re-sent.
-    expect(failed).toHaveLength(2);
-    expect(failed.every((r) => r.error?.includes("stuck lock"))).toBe(true);
+    // The duplicate firewall: a row whose send was attempted goes to failed —
+    // the email may have left — and is NEVER returned to pending.
+    expect(failed).toHaveLength(1);
+    expect(failed[0].error).toContain("stuck lock");
+    expect(failed[0].lockedAt).toBeNull();
+    // The rows that never reached the provider are back in the queue, clean.
+    const pending = rows.filter((r) => r.status === "pending");
+    expect(pending).toHaveLength(3);
+    expect(pending.every((r) => r.lockedAt === null && r.attemptedAt === null)).toBe(true);
     expect(rows.filter((r) => r.status === "sending")).toHaveLength(1);
-    expect(rows.filter((r) => r.status === "pending")).toHaveLength(1);
 
-    // The crashed batch never ran its flush, so the sweep releases the two
-    // failed rows' quota reservation.
+    // The crashed batch never ran its flush, so the sweep releases the
+    // reservation for every stale row it touched (1 failed + 2 restored).
     const fresh = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
-    expect(fresh?.monthlyEmailSentCount).toBe(3);
+    expect(fresh?.monthlyEmailSentCount).toBe(2);
 
     // One row is still in flight (fresh lock) → the reconcile stage must NOT
     // nudge extra lanes into a campaign that's still being drained.
     expect(queue.messages.filter((m) => m.type === "send_campaign_batch")).toHaveLength(0);
+
+    const [log] = await db
+      .select()
+      .from(jobLogs)
+      .where(eq(jobLogs.jobType, "cron"));
+    expect(JSON.parse(log.payloadJson!)).toMatchObject({ stuckFailed: 1, stuckRestored: 2 });
+  });
+
+  it("re-fans-out a campaign whose lanes all died mid-claim, losing no unattempted recipient", async () => {
+    const { db, account, domain, audience } = await setup();
+    const campaign = await seedCampaign(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      sendingDomainId: domain.id,
+      status: "sending",
+    });
+    // A whole claimed batch left behind by a killed worker: one recipient was
+    // in flight, the rest never started. Nothing else is pending.
+    await seedRecipients(db, account.id, campaign.id, [
+      { status: "sending", lockedAt: minutesAgo(30), attemptedAt: minutesAgo(30) },
+      ...Array.from({ length: 4 }, () => ({ status: "sending", lockedAt: minutesAgo(30) })),
+    ]);
+
+    const queue = new FakeQueue();
+    await runScheduledSweeps({ db, queue: asQueue(queue) });
+
+    const rows = await db
+      .select()
+      .from(campaignRecipients)
+      .where(eq(campaignRecipients.campaignId, campaign.id));
+    expect(rows.filter((r) => r.status === "failed")).toHaveLength(1);
+    expect(rows.filter((r) => r.status === "pending")).toHaveLength(4);
+    // Same sweep: the reconcile stage sees pending rows with nothing in flight
+    // and restores a lane, so the restored recipients go out without waiting
+    // for a human to notice the campaign stalled.
+    expect(queue.messages.filter((m) => m.type === "send_campaign_batch")).toHaveLength(1);
+    const fresh = await db.query.campaigns.findFirst({ where: eq(campaigns.id, campaign.id) });
+    expect(fresh?.status).toBe("sending");
+  });
+
+  it("failStuckRecipients reports both counts and ignores fresh or terminal rows", async () => {
+    const { db, account, domain, audience } = await setup();
+    const campaign = await seedCampaign(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      sendingDomainId: domain.id,
+      status: "sending",
+    });
+    await seedRecipients(db, account.id, campaign.id, [
+      { status: "sending", lockedAt: minutesAgo(16), attemptedAt: minutesAgo(16) },
+      { status: "sending", lockedAt: minutesAgo(16) },
+      { status: "sending", lockedAt: minutesAgo(14) },
+      { status: "sent", lockedAt: minutesAgo(60), attemptedAt: minutesAgo(60) },
+      { status: "failed", lockedAt: minutesAgo(60) },
+    ]);
+    expect(await failStuckRecipients(db)).toEqual({ failed: 1, restored: 1 });
+    // Idempotent: a second pass finds nothing stale.
+    expect(await failStuckRecipients(db)).toEqual({ failed: 0, restored: 0 });
   });
 
   it("re-fans-out a fully stalled campaign at proper lane width", async () => {
