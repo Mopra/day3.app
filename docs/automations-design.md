@@ -23,9 +23,12 @@ Landed:
   `GET /v1/automations`.
 - Session API under `/api/automations`: publish-time validation, per-send-node
   risk review, the campaign gates (domain, address, plan), free tier in sandbox mode.
-- The canvas (§8): React Flow at `/automations/{id}`, node inspector, send nodes in
-  the composer, Publish dialog, People tab (Run now / Exit / Enroll a contact),
-  Stats tab with per-node counters and skips by reason, Settings tab.
+- The canvas (§8): React Flow at `/automations/{id}`, node inspector (the trigger
+  node included: trigger kind, entry condition and re-entry are edited there, not
+  on a settings page), send nodes in the composer, Publish dialog, Enrollments tab
+  (Run now / Exit / Enroll a contact), Stats tab with per-node counters and skips
+  by reason, Settings tab for what spans the whole flow (exit condition, From,
+  timing).
 - Four templates: Welcome email, Welcome series, Trial onboarding, Win back.
 - Docs: `PRODUCT.md` (§2, §4, §5, §6.14, §6.19, §7.1, §9, §10.1), `AGENTS.md` gotchas.
 
@@ -435,7 +438,7 @@ because §4.3 says to publish the number that is enforced. The Redis-metered
 ceiling with a burst budget, and the 15-minute "pinned at ceiling" notification
 plus ops alert, are follow-ups (§11, items 5 and 6); until they land, an org
 pinned at the cap is visible only as a growing backlog of due enrollments on the
-People tab.
+Enrollments tab.
 
 ### 4.3 Publish the number
 

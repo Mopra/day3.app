@@ -25,7 +25,7 @@ import type {
   AutomationStats,
   AutomationTab,
 } from "@/lib/automation-types";
-import type { Audience, Sender, SignupForm } from "@/lib/types";
+import type { Sender, SignupForm } from "@/lib/types";
 
 // Live numbers refresh on this cadence while the automation runs and the tab is
 // in front. Slow enough to be free, fast enough that "12 waiting here" is true.
@@ -34,16 +34,20 @@ const POLL_MS = 15_000;
 export function AutomationView({
   initialDetail,
   initialTab,
-  audiences,
   senders,
   forms,
+  companyName,
+  companyAddress,
   planSandbox,
 }: {
   initialDetail: AutomationDetail;
   initialTab: AutomationTab;
-  audiences: Audience[];
   senders: Sender[];
   forms: SignupForm[];
+  // Printed in every email this automation sends; the Settings tab previews the
+  // footer with them, and says so when the address (a publish gate) is missing.
+  companyName: string;
+  companyAddress: string | null;
   // Whether the account's CURRENT plan publishes in sandbox mode. `detail.sandbox`
   // is what the last publish stamped; this is what the next one will.
   planSandbox: boolean;
@@ -294,10 +298,10 @@ export function AutomationView({
           each step retries every hour and is skipped only if it stays held for a week.{" "}
           <button
             type="button"
-            onClick={() => changeTab("people")}
+            onClick={() => changeTab("enrollments")}
             className="underline underline-offset-2 hover:text-foreground"
           >
-            See why on the People tab
+            See why on the Enrollments tab
           </button>
           .
         </CollapsibleNotice>
@@ -311,8 +315,8 @@ export function AutomationView({
         <TabsList>
           <TabsTrigger value="canvas">Canvas</TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
-          <TabsTrigger value="people">
-            People
+          <TabsTrigger value="enrollments">
+            Enrollments
             {detail.counts.total > 0 && (
               <span className="text-xs text-muted-foreground tabular-nums">
                 {detail.counts.total.toLocaleString()}
@@ -327,6 +331,7 @@ export function AutomationView({
         <AutomationCanvas
           detail={detail}
           stats={stats}
+          forms={forms}
           onDetailChange={onDetailChange}
           onSaveStatus={setSaveStatus}
           onOpenSettings={() => changeTab("settings")}
@@ -338,13 +343,13 @@ export function AutomationView({
       {tab === "settings" && (
         <AutomationSettingsPanel
           automation={detail}
-          audiences={audiences}
           senders={senders}
-          forms={forms}
+          companyName={companyName}
+          companyAddress={companyAddress}
           onSaved={onDetailChange}
         />
       )}
-      {tab === "people" && <EnrollmentsTab detail={detail} onCountsChanged={() => void loadStats()} />}
+      {tab === "enrollments" && <EnrollmentsTab detail={detail} onCountsChanged={() => void loadStats()} />}
       {tab === "stats" && (
         <StatsTable stats={stats} graph={detail.live ?? detail.draft} loading={statsLoading} />
       )}

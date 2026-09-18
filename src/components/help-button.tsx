@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { LifeBuoyIcon, Loader2Icon, CheckIcon } from "lucide-react";
+import { useRef, useState } from "react";
+import { Loader2Icon, CheckIcon } from "lucide-react";
+import { LifeBuoyIcon, type LifeBuoyIconHandle } from "@/components/ui/animated-icons/life-buoy";
 import { useApi, ApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -19,6 +20,8 @@ export function HelpButton() {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Same hover contract the sidebar nav items use: the row drives the glyph.
+  const iconRef = useRef<LifeBuoyIconHandle>(null);
 
   // Reset everything whenever the popover closes so a reopen starts fresh.
   function handleOpenChange(next: boolean) {
@@ -53,9 +56,11 @@ export function HelpButton() {
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger
+        onMouseEnter={() => iconRef.current?.startAnimation()}
+        onMouseLeave={() => iconRef.current?.stopAnimation()}
         className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground"
       >
-        <LifeBuoyIcon className="size-4 shrink-0" />
+        <LifeBuoyIcon ref={iconRef} size={16} className="inline-flex shrink-0" />
         Help
       </PopoverTrigger>
       <PopoverContent side="top" align="start" className="w-80">

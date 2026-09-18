@@ -1,4 +1,18 @@
-import { and, asc, desc, eq, getTableColumns, gte, inArray, ne, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  getTableColumns,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  like,
+  ne,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { z } from "zod";
 import { HttpError } from "../api/http";
 import { ApiError } from "../api/v1/errors";
@@ -48,9 +62,11 @@ import type {
   DraftGraphInput,
   EnrollResult,
   EnrollmentCounts,
+  EnrollmentDetail,
+  EnrollmentFilter,
   EnrollmentPage,
   EnrollmentRow,
-  EnrollmentStatus,
+  EnrollmentSendRow,
   GraphPayload,
   GraphPayloadNode,
   NodeStats,
@@ -1268,22 +1284,54 @@ export async function getAutomationStats(db: Db, accountId: string, id: string):
 
 export const ENROLLMENT_PAGE_MAX = 200;
 
+// One filter chip's worth of SQL. `held` and `in_progress` are not engine
+// statuses: they split `active` on whether a hold is parked on the row, which is
+// the split the reader actually cares about ("moving" vs "stuck"). `sending`
+// rides along with in_progress because it is a moment, not a state anyone waits
+// in. Keep this the only place that split is spelled out.
+function enrollmentFilterCondition(filter: EnrollmentFilter): SQL {
+  if (filter === "held") {
+    return and(
+      eq(automationEnrollments.status, "active"),
+      isNotNull(automationEnrollments.holdReason),
+    )!;
+  }
+  if (filter === "in_progress") {
+    return and(
+      inArray(automationEnrollments.status, ["active", "sending"]),
+      isNull(automationEnrollments.holdReason),
+    )!;
+  }
+  return eq(automationEnrollments.status, filter);
+}
+
+// Escape LIKE metacharacters so a typed `%` narrows the search instead of
+// widening the scan. Subscriber emails are stored lowercase (see services/activity.ts).
+function emailLikeTerm(raw: string): string {
+  return `%${raw.trim().toLowerCase().replace(/[\\%_]/g, "\\$&")}%`;
+}
+
 export async function listEnrollments(
   db: Db,
   accountId: string,
   id: string,
-  opts: { status?: EnrollmentStatus | null; offset: number; limit: number },
+  opts: { status?: EnrollmentFilter | null; search?: string | null; offset: number; limit: number },
 ): Promise<EnrollmentPage> {
   const automation = await findAutomationOr404(db, accountId, id);
   const limit = Math.min(Math.max(1, opts.limit), ENROLLMENT_PAGE_MAX);
   const offset = Math.max(0, opts.offset);
+  const search = opts.search?.trim() ?? "";
   const filters = [
     eq(automationEnrollments.automationId, automation.id),
     eq(automationEnrollments.accountId, accountId),
-    ...(opts.status ? [eq(automationEnrollments.status, opts.status)] : []),
+    ...(opts.status ? [enrollmentFilterCondition(opts.status)] : []),
+    // "Where is jane@acme.com in this flow?" is the question this tab is opened
+    // for, so the match runs in Postgres over the whole run, not over the page
+    // that happens to be on screen.
+    ...(search ? [like(subscribers.email, emailLikeTerm(search))] : []),
   ];
 
-  const [rows, [{ total }]] = await Promise.all([
+  const [rows, [{ total }], countsById] = await Promise.all([
     db
       .select({
         enrollment: automationEnrollments,
@@ -1297,10 +1345,16 @@ export async function listEnrollments(
       .orderBy(desc(automationEnrollments.enteredAt), desc(automationEnrollments.id))
       .offset(offset)
       .limit(limit),
+    // The count carries the same join: filtering on the address means the
+    // total has to be counted through it too, or the "load more" maths lies.
     db
       .select({ total: sql<number>`count(*)::int` })
       .from(automationEnrollments)
+      .leftJoin(subscribers, eq(subscribers.id, automationEnrollments.subscriberId))
       .where(and(...filters)),
+    // The unfiltered shape of the flow, for the chips. Same grouped query the
+    // detail page and the list use, so no third way to count exists.
+    enrollmentCountsByAutomation(db, accountId, [automation.id]),
   ]);
 
   return {
@@ -1325,6 +1379,7 @@ export async function listEnrollments(
     total: Number(total),
     offset,
     limit,
+    counts: countsById.get(automation.id) ?? EMPTY_COUNTS(),
   };
 }
 
@@ -1425,6 +1480,78 @@ async function findEnrollment(
   });
   if (!enrollment) throw new HttpError(404, "Enrollment not found");
   return enrollment;
+}
+
+// One person's run, with every email it has produced. The sends come off the
+// shared send ledger by enrollment id (AGENTS.md: `campaign_recipients` is not
+// campaign-only), oldest first, so the drawer reads top to bottom as the flow
+// actually happened. Node titles are NOT resolved here: the reader already
+// holds the graph, and a title copied into this payload would go stale the
+// moment the automation is edited.
+export async function getEnrollmentDetail(
+  db: Db,
+  accountId: string,
+  id: string,
+  enrollmentId: string,
+): Promise<EnrollmentDetail> {
+  const automation = await findAutomationOr404(db, accountId, id);
+  const enrollment = await findEnrollment(db, accountId, automation.id, enrollmentId);
+  const [emailRow, sends] = await Promise.all([
+    db.query.subscribers.findFirst({
+      where: eq(subscribers.id, enrollment.subscriberId),
+      columns: { email: true },
+    }),
+    db
+      .select({
+        id: campaignRecipients.id,
+        nodeKey: campaignRecipients.automationNodeKey,
+        visitNo: campaignRecipients.visitNo,
+        status: campaignRecipients.status,
+        error: campaignRecipients.error,
+        createdAt: campaignRecipients.createdAt,
+        sentAt: campaignRecipients.sentAt,
+        deliveredAt: campaignRecipients.deliveredAt,
+        openedAt: campaignRecipients.openedAt,
+        clickedAt: campaignRecipients.clickedAt,
+        bouncedAt: campaignRecipients.bouncedAt,
+        complainedAt: campaignRecipients.complainedAt,
+        unsubscribedAt: campaignRecipients.unsubscribedAt,
+      })
+      .from(campaignRecipients)
+      .where(
+        and(
+          eq(campaignRecipients.automationEnrollmentId, enrollment.id),
+          eq(campaignRecipients.accountId, accountId),
+        ),
+      )
+      .orderBy(asc(campaignRecipients.createdAt), asc(campaignRecipients.id)),
+  ]);
+  const version = await db.query.automationVersions.findFirst({
+    where: eq(automationVersions.id, enrollment.automationVersionId),
+    columns: { version: true },
+  });
+
+  return {
+    enrollment: {
+      id: enrollment.id,
+      subscriberId: enrollment.subscriberId,
+      email: emailRow?.email ?? "",
+      status: enrollment.status,
+      versionNumber: version?.version ?? 0,
+      currentNodeKey: enrollment.currentNodeKey,
+      nextRunAt: enrollment.nextRunAt,
+      holdReason: enrollment.holdReason,
+      visitCount: enrollment.visitCount,
+      sendCount: enrollment.sendCount,
+      sandbox: enrollment.sandbox,
+      enteredAt: enrollment.enteredAt,
+      completedAt: enrollment.completedAt,
+      exitedAt: enrollment.exitedAt,
+      exitReason: enrollment.exitReason,
+      lastError: enrollment.lastError,
+    },
+    sends: sends satisfies EnrollmentSendRow[],
+  };
 }
 
 // "Skip the wait": pull next_run_at to now and poke the engine. Only an active

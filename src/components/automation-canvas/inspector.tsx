@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useUser } from "@clerk/nextjs";
 import { toast } from "sonner";
-import { AlertTriangle, Pencil, Send, Settings2, Trash2, X } from "lucide-react";
+import { AlertTriangle, Pencil, Send, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,12 +29,14 @@ import {
   type GraphIssue,
   type WaitUnit,
 } from "@/lib/automation-graph";
+import type { SettingsSaveStatus } from "@/components/automation-settings-shared";
 import type { AutomationDetail, GraphPayloadNode } from "@/lib/automation-types";
-import type { SegmentFilter } from "@/lib/types";
+import type { SegmentFilter, SignupForm } from "@/lib/types";
 import type { TestSendResult } from "@/services/campaign-send";
 import { cn } from "@/lib/utils";
 import { ENGAGEMENT_EVENTS, ENGAGEMENT_LABELS, KIND_META } from "./node-kinds";
 import { SegmentFilterBuilder } from "./segment-filter-builder";
+import { TriggerForm } from "./trigger-form";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -47,9 +49,12 @@ export function NodeInspector({
   node,
   nodes,
   detail,
+  forms,
   issues,
   readOnly,
   onChange,
+  onDetailChange,
+  onSettingsSaveStatus,
   onDelete,
   onEditEmail,
   onOpenSettings,
@@ -58,9 +63,14 @@ export function NodeInspector({
   node: GraphPayloadNode;
   nodes: GraphPayloadNode[];
   detail: AutomationDetail;
+  forms: SignupForm[];
   issues: { errors: GraphIssue[]; warnings: GraphIssue[] };
   readOnly: boolean;
   onChange: (patch: NodePatch) => void;
+  // The trigger node edits the automation row rather than the graph, so it
+  // reports its save through these rather than through onChange.
+  onDetailChange: (detail: AutomationDetail) => void;
+  onSettingsSaveStatus: (status: SettingsSaveStatus) => void;
   onDelete: () => void;
   onEditEmail: () => void;
   onOpenSettings: () => void;
@@ -132,11 +142,13 @@ export function NodeInspector({
             readOnly={readOnly}
             onChange={onChange}
             onEditEmail={onEditEmail}
+            onOpenSettings={onOpenSettings}
           />
         )}
         {node.kind === "wait" && (
           <WaitForm
             node={node}
+            timezone={detail.timezone}
             hasSendWindow={!!detail.sendWindow}
             readOnly={readOnly}
             onChange={onChange}
@@ -153,7 +165,14 @@ export function NodeInspector({
           />
         )}
         {node.kind === "trigger" && (
-          <TriggerSummary detail={detail} onOpenSettings={onOpenSettings} />
+          <TriggerForm
+            detail={detail}
+            forms={forms}
+            readOnly={readOnly}
+            onSaved={onDetailChange}
+            onSaveStatus={onSettingsSaveStatus}
+            onOpenSettings={onOpenSettings}
+          />
         )}
         {node.kind === "end" && (
           <p className="text-sm text-muted-foreground">
@@ -188,12 +207,14 @@ function SendForm({
   readOnly,
   onChange,
   onEditEmail,
+  onOpenSettings,
 }: {
   node: GraphPayloadNode;
   detail: AutomationDetail;
   readOnly: boolean;
   onChange: (patch: NodePatch) => void;
   onEditEmail: () => void;
+  onOpenSettings: () => void;
 }) {
   const api = useApi();
   const { user } = useUser();
@@ -246,6 +267,27 @@ function SendForm({
           <Pencil />
           {hasContent ? "Edit email" : "Write the email"}
         </Button>
+      </div>
+
+      {/* Who it comes from is the automation's, not this step's, but writing an
+          email without seeing the From line is writing half of it. */}
+      <div className="space-y-1">
+        <p className="text-sm font-medium">From</p>
+        <p className={cn("text-sm", !detail.fromEmail && "text-muted-foreground")}>
+          {detail.fromEmail
+            ? `${detail.fromName ?? detail.fromEmail} <${detail.fromEmail}>`
+            : "No sender yet"}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          The whole automation sends from it.{" "}
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            {detail.fromEmail ? "Change in Settings" : "Choose one in Settings"}
+          </button>
+        </p>
       </div>
 
       <div className="space-y-2">
@@ -326,12 +368,14 @@ const UNIT_MS_LOCAL: Record<WaitUnit, number> = {
 
 function WaitForm({
   node,
+  timezone,
   hasSendWindow,
   readOnly,
   onChange,
   onOpenSettings,
 }: {
   node: GraphPayloadNode;
+  timezone: string;
   hasSendWindow: boolean;
   readOnly: boolean;
   onChange: (patch: NodePatch) => void;
@@ -401,7 +445,9 @@ function WaitForm({
             </SelectContent>
           </Select>
         </div>
-        <p className="text-xs text-muted-foreground">Up to 365 days.</p>
+        <p className="text-xs text-muted-foreground">
+          Up to 365 days, counted in {timezone.replace(/_/g, " ")}.
+        </p>
       </div>
 
       <label className="flex cursor-pointer items-start gap-2 text-sm">
@@ -575,47 +621,6 @@ function BranchForm({
         Contacts who match continue on <span className="font-medium">yes</span>, everyone else
         on <span className="font-medium">no</span>.
       </p>
-    </div>
-  );
-}
-
-/* ───────────────────────────── trigger ──────────────────────────── */
-
-const REENTRY_COPY = {
-  once: "Each contact can go through once.",
-  once_at_a_time: "A contact can go through again once they have finished.",
-  always: "A contact can enter again at any time.",
-} as const;
-
-function TriggerSummary({
-  detail,
-  onOpenSettings,
-}: {
-  detail: AutomationDetail;
-  onOpenSettings: () => void;
-}) {
-  const how =
-    detail.triggerKind === "api"
-      ? "When your app enrolls a contact through the API."
-      : detail.triggerFormId
-        ? `When someone joins ${detail.audienceName} through a specific form.`
-        : `When someone joins ${detail.audienceName}.`;
-  return (
-    <div className="space-y-3 text-sm">
-      <p>{how}</p>
-      {detail.entryFilter && (
-        <p className="text-muted-foreground">Only contacts who match the entry filter enter.</p>
-      )}
-      {detail.exitFilter && (
-        <p className="text-muted-foreground">
-          Contacts who match the exit condition leave before their next step.
-        </p>
-      )}
-      <p className="text-muted-foreground">{REENTRY_COPY[detail.reentry]}</p>
-      <Button variant="outline" size="sm" onClick={onOpenSettings}>
-        <Settings2 />
-        Change in Settings
-      </Button>
     </div>
   );
 }

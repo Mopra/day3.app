@@ -1198,7 +1198,7 @@ no connection simply ends the flow for that person.
 
 | Node | Exits | What it does |
 |---|---|---|
-| **Trigger** | `next` | Where people enter. Exactly one per automation; what fires it is set on the Settings tab. |
+| **Trigger** | `next` | Where people enter. Exactly one per automation; what fires it, who qualifies and whether they can come back are edited on the node itself, like every other step. |
 | **Send** | `next` | One email, authored in the composer. Each person receives each email at most once, unless the node is explicitly marked **allow re-send** so a loop may mail it again on a later lap (off by default, because mailing someone the same thing twice by accident is the commoner bug). |
 | **Wait** | `next` | A pause of N minutes, hours or days (up to 365 days), optionally clamped into the automation's **send window** so a weekday, working-hours flow never fires at 3 a.m. Clamping only ever delays. |
 | **Branch** | `yes` / `no` | A condition. Either a **filter** built with the same condition builder as Segments (§6.3), or an **engagement** test on this automation's own earlier emails: opened / did not open / clicked / did not click a named email, or any email in the flow. |
@@ -1240,7 +1240,9 @@ the second protects the recipient.
 
 Planned: a contact joining a **segment** or a **topic** as a trigger.
 
-**Entry, exit and re-entry.** Three settings decide who is in the flow:
+**Entry, exit and re-entry.** Three settings decide who is in the flow. The two
+that concern getting *in* are edited on the trigger node; the exit condition
+spans every step, so it lives on the Settings tab:
 
 - An optional **entry condition** (a segment-style filter) checked at the moment
   of enrollment: "only people whose `plan` is `trial`".
@@ -1255,7 +1257,7 @@ Planned: a contact joining a **segment** or a **topic** as a trigger.
 
 Every exit records a reason (`unsubscribed`, `suppressed`, `not_subscribed`,
 `exit_filter`, `loop_guard`, `manual`, `automation_archived`, `version_retired`)
-that shows on the People tab.
+that shows on the Enrollments tab.
 
 **Settings.** The **From** sender (a saved sender on a verified domain, §6.6),
 optional Reply-To, the footer wording, the email theme (§6.1), an optional
@@ -1294,14 +1296,21 @@ case), **Welcome series**, **Trial onboarding** (with a "plan is pro" exit) and
 **Win back** (branching on whether earlier emails were opened). Like campaign
 templates they ship placeholders, never borrowed content, and cost nothing.
 
-**People.** The **People** tab lists everyone who has entered: status (`active`,
-`sending`, `completed`, `exited`, `failed`), the step they are on, when they next
-move, why they are held (if they are), how many steps and emails they have had,
-and why they left. Per row, **Run now** skips the current wait (the developer's
-way to test a three-day series in three minutes) and **Exit** removes them.
-**Enroll a contact** puts one existing contact into the flow by hand for a test
-run, and every send node has a test-email action that renders it with the
-automation's real From, theme and footer to addresses you name.
+**Enrollments.** The **Enrollments** tab lists everyone who has entered: status
+(`active`, `sending`, `completed`, `exited`, `failed`), the step they are on, when
+they next move, why they are held (if they are), and why they left. Across the top,
+count chips say where everyone is (**In progress / Held / Finished / Left /
+Failed**) and double as the filter; **Held** is its own chip because "is anyone
+stuck?" is the question the page answers. **Search by email** runs across the whole
+flow, not the loaded page, so one contact can be found in a flow of any size, and
+the list refreshes itself every 15 seconds while the automation is live. Opening a
+row shows that one person: where they are in words, and **every email this flow has
+produced for them**: the step, when it went, delivered / opened / clicked, or the
+reason it was not sent. Per row (and in the drawer), **Run now** skips the current
+wait (the developer's way to test a three-day series in three minutes) and
+**Remove** takes them out. **Enroll a contact** puts one existing contact into the
+flow by hand for a test run, and every send node has a test-email action that
+renders it with the automation's real From, theme and footer to addresses you name.
 
 **Stats.** The **Stats** tab, mirrored as badges on the canvas, shows per node how
 many people are sitting on it right now and, for send nodes, sent / delivered /
@@ -1331,7 +1340,7 @@ hidden:
 
 **When an email can't go out.** If the monthly allowance is spent (or the
 subscription is past due, or the account is paused for reputation) a person due
-for a send is **held**, not skipped: the flow retries hourly and the People tab
+for a send is **held**, not skipped: the flow retries hourly and the Enrollments tab
 shows the hold reason. A step held for more than **7 days** is skipped as
 `too_stale` and the person moves on, so an account that upgrades three weeks later
 does not blast a month of backed-up onboarding at once. Both halves are
@@ -1489,7 +1498,7 @@ send through the same ledger lookup as a campaign send.
    API key → describe the email → open the draft in the composer and send (§6.17).
 8. **Set up a welcome email:** Automations → New → *Welcome email* template → pick the
    audience → edit the email in the composer → send yourself the step → Publish → every
-   new confirmed signup receives it within about a minute; watch the People and Stats
+   new confirmed signup receives it within about a minute; watch the Enrollments and Stats
    tabs (§6.19).
 
 ---

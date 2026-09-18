@@ -192,7 +192,7 @@ export function AutomationsView({
       status: (a) => a.status,
       trigger: (a) => triggerSentence(a),
       version: (a) => a.liveVersion ?? -1,
-      people: (a) => a.counts.active,
+      enrollments: (a) => a.counts.active,
       updatedAt: (a) => a.updatedAt,
     },
     initialSort: { key: "updatedAt", dir: "desc" },
@@ -271,7 +271,7 @@ export function AutomationsView({
                   <SortableHead label="Status" sortKey="status" sort={list.sort} onSort={list.toggleSort} />
                   <SortableHead label="Trigger" sortKey="trigger" sort={list.sort} onSort={list.toggleSort} />
                   <SortableHead label="Live version" sortKey="version" sort={list.sort} onSort={list.toggleSort} />
-                  <SortableHead label="People" sortKey="people" sort={list.sort} onSort={list.toggleSort} />
+                  <SortableHead label="Enrollments" sortKey="enrollments" sort={list.sort} onSort={list.toggleSort} />
                   <SortableHead label="Updated" sortKey="updatedAt" sort={list.sort} onSort={list.toggleSort} />
                   <TableHead />
                 </TableRow>

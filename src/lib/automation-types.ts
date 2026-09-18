@@ -42,11 +42,13 @@ export type EnrollmentCounts = {
 // to call X() from the server but X is on the client"). It typechecks and it
 // builds — the page just 500s on every request. Anything both sides call belongs
 // in a plain module like this one.
-export type AutomationTab = "canvas" | "settings" | "people" | "stats";
-const AUTOMATION_TABS: AutomationTab[] = ["canvas", "settings", "people", "stats"];
+export type AutomationTab = "canvas" | "settings" | "enrollments" | "stats";
+const AUTOMATION_TABS: AutomationTab[] = ["canvas", "settings", "enrollments", "stats"];
 
 // The server page hands over whatever ?tab= said; anything else opens the canvas.
+// "people" was this tab's name until it was renamed; links to it still work.
 export function parseAutomationTab(value: string | undefined): AutomationTab {
+  if (value === "people") return "enrollments";
   return value && AUTOMATION_TABS.includes(value as AutomationTab)
     ? (value as AutomationTab)
     : "canvas";
@@ -216,7 +218,61 @@ export type EnrollmentRow = {
   lastError: string | null;
 };
 
-export type EnrollmentPage = { rows: EnrollmentRow[]; total: number; offset: number; limit: number };
+// `counts` is the whole flow, not the filtered page: the chips above the list
+// are a map of where everyone is, so they must not move when you filter or
+// search. `total` is the filtered count the paging maths runs on.
+export type EnrollmentPage = {
+  rows: EnrollmentRow[];
+  total: number;
+  offset: number;
+  limit: number;
+  counts: EnrollmentCounts;
+};
+
+// What the Enrollments tab filters by. The engine's own statuses plus the two
+// distinctions it keeps implicit: `held` is the subset of `active` parked on a
+// hold, and `in_progress` is everyone still moving (active or sending, minus
+// the held). The tab leads with those two because "is anyone stuck?" is the
+// question the page exists to answer, and `active` alone hides the answer.
+export type EnrollmentFilter = EnrollmentStatus | "in_progress" | "held";
+
+// One email this enrollment produced, straight off the shared send ledger
+// (`campaign_recipients` rows carrying this enrollment id). `nodeKey` names the
+// step, `visitNo` the lap around a loop; the node's title comes from the graph
+// the reader already has, so the row carries ids, not copies of the content.
+export type EnrollmentSendRow = {
+  id: string;
+  nodeKey: string | null;
+  visitNo: number;
+  status: RecipientLedgerStatus;
+  // Why a send was skipped or failed, as the engine recorded it.
+  error: string | null;
+  createdAt: string;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  openedAt: string | null;
+  clickedAt: string | null;
+  bouncedAt: string | null;
+  complainedAt: string | null;
+  unsubscribedAt: string | null;
+};
+
+// Mirrors db/schema RECIPIENT_STATUSES. Repeated here because this module is
+// the client/server boundary and must not import the schema.
+export type RecipientLedgerStatus =
+  | "pending"
+  | "sending"
+  | "sent"
+  | "delivered"
+  | "bounced"
+  | "complained"
+  | "unsubscribed"
+  | "failed"
+  | "skipped";
+
+// GET /api/automations/{id}/enrollments/{enrollmentId}: one person's run,
+// with every email it has produced so far, oldest first.
+export type EnrollmentDetail = { enrollment: EnrollmentRow; sends: EnrollmentSendRow[] };
 
 // Why an enrollment attempt did or did not create a row. Every trigger path and
 // the manual/API enroll endpoints return one of these; only `enrolled` made a row.

@@ -70,6 +70,7 @@ const pauseRoute = await import("../app/api/automations/[id]/pause/route");
 const resumeRoute = await import("../app/api/automations/[id]/resume/route");
 const statsRoute = await import("../app/api/automations/[id]/stats/route");
 const enrollmentsRoute = await import("../app/api/automations/[id]/enrollments/route");
+const enrollmentRoute = await import("../app/api/automations/[id]/enrollments/[enrollmentId]/route");
 const runNowRoute = await import("../app/api/automations/[id]/enrollments/[enrollmentId]/run-now/route");
 const exitRoute = await import("../app/api/automations/[id]/enrollments/[enrollmentId]/exit/route");
 const testEmailRoute = await import("../app/api/automations/[id]/nodes/[nodeKey]/test-email/route");
@@ -303,6 +304,33 @@ describe("session routes: lifecycle", () => {
     expect(
       (await enrollmentsRoute.GET(req(`${BASE}/${detail.id}/enrollments?status=bogus`) as never, params({ id: detail.id }))).status,
     ).toBe(400);
+    // The chips' two derived filters are accepted, and the search runs on the
+    // address rather than on the page that is loaded.
+    const moving = await body(
+      await enrollmentsRoute.GET(
+        req(`${BASE}/${detail.id}/enrollments?status=in_progress&q=ALICE@`) as never,
+        params({ id: detail.id }),
+      ),
+    );
+    expect(moving.total).toBe(1);
+    expect(moving.counts.total).toBe(1);
+    expect(
+      (await body(
+        await enrollmentsRoute.GET(
+          req(`${BASE}/${detail.id}/enrollments?status=held`) as never,
+          params({ id: detail.id }),
+        ),
+      )).total,
+    ).toBe(0);
+
+    const person = await body(
+      await enrollmentRoute.GET(
+        req(`${BASE}/${detail.id}/enrollments/${result.enrollmentId}`) as never,
+        params({ id: detail.id, enrollmentId: result.enrollmentId }),
+      ),
+    );
+    expect(person.enrollment.email).toBe("alice@example.com");
+    expect(person.sends).toEqual([]);
 
     const stats = await body(await statsRoute.GET(req(`${BASE}/${detail.id}/stats`) as never, params({ id: detail.id })));
     expect(stats.counts.active).toBe(1);

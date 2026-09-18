@@ -827,6 +827,127 @@ describe("enrollments", () => {
     });
   });
 
+  it("searches by address and splits the held out of the active", async () => {
+    const detail = await publishedAutomation();
+    const automation = (await svc.findAutomationOr404(db, account.id, detail.id))!;
+    await seedSubscribers(db, account.id, audience.id, [
+      "alice@example.com",
+      "bob@example.com",
+      "carol@other.test",
+    ]);
+    for (const email of ["alice@example.com", "bob@example.com", "carol@other.test"]) {
+      const res = await svc.enrollByEmail(db, account, automation, email, "manual");
+      expect(res.outcome).toBe("enrolled");
+    }
+    // Bob is parked on a hold, as a spent allowance would park him.
+    await db
+      .update(automationEnrollments)
+      .set({ holdReason: "quota" })
+      .where(
+        and(
+          eq(automationEnrollments.automationId, automation.id),
+          eq(automationEnrollments.subscriberId, (await db.query.subscribers.findFirst({
+            where: (t, { eq: e }) => e(t.email, "bob@example.com"),
+          }))!.id),
+        ),
+      );
+
+    const search = await svc.listEnrollments(db, account.id, detail.id, {
+      search: "EXAMPLE.com",
+      offset: 0,
+      limit: 10,
+    });
+    expect(search.total).toBe(2);
+    expect(search.rows.map((r) => r.email).sort()).toEqual(["alice@example.com", "bob@example.com"]);
+    // The chips read the whole flow, so they ignore the search.
+    expect(search.counts.total).toBe(3);
+
+    const held = await svc.listEnrollments(db, account.id, detail.id, {
+      status: "held",
+      offset: 0,
+      limit: 10,
+    });
+    expect(held.rows.map((r) => r.email)).toEqual(["bob@example.com"]);
+    expect(held.counts.held).toBe(1);
+
+    const moving = await svc.listEnrollments(db, account.id, detail.id, {
+      status: "in_progress",
+      offset: 0,
+      limit: 10,
+    });
+    expect(moving.total).toBe(2);
+    expect(moving.rows.map((r) => r.email)).not.toContain("bob@example.com");
+
+    // A typed wildcard narrows rather than widening the scan.
+    const literal = await svc.listEnrollments(db, account.id, detail.id, {
+      search: "%",
+      offset: 0,
+      limit: 10,
+    });
+    expect(literal.total).toBe(0);
+  });
+
+  it("gives one person's run with the emails it produced, oldest first", async () => {
+    const detail = await publishedAutomation();
+    const automation = (await svc.findAutomationOr404(db, account.id, detail.id))!;
+    await seedSubscribers(db, account.id, audience.id, ["alice@example.com"]);
+    const { enrollmentId } = await svc.enrollByEmail(db, account, automation, "alice@example.com", "manual");
+
+    const now = nowIso();
+    await db.insert(campaignRecipients).values([
+      {
+        id: newId("cr"),
+        accountId: account.id,
+        email: "alice@example.com",
+        automationId: automation.id,
+        automationEnrollmentId: enrollmentId!,
+        automationNodeKey: "nd_send1",
+        visitNo: 0,
+        status: "delivered",
+        sentAt: now,
+        deliveredAt: now,
+        openedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        id: newId("cr"),
+        accountId: account.id,
+        email: "alice@example.com",
+        automationId: automation.id,
+        automationEnrollmentId: enrollmentId!,
+        automationNodeKey: "nd_send2",
+        visitNo: 0,
+        status: "skipped",
+        error: "too_stale",
+        createdAt: new Date(Date.parse(now) + 1000).toISOString(),
+        updatedAt: now,
+      },
+    ]);
+
+    const person = await svc.getEnrollmentDetail(db, account.id, detail.id, enrollmentId!);
+    expect(person.enrollment).toMatchObject({
+      id: enrollmentId,
+      email: "alice@example.com",
+      status: "active",
+      versionNumber: 1,
+    });
+    expect(person.sends.map((s) => [s.nodeKey, s.status, s.error])).toEqual([
+      ["nd_send1", "delivered", null],
+      ["nd_send2", "skipped", "too_stale"],
+    ]);
+    expect(person.sends[0].openedAt).toBeTruthy();
+
+    // Another tenant cannot read it, and neither can a wrong id.
+    const other = await seedAccount(db);
+    await expect(
+      svc.getEnrollmentDetail(db, other.id, detail.id, enrollmentId!),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      svc.getEnrollmentDetail(db, account.id, detail.id, "aen_missing"),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
   it("keeps a sandbox automation to org members", async () => {
     const free = await seedAccount(db, { plan: "free_org", sendingEnabled: false });
     const freeDomain = await seedDomain(db, free.id);

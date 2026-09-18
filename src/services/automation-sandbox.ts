@@ -10,7 +10,7 @@ import { planSandboxMode, type PlanKey } from "../lib/plans-catalog";
 // campaign, which is sent once and is done, an automation runs for months, so a
 // flag frozen at publish time outlives the plan it described: a free org that
 // upgrades would keep refusing every real signup as `sandbox_not_member`, with
-// nothing on the People tab to show for it, until someone happened to republish.
+// nothing on the Enrollments tab to show for it, until someone happened to republish.
 // So every plan write re-stamps the account's automations. Enrollments keep their
 // own snapshot (metering must not change under a run in flight), which is why
 // this touches only the automation rows.

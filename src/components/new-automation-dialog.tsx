@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { PenLine } from "lucide-react";
 import { toast } from "sonner";
@@ -66,6 +66,14 @@ export function NewAutomationDialog({
   const [templateKey, setTemplateKey] = useState<string>(BLANK);
   const [templates, setTemplates] = useState<AutomationTemplateSummary[] | null>(initialTemplates ?? null);
   const [submitting, setSubmitting] = useState(false);
+  // The editor is a server-rendered route, so the push isn't over when it
+  // returns — the RSC payload still has to come back. A brand-new id has never
+  // been prefetched, so the router has no loading boundary cached to show and
+  // leaves the list page on screen while it waits. Held in a transition, the
+  // dialog stays up and says what it's waiting for instead of vanishing into a
+  // few seconds of nothing.
+  const [opening, startOpening] = useTransition();
+  const busy = submitting || opening;
   // The name we last filled in from a template. Picking a template names the
   // automation after it unless the user has typed a name of their own.
   const autoName = useRef<string>("");
@@ -115,6 +123,9 @@ export function NewAutomationDialog({
   }
 
   function openChange(next: boolean) {
+    // Closing mid-flight would drop the user back on the list with no sign that
+    // an automation is on its way.
+    if (!next && busy) return;
     onOpenChange(next);
     if (!next) {
       setName("");
@@ -136,8 +147,9 @@ export function NewAutomationDialog({
       };
       const detail = await api.post<AutomationDetail>("/api/automations", body);
       toast.success("Automation created");
-      openChange(false);
-      router.push(`/automations/${detail.id}`);
+      // No openChange here: the dialog is unmounted by the navigation itself,
+      // once the editor is actually ready to take over.
+      startOpening(() => router.push(`/automations/${detail.id}`));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't create the automation");
     } finally {
@@ -167,7 +179,7 @@ export function NewAutomationDialog({
               // "Type a name, press Enter" is the fastest path this dialog
               // promises; without a form element Enter would otherwise do nothing.
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !submitting) {
+                if (e.key === "Enter" && !busy) {
                   e.preventDefault();
                   void create();
                 }
@@ -238,9 +250,9 @@ export function NewAutomationDialog({
             </div>
           </div>
 
-          <Button onClick={create} disabled={submitting} className="w-full">
-            {submitting && <OrbitLoader size={16} />}
-            Create automation
+          <Button onClick={create} disabled={busy} className="w-full">
+            {busy && <OrbitLoader size={16} />}
+            {submitting ? "Creating…" : opening ? "Opening the editor…" : "Create automation"}
           </Button>
         </div>
       </DialogContent>

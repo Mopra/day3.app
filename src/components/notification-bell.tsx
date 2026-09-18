@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { BellIcon } from "lucide-react";
+import { BellIcon, type BellIconHandle } from "@/components/ui/animated-icons/bell";
 import { useApi } from "@/lib/api";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { formatDateTime } from "@/lib/format";
@@ -28,6 +28,8 @@ export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notification[]>([]);
   const [unread, setUnread] = useState(0);
+  // Same hover contract the sidebar nav items use: the row drives the glyph.
+  const iconRef = useRef<BellIconHandle>(null);
 
   const load = useCallback(() => {
     api
@@ -65,9 +67,11 @@ export function NotificationBell() {
     <Popover open={open} onOpenChange={handleOpenChange}>
       <PopoverTrigger
         aria-label={unread > 0 ? `Notifications (${unread} unread)` : "Notifications"}
+        onMouseEnter={() => iconRef.current?.startAnimation()}
+        onMouseLeave={() => iconRef.current?.stopAnimation()}
         className="relative flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground"
       >
-        <BellIcon className="size-4 shrink-0" />
+        <BellIcon ref={iconRef} size={16} className="inline-flex shrink-0" />
         Notifications
         {unread > 0 && (
           <span className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-primary-foreground tabular-nums">

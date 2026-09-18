@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
-import type { EnrollmentStatus } from "@/lib/automation-types";
+import type { EnrollmentFilter } from "@/lib/automation-types";
 import {
   ENROLLMENT_PAGE_MAX,
   enrollByEmail,
@@ -11,17 +11,28 @@ import {
 
 type Ctx = { params: Promise<{ id: string }> };
 
-const STATUSES: readonly EnrollmentStatus[] = ["active", "sending", "completed", "exited", "failed"];
+// The engine's five statuses plus the two splits the tab filters by
+// (`in_progress` / `held`); services/automations.ts owns what they mean.
+const FILTERS: readonly EnrollmentFilter[] = [
+  "in_progress",
+  "held",
+  "active",
+  "sending",
+  "completed",
+  "exited",
+  "failed",
+];
 
-// GET /api/automations/{id}/enrollments?status=&offset=&limit=
+// GET /api/automations/{id}/enrollments?status=&q=&offset=&limit=
 export const GET = route<Ctx>(async (req, { params }) => {
   const { id } = await params;
   const { db, account } = await requireAccount();
   const search = new URL(req.url).searchParams;
   const status = search.get("status");
-  if (status && !STATUSES.includes(status as EnrollmentStatus)) {
+  if (status && !FILTERS.includes(status as EnrollmentFilter)) {
     throw new HttpError(400, `Unknown status "${status}"`);
   }
+  const q = search.get("q")?.slice(0, 320) ?? null;
   const offset = Number(search.get("offset") ?? "0");
   const limit = Number(search.get("limit") ?? "50");
   if (!Number.isInteger(offset) || offset < 0) throw new HttpError(400, "offset must be a non-negative integer");
@@ -30,7 +41,8 @@ export const GET = route<Ctx>(async (req, { params }) => {
   }
   return json(
     await listEnrollments(db, account.id, id, {
-      status: (status as EnrollmentStatus | null) ?? null,
+      status: (status as EnrollmentFilter | null) ?? null,
+      search: q,
       offset,
       limit,
     }),

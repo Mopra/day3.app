@@ -389,6 +389,57 @@
 }
 .animate-live-dot { animation: d3-live-dot 1.8s ease-in-out infinite; }
 
+/* The mark counts itself. Day3's mark is three squares, two neutral and then
+   the caramel one: the name said in shapes rather than letters. On hover (and
+   on keyboard focus, or the effect simply would not exist for anyone navigating
+   by tab) each square lifts in turn, left to right, so the payoff square lands
+   last.
+
+   Same family as OrbitLoader further down this file, which is the same mark
+   waiting rather than greeting: left-to-right stagger, accent last. Faster here
+   because a hover has to finish while the pointer is still on it, where the
+   loader loops. Keep the direction and the ordering in step if either moves.
+
+   Sized in SVG user units, not pixels. The mark renders 46x13 from a 356x100
+   viewBox, so roughly 7.7 units is one screen pixel and the 9-unit lift below
+   is the ~1.2px that reads as a hop at this size without looking like a glitch.
+   If the mark is ever rendered larger, these scale with it for free.
+
+   `transform-box: fill-box` is what makes the scale happen about each square's
+   own centre. Without it an SVG transform-origin resolves against the whole
+   viewBox and the outer squares swing rather than pop. */
+.d3-mark-sq {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.d3-mark-link:hover .d3-mark-sq,
+.d3-mark-link:focus-visible .d3-mark-sq {
+  animation: d3-mark-beat 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.d3-mark-link:hover .d3-mark-sq:nth-child(2),
+.d3-mark-link:focus-visible .d3-mark-sq:nth-child(2) {
+  animation-delay: 90ms;
+}
+.d3-mark-link:hover .d3-mark-sq:nth-child(3),
+.d3-mark-link:focus-visible .d3-mark-sq:nth-child(3) {
+  animation-delay: 180ms;
+}
+/* The third square is the one the name is about, so it gets the slightly
+   larger beat and a brightening. The sequence should land, not just stop. */
+.d3-mark-link:hover .d3-mark-sq-accent,
+.d3-mark-link:focus-visible .d3-mark-sq-accent {
+  animation-name: d3-mark-beat-accent;
+  animation-duration: 480ms;
+}
+@keyframes d3-mark-beat {
+  0%, 100% { transform: translateY(0) scale(1); }
+  40% { transform: translateY(-9px) scale(1.07); }
+}
+@keyframes d3-mark-beat-accent {
+  0%, 100% { transform: translateY(0) scale(1); filter: brightness(1); }
+  40% { transform: translateY(-12px) scale(1.1); filter: brightness(1.18); }
+}
+
 /* Scroll reveal — paired with the <Reveal> client wrapper (see
    src/components/ui/reveal.tsx), which flips `.is-visible` on entry. */
 .reveal {
@@ -408,7 +459,9 @@
 @media (prefers-reduced-motion: reduce) {
   .animate-desk-wash-1,
   .animate-desk-wash-2,
-  .animate-live-dot {
+  .animate-live-dot,
+  .d3-mark-link:hover .d3-mark-sq,
+  .d3-mark-link:focus-visible .d3-mark-sq {
     animation: none !important;
   }
   .reveal {

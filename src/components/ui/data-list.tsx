@@ -144,22 +144,78 @@ export function ListFilter({
   );
 }
 
+export type ChipOption = { value: string; label: string; count: number; tone?: "default" | "alert" };
+
+/**
+ * A row of count chips that double as the filter. Use instead of <ListFilter/>
+ * when the counts themselves are information the reader came for ("is anyone
+ * stuck?"): a dropdown hides them behind a click, and the number is half the
+ * answer. `tone: "alert"` marks the chip that means something needs attention,
+ * so it reads as a warning when it is non-zero and as an ordinary chip at zero.
+ * A chip with no rows behind it still renders: "0 held" is a useful answer.
+ */
+export function ListChips({
+  value,
+  onChange,
+  options,
+  ariaLabel,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: ChipOption[];
+  ariaLabel?: string;
+  className?: string;
+}) {
+  return (
+    <div role="group" aria-label={ariaLabel} className={cn("flex flex-wrap items-center gap-1.5", className)}>
+      {options.map((o) => {
+        const selected = o.value === value;
+        const alert = o.tone === "alert" && o.count > 0;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={selected}
+            onClick={() => onChange(selected ? "" : o.value)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+              selected
+                ? "border-transparent bg-secondary text-secondary-foreground"
+                : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+              alert && !selected && "border-caramel/40 text-caramel hover:text-caramel",
+            )}
+          >
+            {o.label}
+            <span className={cn("tabular-nums", selected ? "" : "text-foreground/70")}>
+              {o.count.toLocaleString()}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** "12 campaigns" or "12 of 40 campaigns" when a filter is narrowing the list. */
 export function ListCount({
   shown,
   total,
   noun,
+  many,
   className,
 }: {
   shown: number;
   total: number;
   noun: string;
+  // For nouns English does not pluralize with an "s" ("person" → "people").
+  many?: string;
   className?: string;
 }) {
   const label =
     shown === total
-      ? `${total.toLocaleString()} ${pluralize(total, noun)}`
-      : `${shown.toLocaleString()} of ${total.toLocaleString()} ${pluralize(total, noun)}`;
+      ? `${total.toLocaleString()} ${pluralize(total, noun, many)}`
+      : `${shown.toLocaleString()} of ${total.toLocaleString()} ${pluralize(total, noun, many)}`;
   return (
     <span className={cn("text-sm text-muted-foreground tabular-nums", className)}>{label}</span>
   );

@@ -25,11 +25,11 @@ import {
   type NodeChange,
   type OnBeforeDelete,
 } from "@xyflow/react";
-import { AlignStartVertical, Check, CloudOff, FileText, Mail, Monitor } from "lucide-react";
+import { AlignStartVertical, FileText, Mail, Monitor } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { OrbitLoader } from "@/components/ui/orbit-loader";
+import { SaveIndicator, type SaveStatus } from "@/components/save-indicator";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
   PORTS_BY_KIND,
@@ -48,6 +48,7 @@ import type {
   GraphPayload,
   GraphPayloadNode,
 } from "@/lib/automation-types";
+import type { SignupForm } from "@/lib/types";
 import { AddNodeButton, AddNodeContextMenu } from "./add-node-menu";
 import { NodeInspector, type NodePatch } from "./inspector";
 import { LAYER_GAP_Y, NODE_WIDTH, applyLayout, layoutGraph } from "./layout";
@@ -59,34 +60,10 @@ import { SendNodeEditor } from "./send-node-editor";
 // composer so the two "Saved" indicators on this page feel like one system.
 const AUTOSAVE_DELAY_MS = 800;
 
-export type SaveStatus = "idle" | "pending" | "saving" | "saved" | "error";
-
-export function SaveIndicator({ status }: { status: SaveStatus }) {
-  if (status === "idle") return null;
-  if (status === "error") {
-    return (
-      <span className="flex items-center gap-1.5 text-xs text-destructive">
-        <CloudOff className="size-3.5" />
-        Couldn&apos;t save. Your changes are still here.
-      </span>
-    );
-  }
-  return (
-    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-      {status === "saved" ? (
-        <>
-          <Check className="size-3.5" />
-          Saved
-        </>
-      ) : (
-        <>
-          <OrbitLoader size={14} />
-          Saving
-        </>
-      )}
-    </span>
-  );
-}
+// Re-exported: the canvas is where the page's other surfaces already import the
+// save vocabulary from, and the indicator itself now lives in its own module so
+// the Settings tab can show it without pulling React Flow into its bundle.
+export { SaveIndicator, type SaveStatus };
 
 // React Flow's chrome (pane, edges, handles, controls) re-coloured with the app's
 // own tokens. Custom nodes carry their own classes, so only the plumbing is here.
@@ -121,6 +98,8 @@ const DEFAULT_EDGE_OPTIONS = { type: "smoothstep" } as const;
 type Props = {
   detail: AutomationDetail;
   stats: AutomationStats | null;
+  // The account's signup forms, for the trigger node's "only signups from" pick.
+  forms: SignupForm[];
   onDetailChange: (detail: AutomationDetail) => void;
   onSaveStatus: (status: SaveStatus) => void;
   onOpenSettings: () => void;
@@ -142,7 +121,7 @@ export function AutomationCanvas(props: Props) {
 }
 
 // A phone gets the flow as prose instead of a canvas that cannot be edited with
-// a thumb. People, Stats and Settings stay fully usable next to it.
+// a thumb. Enrollments, Stats and Settings stay fully usable next to it.
 function MobileFallback({ detail }: { detail: AutomationDetail }) {
   return (
     <Card>
@@ -168,6 +147,7 @@ function MobileFallback({ detail }: { detail: AutomationDetail }) {
 function CanvasInner({
   detail,
   stats,
+  forms,
   onDetailChange,
   onSaveStatus,
   onOpenSettings,
@@ -357,13 +337,23 @@ function CanvasInner({
           type: n.kind,
           position: { x: n.x, y: n.y },
           data,
+          // React Flow keeps a node's measured size and handle bounds only for
+          // a node object it has already seen, and this memo builds fresh ones
+          // on every render. So the measurement has to be handed back, or the
+          // node counts as unmeasured and React Flow draws it with
+          // `visibility: hidden` until it has measured it again. That is one
+          // blink per render: a drag strobes the node and its edges the whole
+          // way across the canvas, and a stats poll blinks the lot. A node that
+          // really does change size still re-measures, because React Flow gives
+          // each one its own ResizeObserver.
+          measured: rf.getInternalNode(n.key)?.measured,
           selected: n.key === selectedKey,
           deletable: n.kind !== "trigger" && !readOnly,
           draggable: !readOnly,
           connectable: !readOnly,
         };
       }),
-    [graph.nodes, issuesByNode, statsByKey, selectedKey, readOnly, liveKeys],
+    [graph.nodes, issuesByNode, statsByKey, selectedKey, readOnly, liveKeys, rf],
   );
 
   const rfEdges = useMemo<Edge[]>(() => {
@@ -509,6 +499,10 @@ function CanvasInner({
 
   /* ───────────────────────── React Flow callbacks ──────────────────────── */
 
+  // `nodes` is a controlled prop, so React Flow does not move a dragged node
+  // itself. It hands us the position once per pointer frame and re-renders from
+  // what we give back, so every change has to be applied, mid-drag ones
+  // included, or the node sits still until the mouse comes up.
   const onNodesChange = useCallback(
     (changes: NodeChange<CanvasNode>[]) => {
       const moved = new Map<string, { x: number; y: number }>();
@@ -634,6 +628,7 @@ function CanvasInner({
           minZoom={0.3}
           maxZoom={1.5}
           defaultEdgeOptions={DEFAULT_EDGE_OPTIONS}
+          proOptions={{ hideAttribution: true }}
           className="!bg-transparent"
         >
           <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} />
@@ -704,9 +699,14 @@ function CanvasInner({
             node={selectedNode}
             nodes={graph.nodes}
             detail={detail}
+            forms={forms}
             issues={issuesByNode.get(selectedNode.key) ?? { errors: [], warnings: [] }}
             readOnly={readOnly}
             onChange={(patch) => patchNode(selectedNode.key, patch)}
+            onDetailChange={onDetailChange}
+            // The trigger node writes the automation row, not the graph, but it
+            // is still an edit made on the canvas: it drives the same indicator.
+            onSettingsSaveStatus={setSaveStatus}
             onDelete={() => removeNodes([selectedNode.key])}
             onEditEmail={() => setEditingKey(selectedNode.key)}
             onOpenSettings={onOpenSettings}

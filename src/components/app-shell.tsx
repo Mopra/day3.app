@@ -2,11 +2,11 @@
 
 import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ComponentType, Ref, RefAttributes } from "react";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { OrganizationSwitcher, UserButton, useAuth } from "@clerk/nextjs";
 import { Menu, Sparkles, Workflow } from "lucide-react";
+import { Day3Mark } from "@/components/day3-mark";
 import { cn } from "@/lib/utils";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useApi } from "@/lib/api";
@@ -315,7 +315,7 @@ export function AppShell({ children, plan }: { children: React.ReactNode; plan: 
             <Menu className="size-5" />
           </button>
           <Link href="/dashboard" className="flex h-10 items-center px-1">
-            <Image src="/day3-mark-light.svg" alt="Day3" width={46} height={13} priority />
+            <Day3Mark />
           </Link>
           <div className="ml-auto flex items-center gap-1">
             <UserButton appearance={{ elements: { userButtonTrigger: { padding: 0 } } }} />
@@ -384,8 +384,15 @@ function SidebarBody({
 }) {
   return (
     <div className="flex min-h-full flex-col">
-      <Link href="/dashboard" onClick={onNavigate} className="flex h-14 items-center px-4">
-        <Image src="/day3-mark-light.svg" alt="Day3" width={46} height={13} priority />
+      {/* `d3-mark-link` is what arms the mark's hover count (globals.css): the
+          trigger sits on the link, not the svg, so the whole hit area plays it
+          rather than only the 46x13 the squares occupy. */}
+      <Link
+        href="/dashboard"
+        onClick={onNavigate}
+        className="d3-mark-link flex h-14 items-center px-4"
+      >
+        <Day3Mark />
       </Link>
       {/* Workspace switcher — top of the sidebar, directly under the mark
           and above the nav: the org scopes everything below it, so it
