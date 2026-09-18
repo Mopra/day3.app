@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "../../db/client";
 import { audiences, campaigns, senders, sendingDomains, type Campaign } from "../../db/schema";
@@ -355,7 +355,11 @@ export async function renderCampaignPreview(
 
 export async function findCampaignOr404(db: Db, accountId: string, id: string): Promise<Campaign> {
   const campaign = await db.query.campaigns.findFirst({
-    where: and(eq(campaigns.id, id), eq(campaigns.accountId, accountId)),
+    where: and(
+      eq(campaigns.id, id),
+      eq(campaigns.accountId, accountId),
+      isNull(campaigns.deletedAt),
+    ),
   });
   if (!campaign) throw new ApiError(404, "not_found", "Campaign not found");
   return campaign;

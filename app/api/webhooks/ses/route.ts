@@ -12,7 +12,7 @@ import {
 } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { addSuppression } from "@/services/suppression";
-import { enforceAccountHealth } from "@/services/health";
+import { enforceAccountHealth, enforceCampaignHealth } from "@/services/health";
 import { emitWebhookEvent } from "@/services/webhook-events";
 import { logger } from "@/lib/logger";
 
@@ -499,5 +499,10 @@ async function applyHardFailure(
     source: "ses-sns-webhook",
   });
 
+  // The campaign is judged on its own numbers first (a pause at the warning
+  // line, once, that the user can resume), then the account on its window (the
+  // one-way pause). Ordered this way so the milder step gets to be the one the
+  // customer hears about when both would fire in the same second.
+  if (recipient.campaignId) await enforceCampaignHealth(db, recipient.campaignId);
   await enforceAccountHealth(db, recipient.accountId);
 }

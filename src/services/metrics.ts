@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 import type { Db } from "../db/client";
 import {
@@ -26,7 +26,10 @@ import {
   HEALTH_WINDOW_DAYS,
   MIN_ATTEMPTED_FOR_ENFORCEMENT,
   MIN_BOUNCED_FOR_PAUSE,
+  MIN_BOUNCED_FOR_WARNING,
   MIN_COMPLAINED_FOR_PAUSE,
+  MIN_COMPLAINED_FOR_WARNING,
+  MIN_FLAGGED_CAMPAIGNS_FOR_PAUSE,
   TX_BAD_ADDRESS_COUNT_SQL,
   computeAccountHealth,
 } from "./health";
@@ -110,7 +113,10 @@ export async function accountCampaignMetrics(
     })
     .from(campaignRecipients)
     .innerJoin(campaigns, eq(campaigns.id, campaignRecipients.campaignId))
-    .where(eq(campaignRecipients.accountId, accountId))
+    // A soft-deleted campaign drops out of the per-campaign table (the tenant
+    // deleted it), but its rows still count in the reputation card above,
+    // which reads campaign_recipients directly.
+    .where(and(eq(campaignRecipients.accountId, accountId), isNull(campaigns.deletedAt)))
     .groupBy(
       campaigns.id,
       campaigns.name,
@@ -332,15 +338,19 @@ export async function accountReputation(db: Db, accountId: string): Promise<Repu
     complaintRate: health.complaintRate,
     status: health.status,
     reason: health.reason ?? null,
+    flaggedCampaigns: health.flaggedCampaigns,
     bySource: health.bySource,
     thresholds: {
       minAttempted: MIN_ATTEMPTED_FOR_ENFORCEMENT,
       bounceWarn: BOUNCE_RATE_WARNING,
       bouncePause: BOUNCE_RATE_PAUSE,
+      minBouncedWarn: MIN_BOUNCED_FOR_WARNING,
       minBounced: MIN_BOUNCED_FOR_PAUSE,
       complaintWarn: COMPLAINT_RATE_WARNING,
       complaintPause: COMPLAINT_RATE_PAUSE,
+      minComplainedWarn: MIN_COMPLAINED_FOR_WARNING,
       minComplained: MIN_COMPLAINED_FOR_PAUSE,
+      flaggedCampaignsForPause: MIN_FLAGGED_CAMPAIGNS_FOR_PAUSE,
     },
   };
 }

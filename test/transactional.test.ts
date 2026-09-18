@@ -804,16 +804,16 @@ describe("transactional sends count toward account reputation", () => {
   });
 
   it("needs the rate AND an absolute count of bad addresses before pausing", async () => {
-    await mkMessage({ status: "sent", recipients: 380 });
-    for (let i = 0; i < 18; i++) {
+    await mkMessage({ status: "sent", recipients: 500 });
+    for (let i = 0; i < 45; i++) {
       await mkMessage({ status: "bounced", recipients: 1, bad: 1 });
     }
 
-    // 18 / 398 = 4.52%, over the 4% rate line but under MIN_BOUNCED_FOR_PAUSE.
-    // At this volume that is binomial noise on an ordinary list, so it warns.
+    // 45 / 545 = 8.26%, over the 8% rate line but under MIN_BOUNCED_FOR_PAUSE.
+    // The rate alone is not evidence, so it warns.
     const noisy = await enforceAccountHealth(currentDb, account.id);
-    expect(noisy.attempted).toBe(398);
-    expect(noisy.bounced).toBe(18);
+    expect(noisy.attempted).toBe(545);
+    expect(noisy.bounced).toBe(45);
     expect(noisy.bounceRate).toBeGreaterThanOrEqual(BOUNCE_RATE_PAUSE);
     expect(noisy.status).toBe("warning");
     expect(
@@ -821,15 +821,15 @@ describe("transactional sends count toward account reputation", () => {
         .riskStatus,
     ).toBe("normal");
 
-    // Two more clears both halves: 20 / 400 = 5% and 20 >= MIN_BOUNCED_FOR_PAUSE.
-    for (let i = 0; i < 2; i++) {
+    // Five more clears both halves: 50 / 550 = 9.1% and 50 >= MIN_BOUNCED_FOR_PAUSE.
+    for (let i = 0; i < 5; i++) {
       await mkMessage({ status: "bounced", recipients: 1, bad: 1 });
     }
     const bad = await enforceAccountHealth(currentDb, account.id);
-    expect(bad.attempted).toBe(400);
-    expect(bad.bounced).toBe(20);
+    expect(bad.attempted).toBe(550);
+    expect(bad.bounced).toBe(50);
     expect(bad.status).toBe("paused");
-    expect(bad.reason).toMatch(/20 bounced of 400 sent/);
+    expect(bad.reason).toMatch(/50 bounced of 550 sent/);
 
     const acct = (await currentDb.query.accounts.findFirst({
       where: eq(accounts.id, account.id),
@@ -838,25 +838,30 @@ describe("transactional sends count toward account reputation", () => {
     expect(acct.sendingEnabled).toBe(false);
   });
 
-  it("does not pause on one or two complaints, however small the send", async () => {
-    // The complaint threshold is 0.08%, so at 200 sends a SINGLE "report spam"
-    // click read as 25x over the line. This is the case that was pausing
-    // legitimate product senders.
+  it("does not pause on a handful of complaints, however small the send", async () => {
+    // At 200 sends a SINGLE "report spam" click is 0.5%, far over every rate
+    // line. This is the case that was pausing legitimate product senders: a
+    // rate on a tiny send measures nothing, so the counts decide.
     await mkMessage({ status: "sent", recipients: 200 });
     await mkMessage({ status: "complained", recipients: 1, bad: 1, event: "complaint" });
 
     const one = await enforceAccountHealth(currentDb, account.id);
     expect(one.complained).toBe(1);
     expect(one.complaintRate).toBeGreaterThanOrEqual(COMPLAINT_RATE_PAUSE);
-    expect(one.status).toBe("warning");
+    expect(one.status).toBe("normal"); // one click is not even a warning
 
     await mkMessage({ status: "complained", recipients: 1, bad: 1, event: "complaint" });
     expect((await enforceAccountHealth(currentDb, account.id)).status).toBe("warning");
 
-    // The third satisfies MIN_COMPLAINED_FOR_PAUSE.
+    for (let i = 0; i < 2; i++) {
+      await mkMessage({ status: "complained", recipients: 1, bad: 1, event: "complaint" });
+    }
+    expect((await enforceAccountHealth(currentDb, account.id)).status).toBe("warning");
+
+    // The fifth satisfies MIN_COMPLAINED_FOR_PAUSE.
     await mkMessage({ status: "complained", recipients: 1, bad: 1, event: "complaint" });
     const bad = await enforceAccountHealth(currentDb, account.id);
-    expect(bad.complained).toBe(3);
+    expect(bad.complained).toBe(5);
     expect(bad.status).toBe("paused");
     expect(
       (await currentDb.query.accounts.findFirst({ where: eq(accounts.id, account.id) }))!

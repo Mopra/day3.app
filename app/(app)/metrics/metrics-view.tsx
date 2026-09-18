@@ -210,16 +210,16 @@ function ReputationCard({ rep }: { rep: ReputationSummary }) {
   const t = rep.thresholds;
   const enforceable = rep.attempted >= t.minAttempted;
 
-  // Per-bar tone mirrors the enforcement rule exactly: a pause needs the rate
-  // AND an absolute count behind it, so a rate over the line with two bounces
-  // behind it is a warning here, not a red bar — the same judgement the guard
-  // makes. See MIN_BOUNCED_FOR_PAUSE in services/health.ts.
+  // Per-bar tone mirrors the enforcement rule exactly: every tier needs the
+  // rate AND an absolute count behind it, so a rate over the line with two
+  // bounces behind it is green here, not amber — the same judgement the guard
+  // makes. See MIN_BOUNCED_FOR_WARNING / MIN_BOUNCED_FOR_PAUSE in services/health.ts.
   const bounceTone: Tone =
     !enforceable || rep.attempted === 0
       ? "neutral"
       : rep.bounceRate >= t.bouncePause && rep.bounced >= t.minBounced
         ? "bad"
-        : rep.bounceRate >= t.bounceWarn
+        : rep.bounceRate >= t.bounceWarn && rep.bounced >= t.minBouncedWarn
           ? "warn"
           : "good";
   const complaintTone: Tone =
@@ -227,7 +227,7 @@ function ReputationCard({ rep }: { rep: ReputationSummary }) {
       ? "neutral"
       : rep.complaintRate >= t.complaintPause && rep.complained >= t.minComplained
         ? "bad"
-        : rep.complaintRate >= t.complaintWarn
+        : rep.complaintRate >= t.complaintWarn && rep.complained >= t.minComplainedWarn
           ? "warn"
           : "good";
 
@@ -344,10 +344,13 @@ function ReputationCard({ rep }: { rep: ReputationSummary }) {
         <p className="pt-1 text-xs leading-relaxed text-muted-foreground">
           {enforceable ? (
             <>
-              Sending pauses automatically above {pct(t.bouncePause, 0)} bounces (and at least{" "}
+              A campaign pauses itself, once, when its own rate reaches {pct(t.bounceWarn, 0)}{" "}
+              bounces or {pct(t.complaintWarn, 2)} complaints, so you can clean the list and
+              resume. Your workspace pauses above {pct(t.bouncePause, 0)} bounces (and at least{" "}
               {t.minBounced} of them) or {pct(t.complaintPause, 2)} complaints (at least{" "}
-              {t.minComplained}). Both halves are required, so a single bad address can&apos;t
-              stop your mail.
+              {t.minComplained}), or when {t.flaggedCampaignsForPause} campaigns have paused
+              themselves in the window and the rate is still over the line. Every tier needs
+              both a rate and a count, so a single bad address can&apos;t stop your mail.
             </>
           ) : (
             <>

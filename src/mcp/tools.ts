@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { ApiContext } from "../api/v1/auth";
 import { ApiError } from "../api/v1/errors";
 import { keyHasScope, parseScopes, requireScope } from "../api/v1/scopes";
@@ -173,7 +173,7 @@ export const TOOLS: Tool<Ctx>[] = [
     annotations: { readOnlyHint: true },
     handler: async (args, { db, account }) => {
       const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 50);
-      const filters = [eq(campaigns.accountId, account.id)];
+      const filters = [eq(campaigns.accountId, account.id), isNull(campaigns.deletedAt)];
       const status = str(args.status);
       if (status) filters.push(eq(campaigns.status, status as never));
       const rows = await db

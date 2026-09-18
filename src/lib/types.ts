@@ -289,6 +289,9 @@ export type Campaign = {
   riskScore: number | null;
   riskSummary: string | null;
   pausedReason: string | null;
+  // Machine-readable pause cause (schema PAUSED_CODES); "reputation" is the
+  // campaign's own bounce/complaint pause, which the user resumes.
+  pausedCode: string | null;
   scheduledAt: string | null;
   sentAt: string | null;
   createdAt: string;
@@ -421,15 +424,22 @@ export type ReputationSummary = {
   complaintRate: number;
   status: "normal" | "warning" | "paused";
   reason: string | null;
+  // Campaigns in the window that paused themselves for their own bounce or
+  // complaint rate (services/health.ts, enforceCampaignHealth).
+  flaggedCampaigns: number;
   bySource: ReputationSourceCounts[];
   thresholds: {
     minAttempted: number;
     bounceWarn: number;
     bouncePause: number;
+    // Absolute counts behind each rate; every tier needs both halves.
+    minBouncedWarn: number;
     minBounced: number;
     complaintWarn: number;
     complaintPause: number;
+    minComplainedWarn: number;
     minComplained: number;
+    flaggedCampaignsForPause: number;
   };
 };
 

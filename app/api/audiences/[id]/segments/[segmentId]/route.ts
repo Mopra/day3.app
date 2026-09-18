@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
@@ -84,6 +84,7 @@ export const DELETE = route<Params>(async (_req, { params }) => {
         eq(campaigns.accountId, account.id),
         eq(campaigns.segmentId, segment.id),
         inArray(campaigns.status, [...ACTIVE_STATUSES]),
+        isNull(campaigns.deletedAt),
       ),
     );
   if (active.length > 0) {

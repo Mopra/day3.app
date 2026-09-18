@@ -1,40 +1,76 @@
-import { and, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { accounts, campaignRecipients, emailEvents, transactionalEmails } from "../db/schema";
+import {
+  accounts,
+  campaignRecipients,
+  campaigns,
+  emailEvents,
+  transactionalEmails,
+  type Campaign,
+} from "../db/schema";
 import { nowIso } from "../lib/ids";
 import { logger } from "../lib/logger";
 
-export const BOUNCE_RATE_WARNING = 0.03;
-export const BOUNCE_RATE_PAUSE = 0.04;
-export const COMPLAINT_RATE_WARNING = 0.0005;
-export const COMPLAINT_RATE_PAUSE = 0.0008;
+// ---------------------------------------------------------------------------
+// Thresholds
+// ---------------------------------------------------------------------------
+//
+// The bars mirror what Amazon SES applies to the platform's one shared sending
+// account. SES opens a review at 5% bounces / 0.1% complaints and stops a
+// sender at 10% / 0.5%. Day3 warns where SES reviews and pauses an account
+// short of where SES would stop us, because one tenant's rate becomes every
+// tenant's problem once it moves the account-wide number.
+//
+// These used to be stricter than SES's own review line (4% / 0.08%), which
+// meant we were locking out paying customers before AWS would have so much as
+// emailed us. A first send from an honestly-collected but ageing list bounces at
+// 5-6%: dead mailboxes are how lists age. That is a list to clean, not a
+// spammer to stop, and 4 of the first 13 paying accounts hit the old bar.
+export const BOUNCE_RATE_WARNING = 0.05;
+export const BOUNCE_RATE_PAUSE = 0.08;
+export const COMPLAINT_RATE_WARNING = 0.001;
+export const COMPLAINT_RATE_PAUSE = 0.003;
 
 // Below this many attempted sends, rates are too noisy to say anything at all.
 export const MIN_ATTEMPTED_FOR_ENFORCEMENT = 50;
 
-// A rate on its own is not evidence, and this is the half that was missing.
-// The thresholds above are SES-grade, but SES applies them to SES-grade volume:
-// at the enforcement floor of 50 attempted, 4% is *two* bounces and 0.08% rounds
-// to *one* complaint. An ordinary B2B list bouncing at a true 1.5% clears
-// 2-of-50 about 17% of the time, so roughly one in six clean small sends tripped
-// the auto-pause, and a single "report spam" click did it outright.
+// A rate on its own is not evidence. At the 50-attempted floor, 5% is three
+// bounces and 0.1% rounds to one "report spam" click, so every tier needs an
+// absolute count of bad addresses behind its rate before it means anything.
 //
-// The auto-pause is also one-way: it flips `risk_status` to paused and only an
-// operator can resume, so a false positive costs a support round-trip and tells
-// a legitimate customer they look like a spammer. That asymmetry is why the bar
-// belongs well above the noise rather than at it.
-//
-// So a pause needs the rate AND an absolute count of bad addresses behind it.
-// The count is a crude confidence floor: the smallest possible pause becomes 20
-// bounces (>=500 attempted) or 3 complaints (>=3750 attempted), volumes where
-// the percentage is actually estimating something. AWS reasons the same way —
-// SES opens a review at 5% bounce / 0.1% complaint but does not enforce against
-// low-volume senders, because the rates are not meaningful there. An account
-// genuinely mailing a purchased list blows through both counts on its first real
-// send; an account sending 200 product notifications a fortnight never touches
-// them, which is the population the rate-only rule was catching.
-export const MIN_BOUNCED_FOR_PAUSE = 20;
-export const MIN_COMPLAINED_FOR_PAUSE = 3;
+// The warning tier emails the account's admins, so it needs a floor too: the
+// old warning fired on two bounces, which was fine for an amber light and is
+// not fine for an inbox.
+export const MIN_BOUNCED_FOR_WARNING = 20;
+export const MIN_COMPLAINED_FOR_WARNING = 2;
+
+// The account pause is one-way (`risk_status` flips and only an operator
+// resumes), so its floor sits well above the noise: the smallest possible
+// pause is 50 hard bounces (>= 625 attempted) or 5 complaints (>= 1667
+// attempted). An account genuinely mailing a purchased list blows through both
+// on its first real send; an account with a stale-but-honest list gets the
+// campaign-level pause below and a warning, and never touches these.
+export const MIN_BOUNCED_FOR_PAUSE = 50;
+export const MIN_COMPLAINED_FOR_PAUSE = 5;
+
+// Escalation. One campaign paused for its own bounce rate is a heads-up; a
+// second one inside the window, while the account is still over the warning
+// line, is a pattern (the tenant keeps importing lists that bounce), and the
+// account pauses at the warning rate instead of waiting for the pause rate.
+export const MIN_FLAGGED_CAMPAIGNS_FOR_PAUSE = 2;
+
+// Campaign-level pause (enforceCampaignHealth). This is the middle step that
+// used to be missing: the first response to a bad list is to stop THAT send,
+// tell the customer what bounced and let them resume, not to lock the account.
+// It fires at the warning rate, once per campaign (the flag survives resume),
+// and only after enough of the campaign is out to judge it: 200 attempted, or a
+// quarter of the recipients for a campaign smaller than 800. Hard bounces from
+// Gmail/Outlook/iCloud arrive within seconds, so without that floor the first
+// few hundred emails would decide the whole send.
+export const CAMPAIGN_MIN_ATTEMPTED_FOR_PAUSE = 200;
+export const CAMPAIGN_MIN_ATTEMPTED_SHARE = 0.25;
+export const CAMPAIGN_MIN_BOUNCED_FOR_PAUSE = 20;
+export const CAMPAIGN_MIN_COMPLAINED_FOR_PAUSE = 3;
 
 // Reputation is judged over a TRAILING WINDOW of recent sends, not the account's
 // lifetime. SES suspends on *recent* bounce/complaint rates, so a long good
@@ -63,6 +99,9 @@ export type AccountHealth = {
   complained: number;
   bounceRate: number;
   complaintRate: number;
+  // Campaigns in the window that enforceCampaignHealth paused for their own
+  // rate. Feeds the escalation rule; shown on the Metrics page.
+  flaggedCampaigns: number;
   status: "normal" | "warning" | "paused";
   reason?: string;
   // The same window, split by producer. Sums exactly to the totals above — it is
@@ -72,6 +111,11 @@ export type AccountHealth = {
 };
 
 const COUNTED_TX_STATUSES = ["sent", "delivered", "bounced", "complained"] as const;
+
+// Statuses that mean "we handed this to the provider": the denominator of every
+// rate here. `unsubscribed` reached a mailbox too — it counts in the
+// denominator and nowhere else.
+const ATTEMPTED_STATUSES = ["sent", "delivered", "bounced", "complained", "unsubscribed"] as const;
 
 // The two ledgers share `campaign_recipients`, so which producer wrote a row is
 // a predicate rather than a column (see AGENTS.md — the table name is a
@@ -93,6 +137,8 @@ export const TX_BAD_ADDRESS_COUNT_SQL = sql<number>`count(distinct (${emailEvent
 // avoids a backslash escape surviving the template literal.
 export const HARD_BOUNCE_ONLY_SQL = sql`(${emailEvents.eventType} <> 'bounce' OR ${emailEvents.payloadJson} ~ '"bounceType"[[:space:]]*:[[:space:]]*"(Permanent|Undetermined)"')`;
 
+export const pct = (rate: number, digits = 2): string => `${(rate * 100).toFixed(digits)}%`;
+
 export async function computeAccountHealth(db: Db, accountId: string): Promise<AccountHealth> {
   // Only count emails SENT within the trailing window. `sent_at` is set on the
   // send and preserved through later delivered/bounced/complained transitions,
@@ -110,13 +156,7 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
       and(
         eq(campaignRecipients.accountId, accountId),
         gte(campaignRecipients.sentAt, cutoff),
-        inArray(campaignRecipients.status, [
-          "sent",
-          "delivered",
-          "bounced",
-          "complained",
-          "unsubscribed",
-        ]),
+        inArray(campaignRecipients.status, [...ATTEMPTED_STATUSES]),
       ),
     )
     // Grouping by the producer as well as the status costs nothing here (same
@@ -173,6 +213,21 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
     )
     .groupBy(emailEvents.eventType);
 
+  // Campaigns the campaign-level rule already paused inside the window. Soft-
+  // deleted campaigns still count: deleting the campaign is not a way to
+  // un-happen the send.
+  const [flaggedRow] = await db
+    .select({ count: sql<number>`count(*)`.as("count") })
+    .from(campaigns)
+    .where(
+      and(
+        eq(campaigns.accountId, accountId),
+        isNotNull(campaigns.reputationFlaggedAt),
+        gte(campaigns.reputationFlaggedAt, cutoff),
+      ),
+    );
+  const flaggedCampaigns = Number(flaggedRow?.count ?? 0);
+
   // Fold the three reads into one row per producer FIRST, then sum. Deriving the
   // totals from the split (rather than computing them separately) is what makes
   // the Metrics page's breakdown provably add up to the number that pauses the
@@ -181,8 +236,6 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
     HEALTH_SOURCES.map((source) => [source, { source, attempted: 0, bounced: 0, complained: 0 }]),
   );
   for (const r of rows) {
-    // `unsubscribed` is an attempt that reached a mailbox — it counts in the
-    // denominator and nowhere else, exactly as it did before the split.
     const entry = perSource.get(r.source as HealthSource);
     if (!entry) continue;
     const n = Number(r.count);
@@ -210,27 +263,70 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
 
   if (attempted >= MIN_ATTEMPTED_FOR_ENFORCEMENT) {
     // Both halves, always: the rate says the proportion is bad, the count says
-    // there is enough of it to believe the rate. See MIN_BOUNCED_FOR_PAUSE.
+    // there is enough of it to believe the rate.
+    const bounceWarning = bounceRate >= BOUNCE_RATE_WARNING && bounced >= MIN_BOUNCED_FOR_WARNING;
+    const complaintWarning =
+      complaintRate >= COMPLAINT_RATE_WARNING && complained >= MIN_COMPLAINED_FOR_WARNING;
+    const days = `${HEALTH_WINDOW_DAYS} days`;
+
     if (bounceRate >= BOUNCE_RATE_PAUSE && bounced >= MIN_BOUNCED_FOR_PAUSE) {
       status = "paused";
-      reason = `Bounce rate ${(bounceRate * 100).toFixed(2)}% exceeded ${BOUNCE_RATE_PAUSE * 100}% (${bounced} bounced of ${attempted} sent)`;
+      reason = `Bounce rate ${pct(bounceRate)} exceeded ${pct(BOUNCE_RATE_PAUSE, 0)} (${bounced} bounced of ${attempted} sent in ${days})`;
     } else if (complaintRate >= COMPLAINT_RATE_PAUSE && complained >= MIN_COMPLAINED_FOR_PAUSE) {
       status = "paused";
-      reason = `Complaint rate ${(complaintRate * 100).toFixed(3)}% exceeded ${COMPLAINT_RATE_PAUSE * 100}% (${complained} complaints of ${attempted} sent)`;
-    } else if (bounceRate >= BOUNCE_RATE_WARNING || complaintRate >= COMPLAINT_RATE_WARNING) {
-      // Warn early, pause late. The warning tier keeps the low volume floor on
-      // purpose — it costs the tenant nothing and it is the signal an operator
-      // wants long before an account is anywhere near a pause.
+      reason = `Complaint rate ${pct(complaintRate, 3)} exceeded ${pct(COMPLAINT_RATE_PAUSE, 1)} (${complained} complaints of ${attempted} sent in ${days})`;
+    } else if (
+      flaggedCampaigns >= MIN_FLAGGED_CAMPAIGNS_FOR_PAUSE &&
+      (bounceWarning || complaintWarning)
+    ) {
+      status = "paused";
+      reason = bounceWarning
+        ? `${flaggedCampaigns} campaigns were paused for bouncing in ${days} and the bounce rate is still ${pct(bounceRate)} (${bounced} bounced of ${attempted} sent)`
+        : `${flaggedCampaigns} campaigns were paused for spam complaints in ${days} and the complaint rate is still ${pct(complaintRate, 3)} (${complained} complaints of ${attempted} sent)`;
+    } else if (bounceWarning || complaintWarning) {
+      // Warn early, pause late.
       status = "warning";
     }
   }
 
-  return { attempted, bounced, complained, bounceRate, complaintRate, status, reason, bySource };
+  return {
+    attempted,
+    bounced,
+    complained,
+    bounceRate,
+    complaintRate,
+    flaggedCampaigns,
+    status,
+    reason,
+    bySource,
+  };
 }
 
-// Pauses the account if its health thresholds are exceeded. Returns the health.
+// Pauses the account if its health thresholds are exceeded, and tells the
+// account's admins when it warns or pauses. Returns the health.
 export async function enforceAccountHealth(db: Db, accountId: string): Promise<AccountHealth> {
   const health = await computeAccountHealth(db, accountId);
+
+  if (health.status === "warning") {
+    // Sending continues; the admins hear about it once a week at most, and not
+    // at all in the day after a campaign-level pause already told them the
+    // same thing with more detail. Best-effort, never on the caller's path.
+    try {
+      const { notifyAccountThrottled, hasRecentNotification } = await import("./notifications");
+      const account = await db.query.accounts.findFirst({ where: eq(accounts.id, accountId) });
+      if (
+        account &&
+        account.riskStatus === "normal" &&
+        !(await hasRecentNotification(db, accountId, "campaign_reputation_paused", 24))
+      ) {
+        await notifyAccountThrottled(db, account, accountWarningNotification(health), 24 * 7);
+      }
+    } catch (err) {
+      console.error("[health] account-warning notification failed", err);
+    }
+    return health;
+  }
+
   if (health.status === "paused") {
     // The `riskStatus = 'normal'` guard means RETURNING is non-empty only on the
     // actual normal→paused transition, not on the many later bounce/complaint
@@ -261,6 +357,7 @@ export async function enforceAccountHealth(db: Db, accountId: string): Promise<A
           complained: health.complained,
           bounceRate: Number(health.bounceRate.toFixed(4)),
           complaintRate: Number(health.complaintRate.toFixed(5)),
+          flaggedCampaigns: health.flaggedCampaigns,
           windowDays: HEALTH_WINDOW_DAYS,
         },
       );
@@ -274,19 +371,209 @@ export async function enforceAccountHealth(db: Db, accountId: string): Promise<A
         const account = await db.query.accounts.findFirst({
           where: eq(accounts.id, accountId),
         });
-        if (account) {
-          await notifyAccount(db, account, {
-            kind: "account_paused",
-            title: "Sending is paused for your workspace",
-            body: `${health.reason ?? "Bounce or complaint rates exceeded the safe threshold."} Clean up your audience (remove stale or purchased addresses), then contact support to re-enable sending.`,
-            ctaHref: "/audiences",
-            ctaLabel: "Review your audience",
-          });
-        }
+        if (account) await notifyAccount(db, account, accountPausedNotification(health));
       } catch (err) {
         console.error("[health] account-paused notification failed", err);
       }
     }
   }
   return health;
+}
+
+// ---------------------------------------------------------------------------
+// Campaign-level pause
+// ---------------------------------------------------------------------------
+
+export type CampaignHealth = {
+  total: number;
+  attempted: number;
+  bounced: number;
+  complained: number;
+  bounceRate: number;
+  complaintRate: number;
+  // False while too little of the campaign is out to say anything.
+  judged: boolean;
+  paused: boolean;
+  reason?: string;
+};
+
+export function campaignMinAttempted(total: number): number {
+  return Math.min(
+    CAMPAIGN_MIN_ATTEMPTED_FOR_PAUSE,
+    Math.max(1, Math.ceil(total * CAMPAIGN_MIN_ATTEMPTED_SHARE)),
+  );
+}
+
+// Judges ONE in-flight campaign on its own numbers and pauses it if its
+// bounce or complaint rate is at the warning line, once. Called from the SES
+// webhook on every hard bounce / complaint for a campaign recipient. Returns
+// null when there is nothing to judge (campaign gone, not sending, or already
+// flagged), so the caller's hot path stays one cheap read in the common case.
+export async function enforceCampaignHealth(
+  db: Db,
+  campaignId: string,
+): Promise<CampaignHealth | null> {
+  const campaign = await db.query.campaigns.findFirst({ where: eq(campaigns.id, campaignId) });
+  if (!campaign || campaign.status !== "sending" || campaign.reputationFlaggedAt) return null;
+
+  const rows = await db
+    .select({ status: campaignRecipients.status, count: sql<number>`count(*)`.as("count") })
+    .from(campaignRecipients)
+    .where(eq(campaignRecipients.campaignId, campaign.id))
+    .groupBy(campaignRecipients.status);
+
+  let total = 0;
+  let attempted = 0;
+  let bounced = 0;
+  let complained = 0;
+  for (const r of rows) {
+    const n = Number(r.count);
+    total += n;
+    if ((ATTEMPTED_STATUSES as readonly string[]).includes(r.status)) attempted += n;
+    if (r.status === "bounced") bounced += n;
+    if (r.status === "complained") complained += n;
+  }
+  const bounceRate = attempted > 0 ? bounced / attempted : 0;
+  const complaintRate = attempted > 0 ? complained / attempted : 0;
+  const health: CampaignHealth = {
+    total,
+    attempted,
+    bounced,
+    complained,
+    bounceRate,
+    complaintRate,
+    judged: attempted >= campaignMinAttempted(total),
+    paused: false,
+  };
+  if (!health.judged) return health;
+
+  let reason: string | undefined;
+  if (bounceRate >= BOUNCE_RATE_WARNING && bounced >= CAMPAIGN_MIN_BOUNCED_FOR_PAUSE) {
+    reason = `Bounce rate ${pct(bounceRate)} exceeded ${pct(BOUNCE_RATE_WARNING, 0)} (${bounced} bounced of ${attempted} sent so far)`;
+  } else if (
+    complaintRate >= COMPLAINT_RATE_WARNING &&
+    complained >= CAMPAIGN_MIN_COMPLAINED_FOR_PAUSE
+  ) {
+    reason = `Complaint rate ${pct(complaintRate, 3)} exceeded ${pct(COMPLAINT_RATE_WARNING, 1)} (${complained} complaints of ${attempted} sent so far)`;
+  }
+  if (!reason) return health;
+
+  // The status guard claims the sending→paused transition exactly once even
+  // under concurrent webhooks; the flag is written in the same statement so a
+  // resume can never re-arm this campaign.
+  const now = nowIso();
+  const claimed = await db
+    .update(campaigns)
+    .set({
+      status: "paused",
+      pausedCode: "reputation",
+      pausedReason: reason,
+      reputationFlaggedAt: now,
+      updatedAt: now,
+    })
+    .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "sending")))
+    .returning({ id: campaigns.id });
+  if (claimed.length === 0) return health;
+
+  health.paused = true;
+  health.reason = reason;
+  logger.warn("campaign auto-paused for its own bounce/complaint rate", {
+    campaignId: campaign.id,
+    accountId: campaign.accountId,
+    attempted,
+    bounced,
+    complained,
+  });
+  try {
+    const { notifyAccount } = await import("./notifications");
+    const account = await db.query.accounts.findFirst({
+      where: eq(accounts.id, campaign.accountId),
+    });
+    if (account) await notifyAccount(db, account, campaignPausedNotification(campaign, health));
+  } catch (err) {
+    console.error("[health] campaign-paused notification failed", err);
+  }
+  return health;
+}
+
+// ---------------------------------------------------------------------------
+// What the admins are told, and why
+// ---------------------------------------------------------------------------
+//
+// Every one of these says three things: what happened (the numbers), why it
+// matters (what inbox providers and SES do with that number), and what to do
+// next. A bare "bounce rate exceeded 5%" reads as an accusation; the customer
+// whose two-year-old list just bounced needs to hear that dead mailboxes are
+// normal, that the bad addresses are already gone, and how to get back to
+// sending. Kept next to the rule so the text and the thresholds move together.
+
+const WHY_BOUNCES =
+  "A hard bounce means the mailbox no longer exists. Gmail, Outlook and the other inbox providers judge a sender by this number: above 5% they start filtering everything you send, not just the campaign that bounced.";
+const WHY_COMPLAINTS =
+  'A complaint is a recipient pressing "report spam". Inbox providers treat it as the strongest signal there is: above 0.1% they start filtering everything you send.';
+const ALREADY_SUPPRESSED =
+  "Every address that bounced or complained has already been removed from your audience and will never be mailed again.";
+const HOW_TO_FIX =
+  "To bring the number down: remove contacts who have not opened anything in a year, do not import lists you did not collect yourself, and turn on double opt-in for your signup forms.";
+
+export function campaignPausedNotification(
+  campaign: Pick<Campaign, "id" | "name">,
+  health: CampaignHealth,
+) {
+  const overBounces =
+    health.bounceRate >= BOUNCE_RATE_WARNING && health.bounced >= CAMPAIGN_MIN_BOUNCED_FOR_PAUSE;
+  const byComplaints = !overBounces;
+  const what = byComplaints
+    ? `${health.complained} of the first ${health.attempted} recipients marked "${campaign.name}" as spam (${pct(health.complaintRate, 2)}).`
+    : `${health.bounced} of the first ${health.attempted} emails from "${campaign.name}" hard-bounced (${pct(health.bounceRate)}).`;
+  const why = byComplaints ? WHY_COMPLAINTS : WHY_BOUNCES;
+  const next = byComplaints
+    ? "Before you resume, look at who this went to and whether they asked for it: a complaint rate this high usually means the list was not collected by opt-in, or the content does not match what people signed up for."
+    : "You can resume the send safely. Before you do, look at where this list came from: a rate this high usually means it is old or was not collected by opt-in, and the rest of it will bounce at about the same rate.";
+  return {
+    kind: "campaign_reputation_paused" as const,
+    title: byComplaints
+      ? `"${campaign.name}" is paused: too many spam complaints`
+      : `"${campaign.name}" is paused: too many addresses are bouncing`,
+    body: `${what} ${why} We paused the send so the rest of the list does not make it worse. ${ALREADY_SUPPRESSED} ${next}`,
+    ctaHref: `/campaigns/${campaign.id}`,
+    ctaLabel: "Review and resume",
+  };
+}
+
+export function accountWarningNotification(health: AccountHealth) {
+  const days = `${HEALTH_WINDOW_DAYS} days`;
+  const parts: string[] = [];
+  if (health.bounceRate >= BOUNCE_RATE_WARNING && health.bounced >= MIN_BOUNCED_FOR_WARNING) {
+    parts.push(
+      `${health.bounced} of the ${health.attempted} emails your workspace sent in the last ${days} hard-bounced (${pct(health.bounceRate)}).`,
+    );
+  }
+  if (
+    health.complaintRate >= COMPLAINT_RATE_WARNING &&
+    health.complained >= MIN_COMPLAINED_FOR_WARNING
+  ) {
+    parts.push(
+      `${health.complained} of the ${health.attempted} recipients you mailed in the last ${days} marked it as spam (${pct(health.complaintRate, 2)}).`,
+    );
+  }
+  const why = `Amazon SES, which delivers Day3's mail, reviews senders above ${pct(BOUNCE_RATE_WARNING, 0)} bounces or ${pct(COMPLAINT_RATE_WARNING, 1)} complaints, so we pause a workspace that reaches ${pct(BOUNCE_RATE_PAUSE, 0)} bounces or ${pct(COMPLAINT_RATE_PAUSE, 1)} complaints.`;
+  return {
+    kind: "account_health_warning" as const,
+    title: "Your sending reputation needs attention",
+    body: `${parts.join(" ")} You are still sending. ${why} ${HOW_TO_FIX}`,
+    ctaHref: "/metrics",
+    ctaLabel: "See your reputation",
+  };
+}
+
+export function accountPausedNotification(health: AccountHealth) {
+  const what = health.reason ?? "Bounce or complaint rates exceeded the safe threshold";
+  return {
+    kind: "account_paused" as const,
+    title: "Sending is paused for your workspace",
+    body: `${what}. That is close to the line where Amazon SES, which delivers mail for every Day3 workspace, would restrict the whole platform, so we stopped sending for your workspace before it got there. Nothing you sent is lost, and every address that bounced or complained has already been removed from your audience. To get sending re-enabled, remove stale or purchased addresses from your audience, then reply to this email or contact support and we will lift the pause together. ${HOW_TO_FIX}`,
+    ctaHref: "/audiences",
+    ctaLabel: "Review your audience",
+  };
 }

@@ -164,17 +164,26 @@ page share a single account lookup instead of one per caller.
   every send the account made (leave it unfiltered, as `enforceAccountHealth`
   does — reputation is account-wide). The name is a misnomer pending a rename.
   See `docs/automations-design.md` §3.1.
-- **A reputation auto-pause needs a rate AND a count, and the count is the half
-  that is easy to delete.** `services/health.ts` pauses only when the bounce/
-  complaint rate crosses the threshold *and* at least `MIN_BOUNCED_FOR_PAUSE`
-  (20) / `MIN_COMPLAINED_FOR_PAUSE` (3) addresses are behind it. Without the
-  counts the thresholds are applied at volumes where they measure nothing: at the
-  50-attempted floor, 4% is two bounces and 0.08% rounds to one complaint, so an
-  ordinary list bouncing at 1.5% tripped a pause on roughly one in six small
-  sends. The pause is one-way (`risk_status` flips and only an operator resumes),
-  so a false positive costs a support round-trip. SES reasons the same way: it
-  reviews at 5%/0.1% but does not enforce against low-volume senders. The warning
-  tier deliberately keeps the low floor — warn early, pause late.
+- **Reputation enforcement is graduated, and every tier needs a rate AND a
+  count.** `services/health.ts` mirrors SES: SES reviews at 5% bounces / 0.1%
+  complaints and stops a sender at 10% / 0.5%; Day3 warns at SES's review line and
+  pauses an account at 8% / 0.3%, short of where SES would stop the shared
+  account. The bars used to sit *below* SES's review line (4% / 0.08%), which
+  locked out 4 of the first 13 paying accounts on honest-but-stale lists.
+  The steps: (1) `enforceCampaignHealth` pauses ONE campaign, once, at the
+  warning rate with >= 20 bounces / 3 complaints, after 200 attempted (or a
+  quarter of a small campaign), with `paused_code='reputation'` and
+  `reputation_flagged_at` stamped; the user resumes it (bounced addresses are
+  already suppressed) and the flag survives the resume so it never loops.
+  (2) `enforceAccountHealth` warns at 5% / 0.1% with >= 20 bounces / 2
+  complaints (emails the admins, once a week) and pauses at 8% / 0.3% with >= 50
+  / 5, or at the warning rate once 2 campaigns in the window were flagged. The
+  account pause is one-way (`risk_status` flips and only an operator resumes),
+  so its floor sits well above the noise. Every notification says what happened,
+  why inbox providers care, and what to do next; the texts live next to the
+  thresholds in `health.ts` so they move together. Sent campaigns are
+  soft-deleted (`campaigns.deleted_at`) precisely so that deleting a campaign
+  cannot erase the recipient rows the window is computed from.
   Transactional bounces are counted **per address** off `email_events` (one row
   per message+address+type), never by charging a message's whole recipient list:
   a 50-recipient API message with one dead mailbox otherwise read as a 100%

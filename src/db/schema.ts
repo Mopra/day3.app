@@ -444,10 +444,11 @@ export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 // Machine-readable pause cause. pausedReason (below) stays the human-facing
 // sentence; this code is what the cron sweep keys auto-resume on — string
 // matching on the reason text would be fragile. Only rate_limit / daily_limit /
-// quota are ever auto-resumed; user / account / config / suspended / error
-// require a human (the user, or an operator for config/suspended).
+// quota are ever auto-resumed; user / reputation / account / config / suspended /
+// error require a human (the user for user/reputation, an operator for the rest).
 export const PAUSED_CODES = [
   "user", // paused from the UI
+  "reputation", // this campaign's own bounce/complaint rate (services/health.ts); the user resumes it
   "quota", // monthly email limit reached (auto-resumes when headroom returns)
   "rate_limit", // provider throttled (auto-resumes next sweep)
   "daily_limit", // provider daily quota (auto-resumes after a cool-down)
@@ -524,6 +525,19 @@ export const campaigns = pgTable(
 
     pausedReason: text("paused_reason"),
     pausedCode: text("paused_code").$type<PausedCode>(),
+    // Stamped the one time this campaign's own bounce/complaint rate paused it
+    // (enforceCampaignHealth). It survives the user's resume on purpose: the
+    // campaign-level pause is a single heads-up per campaign, never a loop, and
+    // the account-level rule counts flagged campaigns in its window to decide
+    // when a pattern has become an account problem.
+    reputationFlaggedAt: tstz("reputation_flagged_at"),
+    // Soft delete. A campaign that reached inboxes is part of the account's
+    // send history: its recipient rows are what the reputation window and the
+    // Metrics page are computed from, and one-click unsubscribe links in the
+    // delivered mail resolve through it. Deleting it hides it everywhere the
+    // tenant looks (lists, detail, API) but keeps the rows; only a campaign
+    // that never sent anything is removed for real.
+    deletedAt: tstz("deleted_at"),
 
     scheduledAt: tstz("scheduled_at"),
     sentAt: tstz("sent_at"),
@@ -845,6 +859,14 @@ export const NOTIFICATION_KINDS = [
   "import_failed",
   "subscribers_cap_reached",
   "account_paused",
+  // The account's trailing-window bounce or complaint rate crossed the
+  // warning line (services/health.ts). Sending continues; throttled to once a
+  // week so a slowly-decaying list does not email the admins on every bounce.
+  "account_health_warning",
+  // One campaign's own bounce/complaint rate paused that campaign mid-send. Its
+  // own kind, not `campaign_paused`, because that kind is throttled against
+  // rate-limit flapping and this one must never be swallowed by it.
+  "campaign_reputation_paused",
   // A sending domain that WAS working stopped working: SES withdrew its
   // verification (DKIM records changed or removed at the DNS host), or the
   // custom Return-Path went away. Raised by the verified-domain sweep, which

@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { apiKeys, audiences, automations, campaigns, forms, sendingDomains } from "../db/schema";
 import type { AutomationListRow, AutomationTriggerKind } from "../lib/automation-types";
@@ -44,7 +44,7 @@ export async function listCampaigns(db: Db, accountId: string) {
       )`.as("sentCount"),
     })
     .from(campaigns)
-    .where(eq(campaigns.accountId, accountId))
+    .where(and(eq(campaigns.accountId, accountId), isNull(campaigns.deletedAt)))
     .orderBy(desc(campaigns.createdAt));
 }
 

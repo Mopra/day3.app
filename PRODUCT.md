@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-09-08**.
+> Last verified against the codebase: **2026-09-18**.
 
 ---
 
@@ -380,15 +380,22 @@ guards make that observable:
 - **Pause / resume** an in-flight send. System-caused pauses self-heal: a campaign paused
   by a provider rate limit, the provider's daily quota, or the plan's monthly email limit
   is auto-resumed by the cron sweep once the constraint clears (user pauses are never
-  auto-resumed). Every mid-send pause also notifies the account admins (in-app + email),
-  and the "campaign sent" notification discloses how many recipients could not be sent.
+  auto-resumed). A campaign that **paused itself for its own bounce or complaint rate**
+  (§6.7) is the user's to resume: the campaign page says why it stopped and that the bad
+  addresses are already suppressed, and it never pauses itself twice. Every mid-send
+  pause also notifies the account admins (in-app + email), and the "campaign sent"
+  notification discloses how many recipients could not be sent.
 - **Duplicate a campaign** from the list's row actions menu — copies the content and
   settings (subject, body, audience, sender, from/reply-to, footer) into a fresh `draft`
   with a "Copy of …" name and a clean slate (no recipients, no risk review, never sent).
   Any campaign can be duplicated; the common case is re-running a campaign that sent well.
-- **Delete a campaign** from the list's row actions menu or its detail page — removes the
-  campaign and its recipient records (sent campaigns included). Blocked only while a send
-  is actively in flight (`generating_recipients` / `sending`); pause it first.
+- **Delete a campaign** from the list's row actions menu or its detail page. A campaign
+  that never sent anything is removed outright. One that reached inboxes disappears from
+  every list, page and API read, but its send records are kept: they are what the
+  reputation window (§6.7), the Metrics page and the unsubscribe links in the delivered
+  mail are built on, and deleting a campaign must not be a way to erase a bad bounce rate.
+  Blocked only while a send is actively in flight (`generating_recipients` / `sending`);
+  pause it first.
 - **Live delivery stats:** total recipients, sent, delivered, bounced, complained,
   unsubscribed, failed, skipped — plus a recipient-level table and an undeliverable list.
   (Account-wide and per-campaign rates, including opens, live on the Metrics page — §6.10.)
@@ -650,16 +657,29 @@ other. Each domain still opens to its own detail page.
     expose other accounts' recipients. Searching one exact address does report that it's
     blocked platform-wide and that only support can lift it.
 - **Bounce/complaint handling** via SES → SNS webhooks updates recipient status and
-  suppresses bad addresses; sustained bad reputation **over a trailing window** can
-  auto-pause an account (and pages on-call via the error sink).
-  - An auto-pause needs a bad **rate** (>=4% bounce, >=0.08% complaint) *and* enough
-    bad addresses behind it to believe the rate: at least **20 bounces** or **3
-    complaints**. A percentage on a small send is mostly noise — 4% of 50 emails is
-    two dead mailboxes and 0.08% rounds to a single "report spam" click — and the
-    pause is one-way (only an operator can lift it), so a small sender is warned
-    rather than stopped. An account over the rate but under the counts keeps
-    sending and turns the dashboard's sending-status light amber with its live
-    bounce/complaint rates.
+  suppresses bad addresses. Reputation enforcement is **graduated** and mirrors what
+  Amazon SES applies to the shared sending account (SES reviews at 5% bounces / 0.1%
+  complaints and stops a sender at 10% / 0.5%). Every tier needs a bad **rate** *and*
+  enough bad addresses behind it to believe the rate; a percentage on a small send is
+  noise, and one "report spam" click is never a signal on its own.
+  - **A campaign pauses itself** when its own hard-bounce rate reaches **5%** (with at
+    least 20 bounces) or its complaint rate reaches **0.1%** (at least 3), judged only
+    once 200 emails (or a quarter of a small campaign) are out. It happens **once per
+    campaign**: the user resumes it from the campaign page (every bounced or
+    complained address is already suppressed, so resuming is safe), and it will not
+    pause itself again. The admins get an email and an in-app notification that says
+    how many bounced, why inbox providers care, that the bad addresses are gone, and
+    what to check before resuming.
+  - **The workspace is warned** (email + in-app, at most once a week) when its
+    trailing-window rate reaches 5% bounces (at least 20) or 0.1% complaints (at least
+    2). Sending continues; the Metrics page's Reputation card goes amber.
+  - **The workspace is paused** (one-way: only an operator lifts it, and pages on-call)
+    at **8% bounces with at least 50** of them or **0.3% complaints with at least 5**,
+    or at the warning rate once **two campaigns** in the window have paused themselves.
+    The notification explains that this is the line where SES would restrict the whole
+    platform, that nothing sent is lost, and how to get re-enabled.
+  - Deleting a campaign never resets these numbers: a campaign that reached inboxes is
+    hidden, not erased (below, §6.3).
 - **Public Privacy Policy and Terms** pages (`/privacy`, `/terms`), linked from the
   marketing footer.
 
@@ -811,9 +831,12 @@ Events raised: a **scheduled send that couldn't start** (a gate lapsed by its du
 time — the campaign returns to drafts with the reason, and you're told rather than
 left to discover it), a **campaign finishing sending** (with the reached count and a
 link to its results), **signups turned away at the free-plan subscriber cap**
-(throttled to once a day, with an upgrade link), and a **sending domain that
-regressed** after having worked (verification or Return-Path lost, §6.5). The
-service fails open — a
+(throttled to once a day, with an upgrade link), a **sending domain that
+regressed** after having worked (verification or Return-Path lost, §6.5), and the
+three reputation events of §6.7: a **campaign that paused itself** for its own bounce
+or complaint rate, a **reputation warning** for the workspace (at most once a week),
+and the **workspace being paused**. Each of those says what happened in numbers, why
+inbox providers and SES care, and what to do next. The service fails open — a
 notification never blocks the flow that triggered it.
 
 ### 6.14 Public API (v1) — audiences, campaigns and transactional email over HTTPS
@@ -1676,8 +1699,9 @@ plan: sending to anyone outside the org, and importing more than 500 contacts.
   grow the volume over days, and keep sending consistently rather than in bursts.
 - **Never blast a stale list on day one.** The worst possible migration is a fresh
   subdomain plus a two-year-old import: bounces and complaints arrive together, and
-  sustained bad rates auto-pause the account (§6.7 — keep bounces under 4% and
-  complaints under 0.08%; the Metrics page shows both against those exact bars).
+  sustained bad rates pause first the campaign and then the account (§6.7 — keep
+  bounces under 5% and complaints under 0.1%; the Metrics page shows both against
+  those exact bars).
 - **Bring the bounces.** Addresses that already hard-bounced elsewhere will bounce here,
   against a domain with no history to absorb it.
 - **Existing DNS is never overwritten.** If another provider's Return-Path or a stricter

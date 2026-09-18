@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { audiences, campaigns, forms, sendingDomains, senders, subscribers } from "../db/schema";
 
@@ -22,9 +22,15 @@ export function findSender(db: Db, accountId: string, id: string) {
   });
 }
 
+// Soft-deleted campaigns (campaigns.deleted_at) are gone as far as the tenant
+// is concerned: 404 here, absent from every list.
 export function findCampaign(db: Db, accountId: string, id: string) {
   return db.query.campaigns.findFirst({
-    where: and(eq(campaigns.id, id), eq(campaigns.accountId, accountId)),
+    where: and(
+      eq(campaigns.id, id),
+      eq(campaigns.accountId, accountId),
+      isNull(campaigns.deletedAt),
+    ),
   });
 }
 

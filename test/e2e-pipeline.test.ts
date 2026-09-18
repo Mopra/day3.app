@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   campaignRecipients,
   campaigns,
@@ -8,12 +8,14 @@ import {
   subscribers,
   emailEvents,
   suppressionEntries,
+  notifications,
 } from "../src/db/schema";
 import { newId, nowIso } from "../src/lib/ids";
 import { addSuppression } from "../src/services/suppression";
 import { handleQueueMessage, type QueueDeps } from "../src/queue/consumer";
 import {
   COMPLAINT_RATE_PAUSE,
+  COMPLAINT_RATE_WARNING,
   MIN_COMPLAINED_FOR_PAUSE,
   computeAccountHealth,
 } from "../src/services/health";
@@ -389,8 +391,8 @@ describe("end-to-end: webhook ingestion drives status, suppression, and auto-pau
     const provider = new RecordingProvider();
 
     // A large enough audience that the complaint-rate enforcement (which needs
-    // >= 50 attempted sends) can act. 2000 sends, then one complaint puts the
-    // rate at 0.0005 — below pause (0.0008); a second pushes it over.
+    // >= 50 attempted sends) can act. 2000 sends: two complaints reach the
+    // warning line (0.1%), six reach the pause line (0.3%, and >= 5 of them).
     const emails = manyEmails(2000);
     const { account, audience, domain } = await onboardAndImport(db, store, provider, emails);
 
@@ -458,56 +460,92 @@ describe("end-to-end: webhook ingestion drives status, suppression, and auto-pau
     });
     expect(fresh?.status).toBe("complained");
     let acc = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
-    // 1 complaint / 2000 attempted = 0.0005 < pause (0.0008): still sending.
-    expect(1 / 2000).toBeLessThan(COMPLAINT_RATE_PAUSE);
+    // 1 complaint / 2000 attempted = 0.05%: one "report spam" click is noise,
+    // not even a warning.
     expect(acc?.sendingEnabled).toBe(true);
     expect(acc?.riskStatus).toBe("normal");
+    expect((await computeAccountHealth(db, account.id)).status).toBe("normal");
 
-    // 4) A second complaint clears the RATE but not the absolute count: a pause
-    // needs both (MIN_COMPLAINED_FOR_PAUSE), because at these volumes one or two
-    // "report spam" clicks are noise, not a reputation problem. The account keeps
-    // sending and only the warning tier moves.
+    // 4) A second complaint reaches the warning line (0.1%, and >= 2 of them):
+    // the admins are told, sending continues.
     const complainer2 = emails[3];
     expect(
       (await post(snsNotification(mid(complainer2), { eventType: "Complaint" }))).status,
     ).toBe(200);
     acc = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
-    expect(2 / 2000).toBeGreaterThanOrEqual(COMPLAINT_RATE_PAUSE);
-    expect(2).toBeLessThan(MIN_COMPLAINED_FOR_PAUSE);
+    expect(2 / 2000).toBeGreaterThanOrEqual(COMPLAINT_RATE_WARNING);
+    expect(2 / 2000).toBeLessThan(COMPLAINT_RATE_PAUSE);
     expect(acc?.sendingEnabled).toBe(true);
     expect(acc?.riskStatus).toBe("normal");
     expect((await computeAccountHealth(db, account.id)).status).toBe("warning");
+    const warnings = await db
+      .select()
+      .from(notifications)
+      .where(
+        and(
+          eq(notifications.accountId, account.id),
+          eq(notifications.kind, "account_health_warning"),
+        ),
+      );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].body).toMatch(/2 of the 2000 recipients/);
 
-    // 5) A third complaint satisfies the rate AND the count → auto-pause.
-    const complainer3 = emails[4];
+    // 5) Complaints three to five stay under the pause line: 5 / 2000 = 0.25%
+    // is below 0.3%, whatever the count says. A pause needs both halves.
+    const complainers = [emails[4], emails[5], emails[6]];
+    for (const c of complainers) {
+      expect((await post(snsNotification(mid(c), { eventType: "Complaint" }))).status).toBe(200);
+    }
+    acc = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
+    expect(5).toBeGreaterThanOrEqual(MIN_COMPLAINED_FOR_PAUSE);
+    expect(5 / 2000).toBeLessThan(COMPLAINT_RATE_PAUSE);
+    expect(acc?.riskStatus).toBe("normal");
+
+    // 6) The sixth satisfies the rate AND the count → auto-pause.
+    const complainer6 = emails[7];
     expect(
-      (await post(snsNotification(mid(complainer3), { eventType: "Complaint" }))).status,
+      (await post(snsNotification(mid(complainer6), { eventType: "Complaint" }))).status,
     ).toBe(200);
     acc = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
-    expect(3 / 2000).toBeGreaterThanOrEqual(COMPLAINT_RATE_PAUSE);
+    expect(6 / 2000).toBeGreaterThanOrEqual(COMPLAINT_RATE_PAUSE);
     expect(acc?.sendingEnabled).toBe(false);
     expect(acc?.riskStatus).toBe("paused");
     expect(acc?.pausedReason).toMatch(/complaint rate/i);
+    const pausedNotes = await db
+      .select()
+      .from(notifications)
+      .where(
+        and(eq(notifications.accountId, account.id), eq(notifications.kind, "account_paused")),
+      );
+    expect(pausedNotes).toHaveLength(1);
+    expect(pausedNotes[0].body).toMatch(/Amazon SES/);
 
-    // Suppression list now holds the bounce + all three complaints.
+    // Suppression list now holds the bounce + all six complaints.
     const allSup = await db
       .select()
       .from(suppressionEntries)
       .where(
-        inArray(suppressionEntries.email, [bouncer, complainer1, complainer2, complainer3]),
+        inArray(suppressionEntries.email, [
+          bouncer,
+          complainer1,
+          complainer2,
+          ...complainers,
+          complainer6,
+        ]),
       );
-    expect(allSup).toHaveLength(4);
+    expect(allSup).toHaveLength(7);
 
-    // Re-delivering the third complaint is idempotent: still one event row, the
-    // account stays paused (health enforcement does not re-fire on the no-op).
+    // Re-delivering the last complaint is idempotent: still one event row per
+    // complaint, the account stays paused (health enforcement does not re-fire
+    // on the no-op).
     expect(
-      (await post(snsNotification(mid(complainer3), { eventType: "Complaint" }))).status,
+      (await post(snsNotification(mid(complainer6), { eventType: "Complaint" }))).status,
     ).toBe(200);
     const complaintEvents = await db
       .select()
       .from(emailEvents)
       .where(eq(emailEvents.eventType, "complaint"));
-    expect(complaintEvents).toHaveLength(3);
+    expect(complaintEvents).toHaveLength(6);
     // 2,000 real sends through the full pipeline in WASM Postgres: ~9s alone,
     // but the parallel suite runs many pglite instances at once — give it
     // headroom so CPU contention can't flake it at the default 30s.

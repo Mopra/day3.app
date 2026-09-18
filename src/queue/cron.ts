@@ -461,6 +461,8 @@ export async function resumePausedCampaigns(
       and(
         eq(campaigns.status, "paused"),
         inArray(campaigns.pausedCode, ["rate_limit", "daily_limit", "quota"]),
+        // A soft-deleted campaign never resumes, whatever paused it.
+        isNull(campaigns.deletedAt),
       ),
     )
     .orderBy(asc(campaigns.updatedAt))

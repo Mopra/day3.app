@@ -606,11 +606,23 @@ export default function CampaignDetailPage() {
             campaign.status === "draft"
               ? "Your scheduled send didn't go out"
               : campaign.status === "paused"
-                ? "Sending is paused"
+                ? campaign.pausedCode === "reputation"
+                  ? "We paused this send to protect your deliverability"
+                  : "Sending is paused"
                 : campaignStatusLabel(campaign.status)
           }
         >
           {campaign.pausedReason}
+          {campaign.pausedCode === "reputation" && (
+            <>
+              {" "}
+              Inbox providers judge a sender by this number and start filtering everything above
+              it, so the rest of the list was held back. Every address that bounced or complained
+              is already suppressed and will not be mailed again, so it is safe to resume. Before
+              you do, check where this list came from: the rest of it will most likely behave the
+              same way.
+            </>
+          )}
         </CollapsibleNotice>
       )}
 

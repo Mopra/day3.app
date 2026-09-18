@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { route, json, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findDomain } from "@/api/finders";
@@ -27,6 +27,7 @@ export const DELETE = route<{ params: Promise<{ id: string }> }>(async (_req, { 
       eq(campaigns.accountId, account.id),
       eq(campaigns.sendingDomainId, domain.id),
       inArray(campaigns.status, [...IN_FLIGHT]),
+      isNull(campaigns.deletedAt),
     ),
   });
   if (blocking) {

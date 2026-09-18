@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findCampaign } from "@/api/finders";
@@ -112,9 +112,29 @@ export const DELETE = route<{ params: Promise<{ id: string }> }>(async (_req, { 
     throw new HttpError(409, "Pause the campaign before deleting it");
   }
 
-  // Remove the per-recipient rows and any risk review first, then the campaign.
-  // email_events are kept as an immutable analytics/audit log (campaign_id there
-  // is nullable provenance), mirroring how senders keep historical snapshots.
+  // A campaign that reached inboxes is soft-deleted: hidden from every list,
+  // detail page and API read, but its recipient rows stay. They are the send
+  // ledger the reputation window (services/health.ts) and the Metrics page are
+  // computed from, and unsubscribe/tracking links in the delivered mail resolve
+  // through them. Hard-deleting them let a tenant reset a bad bounce rate by
+  // deleting the campaign that produced it.
+  const [{ sent }] = await db
+    .select({ sent: sql<number>`count(*)`.as("sent") })
+    .from(campaignRecipients)
+    .where(
+      and(eq(campaignRecipients.campaignId, campaign.id), isNotNull(campaignRecipients.sentAt)),
+    );
+  if (Number(sent) > 0) {
+    await db
+      .update(campaigns)
+      .set({ deletedAt: nowIso(), updatedAt: nowIso() })
+      .where(eq(campaigns.id, campaign.id));
+    return json({ ok: true });
+  }
+
+  // Nothing was ever sent: remove the per-recipient rows and any risk review
+  // first, then the campaign. email_events are kept as an immutable audit log
+  // (campaign_id there is nullable provenance).
   await db.delete(campaignRecipients).where(eq(campaignRecipients.campaignId, campaign.id));
   await db.delete(riskReviews).where(eq(riskReviews.campaignId, campaign.id));
   await db.delete(campaigns).where(eq(campaigns.id, campaign.id));
