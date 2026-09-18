@@ -67,6 +67,10 @@ export { SaveIndicator, type SaveStatus };
 
 // React Flow's chrome (pane, edges, handles, controls) re-coloured with the app's
 // own tokens. Custom nodes carry their own classes, so only the plumbing is here.
+// These MUST be set on the `.react-flow` element itself (its `style` prop), not on
+// an ancestor: React Flow's own stylesheet declares every `--xy-*-default` on
+// `.react-flow`, so a value inherited from a parent is shadowed and silently lost.
+// That is how the branch edge labels ended up white-on-white.
 const FLOW_VARS = {
   "--xy-background-color-default": "var(--background)",
   "--xy-background-pattern-dots-color-default": "color-mix(in oklch, var(--foreground) 14%, transparent)",
@@ -607,8 +611,9 @@ function CanvasInner({
 
   return (
     <div className="flex h-[calc(100vh-15rem)] min-h-[540px] overflow-hidden rounded-xl bg-background ring-1 ring-foreground/10">
-      <div className="relative min-w-0 flex-1" style={FLOW_VARS}>
+      <div className="relative min-w-0 flex-1">
         <ReactFlow<CanvasNode, Edge>
+          style={FLOW_VARS}
           nodes={rfNodes}
           edges={rfEdges}
           nodeTypes={nodeTypes}
