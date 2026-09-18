@@ -37,7 +37,11 @@ import { AutomationStatusBadge } from "@/components/ui/status-badge";
 import { useApi } from "@/lib/api";
 import { automationStatusLabel, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { AutomationDetail, AutomationListRow } from "@/lib/automation-types";
+import type {
+  AutomationDetail,
+  AutomationListRow,
+  AutomationTemplateSummary,
+} from "@/lib/automation-types";
 import type { Audience } from "@/lib/types";
 
 // The badges used to be defined here; other pages import them from this module,
@@ -66,9 +70,11 @@ function removalVerb(a: AutomationListRow): "archive" | "delete" {
 export function AutomationsView({
   initialAutomations,
   initialAudiences,
+  templates,
 }: {
   initialAutomations: AutomationListRow[];
   initialAudiences: Audience[];
+  templates: AutomationTemplateSummary[];
 }) {
   const api = useApi();
   const router = useRouter();
@@ -353,6 +359,7 @@ export function AutomationsView({
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         audiences={audiences}
+        initialTemplates={templates}
       />
 
       <ConfirmDialog

@@ -1,5 +1,6 @@
 import { requireAccount } from "@/api/context";
 import { listAudiences, listAutomations } from "@/api/lists";
+import { templateSummaries } from "@/lib/automation-templates";
 import { AutomationsView } from "./automations-view";
 
 // Server-rendered, see the note in ../campaigns/page.tsx. The audience list rides
@@ -11,5 +12,13 @@ export default async function AutomationsPage() {
     listAutomations(db, account.id),
     listAudiences(db, account.id),
   ]);
-  return <AutomationsView initialAutomations={automations} initialAudiences={audiences} />;
+  // The template catalogue is a pure function of the code, so it rides along
+  // with the page instead of being fetched when the "new automation" dialog opens.
+  return (
+    <AutomationsView
+      initialAutomations={automations}
+      initialAudiences={audiences}
+      templates={templateSummaries()}
+    />
+  );
 }

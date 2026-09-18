@@ -19,12 +19,15 @@ export const POST = route<{ params: Promise<{ id: string; nodeKey: string }> }>(
     const toEmails = [...new Set(body.to)];
     if (toEmails.length === 0) throw new HttpError(400, "Provide at least one recipient");
 
+    // Look the automation up first so a 404 (or an archived automation's 409)
+    // does not charge the limiter.
+    const automation = await findAutomationOr404(db, account.id, id);
+
     // Charged once per recipient, like the campaign test route.
     for (let i = 0; i < toEmails.length; i++) {
       await enforceRateLimit("test_email", account.id);
     }
 
-    const automation = await findAutomationOr404(db, account.id, id);
     const result = await sendAutomationNodeTest(db, account, automation, nodeKey, toEmails);
     return json({ ok: result.failed.length === 0, ...result });
   },

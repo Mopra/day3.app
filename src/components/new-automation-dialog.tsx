@@ -49,9 +49,14 @@ export function NewAutomationDialog({
   open,
   onOpenChange,
   audiences,
+  initialTemplates,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // The catalogue as the server page rendered it (a pure function of the
+  // code). When given, the dialog opens with templates already in hand instead
+  // of fetching them on mount; the fetch remains as the fallback.
+  initialTemplates?: AutomationTemplateSummary[];
   audiences: Audience[];
 }) {
   const api = useApi();
@@ -59,7 +64,7 @@ export function NewAutomationDialog({
   const [name, setName] = useState("");
   const [audienceId, setAudienceId] = useState("");
   const [templateKey, setTemplateKey] = useState<string>(BLANK);
-  const [templates, setTemplates] = useState<AutomationTemplateSummary[] | null>(null);
+  const [templates, setTemplates] = useState<AutomationTemplateSummary[] | null>(initialTemplates ?? null);
   const [submitting, setSubmitting] = useState(false);
   // The name we last filled in from a template. Picking a template names the
   // automation after it unless the user has typed a name of their own.
@@ -67,6 +72,10 @@ export function NewAutomationDialog({
 
   useEffect(() => {
     if (!open) return;
+    if (initialTemplates) {
+      if (initialTemplates.length > 0) pickTemplate(initialTemplates[0]);
+      return;
+    }
     if (!templatesCache) {
       templatesCache = api
         .get<AutomationTemplateSummary[]>("/api/automations/templates")
