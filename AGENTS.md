@@ -221,8 +221,17 @@ page share a single account lookup instead of one per caller.
   `AUTOMATION_TICK_PER_ACCOUNT` (2000) due enrollments per account per tick and
   moves to the next account; the overflow is deferred to the next tick, never
   dropped. That per-account cap is also the fair-use ceiling `PRODUCT.md §6.19`
-  publishes, so change the number in both places. Stuck `sending` enrollments
-  are swept to `failed`, never back to `active` (the campaign rule).
+  publishes, so change the number in both places. A stuck `sending` enrollment
+  is NOT failed by the sweep (that is the campaign rule, and it does not carry:
+  a failed recipient row costs one email, a failed enrollment costs the rest of
+  the person's series with no retry path). The enrollment's own ledger row says
+  what is safe: the sweep puts the enrollment back to `active`, due now, and the
+  idempotent send handler sends (no row / `pending`) or just moves the cursor
+  (terminal row). Only a ledger row still `sending` on a fresh lock defers it to
+  the next sweep. Pausing an automation still enrolls new joiners, held at the
+  trigger (`hold_reason = automation_paused`) and released by Resume, so a pause
+  never loses a signup. `automations.sandbox` is re-stamped on every plan write
+  (`services/automation-sandbox.ts`), never only at publish.
 - **Suppression is add-only everywhere except one route.** `POST /v1/suppressions`
   (and `addSuppressions`) only ever adds; the single undo is
   `DELETE /api/suppressions/{email}` behind a session (the Suppressions tab of

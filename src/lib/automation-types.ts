@@ -29,6 +29,9 @@ export type EnrollmentCounts = {
   completed: number;
   exited: number;
   failed: number;
+  // Subset of `active`: parked by a hold (quota, billing, pause, identity),
+  // so the page can say "held" instead of letting them pass as running.
+  held: number;
   total: number;
 };
 

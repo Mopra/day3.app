@@ -17,13 +17,15 @@ export function SandboxBadge({ className }: { className?: string }) {
   );
 }
 
-export type SandboxSurface = "campaign" | "transactional";
+export type SandboxSurface = "campaign" | "transactional" | "automation";
 
 const SURFACE_COPY: Record<SandboxSurface, string> = {
   campaign:
     "On the Free plan your campaigns send for real — through the same pipeline, with the same tracking and metrics — but only to people on your team.",
   transactional:
     "On the Free plan the API sends for real, but only to members of your organization — perfect for integrating and testing.",
+  automation:
+    "On the Free plan this automation runs for real, but only members of your organization are enrolled; anyone else who joins the audience is skipped. Upgrading lifts this for new signups right away, no republish needed.",
 };
 
 // `remaining` (when known) turns the banner from an explanation into a meter,

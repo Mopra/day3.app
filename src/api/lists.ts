@@ -146,6 +146,7 @@ export async function listAutomations(db: Db, accountId: string): Promise<Automa
       completed: 0,
       exited: 0,
       failed: 0,
+      held: 0,
       total: 0,
     },
     createdAt: r.createdAt,

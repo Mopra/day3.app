@@ -169,14 +169,25 @@ export async function sweepTransactionalEmails(
   return { failed: stuck.length + givenUp.length, requeued: stale.length };
 }
 
-// Automation enrollments need the same two recoveries as the send ledger.
+// Automation enrollments need two recoveries.
 //
-//   1. `sending` with a stale lock: the send job died between claiming the
-//      enrollment and moving its cursor. The email may or may not have left
-//      (the ledger row, if one exists, is failed by failStuckRecipients on the
-//      same sweep), so the enrollment becomes `failed` with the reason on
-//      lastError, and NEVER goes back to `active`: re-dispatching the node could
-//      mail the same person twice. Same window, same rule as campaigns.
+//   1. `sending` with a stale lock: the send job died (or dead-lettered, or was
+//      lost with Redis) between claiming the enrollment and moving its cursor.
+//      This is NOT the campaign rule. For a campaign recipient "failed" costs one
+//      email; for an enrollment it would cost every remaining step of the
+//      person's series, with no retry path and (under `once` re-entry) no way to
+//      ever enroll them again. And unlike a campaign row, the enrollment does
+//      not have to guess whether the email left: its own ledger row for the
+//      current node says so. So the enrollment goes BACK TO `active`, due now,
+//      and the send handler, which is idempotent on that ledger row, does the
+//      right thing when it is re-dispatched: an absent or `pending` row is sent
+//      (nothing ever went out), a terminal row (sent / failed / skipped) just
+//      moves the cursor on (only the bookkeeping was lost). The one case left
+//      alone is a ledger row still `sending` with a lock fresher than the cutoff:
+//      failStuckRecipients ran earlier in this same sweep with the same cutoff
+//      and did not touch it, so a job may genuinely be mid-send; the next sweep
+//      sees it resolved. This is what makes PRODUCT.md's "a queue outage delays
+//      a flow rather than losing anyone in it" true.
 //   2. `active` and due for longer than a tick could plausibly miss: the
 //      backstop for a lost advance job or a tick that ran out of budget. The
 //      advance handler is a no-op unless the row is still due, so re-enqueueing
@@ -187,45 +198,87 @@ export async function sweepAutomationEnrollments(
   db: Db,
   jobsQueue: JobQueue,
   now: Date,
-): Promise<{ failed: number; requeued: number }> {
+): Promise<{ restored: number; deferred: number; requeued: number }> {
   const lockCutoff = new Date(now.getTime() - STUCK_LOCK_MINUTES * 60 * 1000).toISOString();
   const stuck = await db
-    .update(automationEnrollments)
-    .set({
-      status: "failed",
-      lastError: "send did not complete (stuck lock)",
-      lockedAt: null,
-      updatedAt: nowIso(),
+    .select({
+      id: automationEnrollments.id,
+      accountId: automationEnrollments.accountId,
+      currentNodeKey: automationEnrollments.currentNodeKey,
+      visitCount: automationEnrollments.visitCount,
     })
+    .from(automationEnrollments)
     .where(
       and(eq(automationEnrollments.status, "sending"), lt(automationEnrollments.lockedAt, lockCutoff)),
-    )
-    .returning({ id: automationEnrollments.id });
+    );
 
-  // A failed enrollment can leave a `pending` ledger row behind: the send
-  // handler gives the row back on a provably-unsent provider result and throws
-  // for BullMQ to retry, so when the retries run out the row stays pending with
-  // nobody left to claim it. Resolve it so the canvas does not count it as
-  // in-flight forever. Its reservation (if one is still held) is left alone: a
-  // pending row cannot say whether the handler released it, and over-counting
-  // is the accepted safe side of the quota ledger.
+  let restored = 0;
+  let deferred = 0;
   if (stuck.length > 0) {
-    await db
-      .update(campaignRecipients)
-      .set({
-        status: "failed",
-        error: "enrollment failed before the send was attempted (stuck lock)",
-        updatedAt: nowIso(),
+    // Ledger rows still mid-send for these enrollments' current nodes. The row
+    // for the current node is keyed (enrollment, node, visit_no) with visit_no
+    // either 0 or the current lap (see visitNoFor), so both are checked.
+    const inFlight = await db
+      .select({
+        enrollmentId: campaignRecipients.automationEnrollmentId,
+        nodeKey: campaignRecipients.automationNodeKey,
+        visitNo: campaignRecipients.visitNo,
       })
+      .from(campaignRecipients)
       .where(
         and(
           inArray(
             campaignRecipients.automationEnrollmentId,
             stuck.map((s) => s.id),
           ),
-          eq(campaignRecipients.status, "pending"),
+          eq(campaignRecipients.status, "sending"),
         ),
       );
+    const busy = new Set<string>();
+    for (const row of inFlight) {
+      const enrollment = stuck.find((s) => s.id === row.enrollmentId);
+      if (!enrollment || row.nodeKey !== enrollment.currentNodeKey) continue;
+      if (row.visitNo === 0 || row.visitNo === enrollment.visitCount) busy.add(enrollment.id);
+    }
+    const toRestore = stuck.filter((s) => !busy.has(s.id));
+    deferred = stuck.length - toRestore.length;
+
+    if (toRestore.length > 0) {
+      // Guarded on `sending`: a job that finished in the meantime already moved
+      // the cursor and this must not undo it.
+      const released = await db
+        .update(automationEnrollments)
+        .set({
+          status: "active",
+          nextRunAt: nowIso(),
+          lockedAt: null,
+          lastError: "send job did not complete (stuck lock); re-dispatched",
+          updatedAt: nowIso(),
+        })
+        .where(
+          and(
+            inArray(
+              automationEnrollments.id,
+              toRestore.map((s) => s.id),
+            ),
+            eq(automationEnrollments.status, "sending"),
+          ),
+        )
+        .returning({ id: automationEnrollments.id, accountId: automationEnrollments.accountId });
+      restored = released.length;
+      for (const row of released) {
+        try {
+          await jobsQueue.send({
+            type: "advance_automation_enrollment",
+            enrollmentId: row.id,
+            accountId: row.accountId,
+          });
+        } catch (err) {
+          // The row is active and due; the tick picks it up within a minute.
+          console.error(`[cron] automation re-dispatch enqueue failed for ${row.id}:`, err);
+        }
+      }
+    }
   }
 
   const dueCutoff = new Date(now.getTime() - AUTOMATION_BACKSTOP_MS).toISOString();
@@ -251,7 +304,7 @@ export async function sweepAutomationEnrollments(
       console.error(`[cron] automation advance re-enqueue failed for ${row.id}:`, err);
     }
   }
-  return { failed: stuck.length, requeued };
+  return { restored, deferred, requeued };
 }
 
 // Storage hygiene: transactional bodies are full HTML documents; after the
@@ -1015,7 +1068,8 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
   const rescued = (await stage("rescue_pipeline", () => rescueStuckPipelineCampaigns(db, queue, now))) ?? 0;
   const webhooks = (await stage("webhook_deliveries", () => sweepWebhookDeliveries(db, queue, now))) ?? 0;
   const automation = (await stage("automations", () => sweepAutomationEnrollments(db, queue, now))) ?? {
-    failed: 0,
+    restored: 0,
+    deferred: 0,
     requeued: 0,
   };
 
@@ -1055,7 +1109,8 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
       domainsVerified,
       domainsRegressed,
       webhooks,
-      automationFailed: automation.failed,
+      automationRestored: automation.restored,
+      automationDeferred: automation.deferred,
       automationRequeued: automation.requeued,
       daily: isDaily,
     },

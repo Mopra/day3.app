@@ -229,7 +229,8 @@ export type GraphIssueCode =
   | "cycle_without_wait"
   | "unreachable_node"
   | "unbound_port"
-  | "branch_both_ports_same";
+  | "branch_both_ports_same"
+  | "engagement_without_wait";
 
 export type GraphIssue = {
   code: GraphIssueCode;
@@ -410,6 +411,23 @@ export function validateGraph(graph: AutomationGraph): GraphValidation {
           node.key,
         );
       }
+      // An engagement test evaluated straight after the email it asks about
+      // runs seconds after the send, before anyone could have opened it, so
+      // "did not open" is true for everyone and the branch is a straight line.
+      // Warn when the asked-about email (or, for "any email", some email) can
+      // reach this branch without a wait in between.
+      const parsed = BranchNodeConfigSchema.safeParse(node.config ?? {});
+      if (parsed.success && parsed.data.condition.kind === "engagement") {
+        const target = parsed.data.condition.nodeKey;
+        const sources = target ? [target].filter((k) => sendKeys.has(k)) : [...sendKeys];
+        if (sources.some((sendKey) => reachesWithoutWait(graph, byKey, sendKey, node.key))) {
+          warn(
+            "engagement_without_wait",
+            `${nodeTitle(node)} checks an email right after it is sent, before anyone could open it. Add a wait before this step.`,
+            node.key,
+          );
+        }
+      }
     }
   }
 
@@ -432,6 +450,30 @@ export function reachableFrom(graph: AutomationGraph, startKey: string): Set<str
     }
   }
   return seen;
+}
+
+// Whether `to` is reachable from `from` along a path that passes through no
+// wait node (the endpoints themselves are not counted as waits).
+function reachesWithoutWait(
+  graph: AutomationGraph,
+  byKey: Map<string, AutomationGraphNode>,
+  from: string,
+  to: string,
+): boolean {
+  const out = adjacency(graph);
+  const seen = new Set<string>([from]);
+  const stack = [from];
+  while (stack.length > 0) {
+    const key = stack.pop()!;
+    for (const next of out.get(key) ?? []) {
+      if (next === to) return true;
+      if (seen.has(next)) continue;
+      seen.add(next);
+      if (byKey.get(next)?.kind === "wait") continue;
+      stack.push(next);
+    }
+  }
+  return false;
 }
 
 function adjacency(graph: AutomationGraph): Map<string, string[]> {

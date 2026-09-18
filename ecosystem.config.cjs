@@ -9,6 +9,7 @@
 // from a crash, and every claimed row waits for the 15-minute sweep. The worker
 // bounds its own drain at WORKER_SHUTDOWN_DEADLINE_MS (45 s) and always exits
 // before this, so the SIGKILL here is a backstop that should never fire.
+/* global module */
 module.exports = {
   apps: [
     {

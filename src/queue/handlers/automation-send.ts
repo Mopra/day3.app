@@ -210,9 +210,12 @@ export async function sendAutomationNode(
   // §5.6: everything that makes the account unable to send holds the
   // enrollment (surfaced as "held", never a failure), bounded by the staleness
   // cutoff after which the node is skipped and the flow moves on.
+  // The From name falls back to the account name the way the campaign
+  // composer does; only a missing address is a reason to hold.
+  const fromName = automation.fromName?.trim() || account?.name || "";
   const hold =
     accountHoldReason(account, enrollment.sandbox) ??
-    (!automation.fromEmail || !automation.fromName ? "from_identity_missing" : null) ??
+    (!automation.fromEmail || !fromName ? "from_identity_missing" : null) ??
     (await domainHoldReason(db, automation));
   if (hold) {
     await holdOrSkip(db, engine, enrollment, automation, graph, node, hold, subscriber.email);
@@ -341,7 +344,7 @@ export async function sendAutomationNode(
     accountId: enrollment.accountId,
     recipientId: ledger.id,
     fromEmail: automation.fromEmail!,
-    fromName: automation.fromName!,
+    fromName,
     replyTo: automation.replyTo ?? undefined,
     toEmail: subscriber.email,
     subject: rendered.subject,
@@ -423,7 +426,9 @@ export async function sendAutomationNode(
     // next node (and every campaign) skips it synchronously.
     await db
       .update(campaignRecipients)
-      .set({ status: "skipped", error: result.error ?? "provider suppressed", lockedAt: null, updatedAt: now })
+      // A stable reason code, not the provider's message: the Stats tab groups
+      // skips by this string and labels the known codes.
+      .set({ status: "skipped", error: "provider_suppressed", lockedAt: null, updatedAt: now })
       .where(and(eq(campaignRecipients.id, ledger.id), eq(campaignRecipients.status, "sending")));
     await addSuppression(db, {
       accountId: enrollment.accountId,
@@ -725,17 +730,22 @@ function providerHoldReason(error: string): string | null {
 
 // A sending domain that has lost verification would be rejected by SES; hold
 // (the dashboard already explains what to fix) instead of burning the node.
+// An operator's override counts as verified, exactly as it does at publish and
+// on the campaign send gate: publish and send must agree on what "verified"
+// means, or an overridden domain publishes fine and then never sends.
 async function domainHoldReason(db: Db, automation: Automation): Promise<string | null> {
   if (!automation.sendingDomainId) return null;
   const domain = await db.query.sendingDomains.findFirst({
-    columns: { verificationStatus: true },
+    columns: { verificationStatus: true, adminOverrideVerified: true },
     where: and(
       eq(sendingDomains.id, automation.sendingDomainId),
       eq(sendingDomains.accountId, automation.accountId),
     ),
   });
   if (!domain) return "domain_missing";
-  return domain.verificationStatus === "verified" ? null : "domain_not_verified";
+  return domain.verificationStatus === "verified" || domain.adminOverrideVerified
+    ? null
+    : "domain_not_verified";
 }
 
 // Mirrors campaignRecipientScope's topic rule for one subscriber: an opt-out

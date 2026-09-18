@@ -328,16 +328,28 @@ describe("session routes: lifecycle", () => {
 
     const paused = await body(await pauseRoute.POST(req(`${BASE}/${detail.id}/pause`, { method: "POST" }) as never, params({ id: detail.id })));
     expect(paused.status).toBe("paused");
-    // A paused automation refuses new enrollments at the gate.
-    const refused = await body(
+    // A paused automation still enrolls: the person waits at the trigger, held,
+    // and Resume releases them. A pause must never lose a signup.
+    await seedSubscribers(currentDb, currentAccount.id, detail.audienceId, ["bob@example.com"]);
+    const heldResult = await body(
       await enrollmentsRoute.POST(
-        req(`${BASE}/${detail.id}/enrollments`, { method: "POST", body: { email: "alice@example.com" } }) as never,
+        req(`${BASE}/${detail.id}/enrollments`, { method: "POST", body: { email: "bob@example.com" } }) as never,
         params({ id: detail.id }),
       ),
     );
-    expect(refused.outcome).toBe("automation_not_active");
+    expect(heldResult.outcome).toBe("enrolled");
+    const heldRow = await currentDb.query.automationEnrollments.findFirst({
+      where: eq(automationEnrollments.id, heldResult.enrollmentId),
+    });
+    expect(heldRow?.holdReason).toBe("automation_paused");
+    expect(paused.counts.held).toBe(0);
     const resumed = await body(await resumeRoute.POST(req(`${BASE}/${detail.id}/resume`, { method: "POST" }) as never, params({ id: detail.id })));
     expect(resumed.status).toBe("active");
+    const releasedRow = await currentDb.query.automationEnrollments.findFirst({
+      where: eq(automationEnrollments.id, heldResult.enrollmentId),
+    });
+    expect(releasedRow?.holdReason).toBeNull();
+    expect(Date.parse(releasedRow!.nextRunAt!)).toBeLessThanOrEqual(Date.now());
   });
 
   it("sends a test of one step through the campaign test path", async () => {
@@ -492,14 +504,18 @@ describe("v1 routes", () => {
     );
     expect((await body(res)).outcome).toBe("already_enrolled");
 
-    // Not active → 409; unknown → 404; bad email → 400.
+    // Paused → still enrolls (held at the trigger); unknown → 404; bad email → 400.
     await pauseRoute.POST(req(`${BASE}/${live.id}/pause`, { method: "POST" }) as never, params({ id: live.id }));
     res = await v1EnrollRoute.POST(
-      req(`${V1}/${live.id}/enroll`, { method: "POST", key: "day3_live_test", body: { email: "alice@example.com" } }) as never,
+      req(`${V1}/${live.id}/enroll`, {
+        method: "POST",
+        key: "day3_live_test",
+        body: { email: "paused@acme.com", attributes: { plan: "trial" } },
+      }) as never,
       params({ automationId: live.id }),
     );
-    expect(res.status).toBe(409);
-    expect((await body(res)).error.message).toMatch(/paused/);
+    expect(res.status).toBe(200);
+    expect((await body(res)).outcome).toBe("enrolled");
     res = await v1EnrollRoute.POST(
       req(`${V1}/aut_nope/enroll`, { method: "POST", key: "day3_live_test", body: { email: "alice@example.com" } }) as never,
       params({ automationId: "aut_nope" }),

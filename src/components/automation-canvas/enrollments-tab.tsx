@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FastForward, LogOut, UserPlus } from "lucide-react";
+import Link from "next/link";
+import { FastForward, LogOut, RotateCcw, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -52,7 +53,7 @@ const STATUS_FILTERS = [
 
 // The manual-enroll result, in the words a person needs to act on it.
 const OUTCOME_COPY: Record<EnrollOutcome, { ok: boolean; text: string }> = {
-  enrolled: { ok: true, text: "Enrolled. They start at the trigger right away." },
+  enrolled: { ok: true, text: "Enrolled. They start at the trigger right away (or when you resume, if paused)." },
   already_enrolled: {
     ok: false,
     text: "They are already in this automation, or have been and re-entry is off.",
@@ -67,6 +68,42 @@ const OUTCOME_COPY: Record<EnrollOutcome, { ok: boolean; text: string }> = {
   },
   wrong_audience: { ok: false, text: "That contact is not in this automation's audience." },
 };
+
+// Why an active enrollment is parked, in words, with where to fix it. Every
+// hold_reason the engine and the send handler write is here; an unknown one
+// falls back to the code with underscores removed rather than to nothing.
+const HOLD_REASON_COPY: Record<string, { text: string; href?: string; cta?: string }> = {
+  quota: { text: "monthly email allowance used up", href: "/billing", cta: "Billing" },
+  subscription_inactive: { text: "subscription is past due", href: "/billing", cta: "Billing" },
+  risk_paused: { text: "account paused for reputation", href: "/settings", cta: "Settings" },
+  sending_disabled: { text: "plan cannot send yet", href: "/billing", cta: "Billing" },
+  account_missing: { text: "account not found" },
+  automation_paused: { text: "waiting for you to resume" },
+  from_identity_missing: { text: "no From address on this automation", cta: "Settings tab" },
+  domain_not_verified: { text: "sending domain is not verified", href: "/domains", cta: "Domains" },
+  domain_missing: { text: "sending domain was removed", cta: "Settings tab" },
+  sender_not_verified: { text: "the provider rejected the From address", href: "/domains", cta: "Domains" },
+  provider_daily_limit: { text: "daily sending limit reached, retrying hourly" },
+  provider_suspended: { text: "sending is suspended at the provider" },
+  provider_misconfigured: { text: "sending is misconfigured, we are on it" },
+};
+
+function HoldNote({ reason }: { reason: string }) {
+  const copy = HOLD_REASON_COPY[reason];
+  return (
+    <span className="text-xs text-muted-foreground">
+      Held: {copy?.text ?? reason.replace(/_/g, " ")}
+      {copy?.href && (
+        <>
+          {" "}
+          <Link href={copy.href} className="underline underline-offset-2 hover:text-foreground">
+            {copy.cta}
+          </Link>
+        </>
+      )}
+    </span>
+  );
+}
 
 const EXIT_REASON_LABELS: Record<string, string> = {
   manual: "removed by you",
@@ -129,12 +166,32 @@ export function EnrollmentsTab({
     load();
   }, [load]);
 
+  // Reload as many rows as are on screen so an action on page 3 does not throw
+  // the reader back to page 1.
+  const reload = useCallback(() => {
+    const seq = ++loadSeq.current;
+    const limit = Math.min(Math.max(page?.rows.length ?? PAGE, PAGE), 200);
+    const params = new URL(url(0), window.location.origin);
+    params.searchParams.set("limit", String(limit));
+    api
+      .get<EnrollmentPage>(params.pathname + params.search)
+      .then((next) => {
+        if (seq === loadSeq.current) setPage(next);
+      })
+      .catch(() => {
+        /* the next poll or action reloads */
+      });
+  }, [api, url, page?.rows.length]);
+
   async function loadMore() {
     if (!page || loadingMore) return;
     setLoadingMore(true);
     try {
       const next = await api.get<EnrollmentPage>(url(page.rows.length));
-      setPage({ ...next, rows: [...page.rows, ...next.rows] });
+      // Newest-first offset paging shifts when someone enrolls between pages;
+      // drop any row already on screen so keys stay unique.
+      const seen = new Set(page.rows.map((r) => r.id));
+      setPage({ ...next, rows: [...page.rows, ...next.rows.filter((r) => !seen.has(r.id))] });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't load more");
     } finally {
@@ -146,8 +203,12 @@ export function EnrollmentsTab({
     setBusyId(row.id);
     try {
       await api.post(`/api/automations/${detail.id}/enrollments/${row.id}/run-now`);
-      toast.success(`${row.email} moves on now`);
-      load();
+      toast.success(
+        row.holdReason
+          ? `Retrying ${row.email} now. If the hold is still in place they stay held.`
+          : `${row.email} moves on now`,
+      );
+      reload();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't run the step");
     } finally {
@@ -162,7 +223,7 @@ export function EnrollmentsTab({
       await api.post(`/api/automations/${detail.id}/enrollments/${exiting.id}/exit`);
       toast.success(`${exiting.email} removed from the automation`);
       setExiting(null);
-      load();
+      reload();
       onCountsChanged();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't remove them");
@@ -230,13 +291,13 @@ export function EnrollmentsTab({
               Enroll
             </Button>
           </form>
-          <p className={cn("mt-2 text-xs", outcome && !OUTCOME_COPY[outcome].ok ? "text-destructive" : "text-muted-foreground")}>
+          <p className={cn("mt-2 text-xs", outcome && !(OUTCOME_COPY[outcome]?.ok ?? false) ? "text-destructive" : "text-muted-foreground")}>
             {outcome
-              ? OUTCOME_COPY[outcome].text
+              ? (OUTCOME_COPY[outcome]?.text ?? outcome.replace(/_/g, " "))
               : detail.status === "active"
-                ? `Must already be a subscribed contact in ${detail.audienceName}. Handy for walking through the flow yourself.`
+                ? `Must already be a subscribed contact in ${detail.audienceName}.${detail.sandbox ? " Sandbox: only members of your organization can be enrolled." : ""} Handy for walking through the flow yourself.`
                 : detail.status === "paused"
-                  ? "Resume the automation to enroll someone."
+                  ? "You can enroll someone now; they wait at the start until you resume."
                   : detail.status === "archived"
                     ? "An archived automation cannot enroll anyone."
                     : "Publish the automation to enroll someone."}
@@ -293,9 +354,10 @@ export function EnrollmentsTab({
                           <TableCell>
                             <div className="flex items-center gap-1.5">
                               <EnrollmentStatusBadge status={r.status} />
-                              {r.holdReason && (
-                                <span className="text-xs text-muted-foreground">
-                                  on hold: {r.holdReason.replace(/_/g, " ")}
+                              {r.status === "active" && r.holdReason && <HoldNote reason={r.holdReason} />}
+                              {r.status === "failed" && r.lastError && (
+                                <span className="text-xs text-muted-foreground" title={r.lastError}>
+                                  {r.lastError}
                                 </span>
                               )}
                             </div>
@@ -313,7 +375,11 @@ export function EnrollmentsTab({
                             )}
                           </TableCell>
                           <TableCell className="text-muted-foreground">
-                            {r.status === "active" ? formatDateTime(r.nextRunAt) : ""}
+                            {r.status === "active"
+                              ? r.holdReason
+                                ? `retry ${formatDateTime(r.nextRunAt)}`
+                                : formatDateTime(r.nextRunAt)
+                              : ""}
                           </TableCell>
                           <TableCell className="text-muted-foreground">
                             {formatDateTime(r.enteredAt)}
@@ -324,8 +390,8 @@ export function EnrollmentsTab({
                                 <RowActions label="Actions">
                                   {canRun && (
                                     <MenuItem disabled={busyId === r.id} onClick={() => runNow(r)}>
-                                      <FastForward />
-                                      Run now (skips the current wait)
+                                      {r.holdReason ? <RotateCcw /> : <FastForward />}
+                                      {r.holdReason ? "Retry now" : "Run now (skips the current wait)"}
                                     </MenuItem>
                                   )}
                                   {canExit && (

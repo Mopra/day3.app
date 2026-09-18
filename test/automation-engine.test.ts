@@ -764,7 +764,10 @@ describe("audience-join trigger", () => {
 });
 
 describe("cron sweep", () => {
-  it("fails stuck sending enrollments (never back to active) and re-enqueues overdue ones", async () => {
+  // The rule under test: a stuck `sending` enrollment goes BACK TO ACTIVE, never
+  // to failed. Failing it would end the person's whole series over one lost job,
+  // and the ledger row for the current node already says whether anything left.
+  it("puts a stuck sending enrollment back to active and re-dispatches it; spares a live send; re-enqueues overdue rows", async () => {
     const { db, account, audience, alice, bob } = await setup();
     const { automation } = await seedAutomation(db, {
       accountId: account.id,
@@ -773,6 +776,8 @@ describe("cron sweep", () => {
     });
     const stuck = await enrollSubscriber(db, null, { automation, subscriberId: alice.id, source: "manual" });
     const overdue = await enrollSubscriber(db, null, { automation, subscriberId: bob.id, source: "manual" });
+    // The worker died between flipping to `sending` and enqueueing the send job:
+    // no ledger row exists, so provably nothing left.
     await db
       .update(automationEnrollments)
       .set({ status: "sending", currentNodeKey: "nd_send1", lockedAt: minutesAgo(20) })
@@ -793,27 +798,30 @@ describe("cron sweep", () => {
 
     const queue = new FakeQueue();
     const result = await sweepAutomationEnrollments(db, asQueue(queue), new Date());
-    expect(result.failed).toBe(1);
-    expect(result.requeued).toBe(1);
+    expect(result).toEqual({ restored: 1, deferred: 0, requeued: 1 });
 
-    const failed = await enrollmentRow(db, stuck.enrollmentId!);
-    expect(failed.status).toBe("failed");
-    expect(failed.lastError).toContain("stuck lock");
-    expect(failed.lockedAt).toBeNull();
+    const restored = await enrollmentRow(db, stuck.enrollmentId!);
+    expect(restored.status).toBe("active");
+    expect(restored.currentNodeKey).toBe("nd_send1");
+    expect(restored.lockedAt).toBeNull();
+    expect(Date.parse(restored.nextRunAt!)).toBeLessThanOrEqual(Date.now());
     expect((await enrollmentRow(db, live.enrollmentId!)).status).toBe("sending");
-    expect(queue.messages).toEqual([
-      { type: "advance_automation_enrollment", enrollmentId: overdue.enrollmentId, accountId: account.id },
-    ]);
+    expect(queue.messages.map((m) => (m as { enrollmentId?: string }).enrollmentId).sort()).toEqual(
+      [stuck.enrollmentId, overdue.enrollmentId].sort(),
+    );
 
-    // A failed enrollment is final for the tick too.
-    expect((await runAutomationTick({ db, queue: asQueue(new FakeQueue()) })).advanced).toBe(1);
-    expect((await enrollmentRow(db, stuck.enrollmentId!)).status).toBe("failed");
+    // Re-dispatched, the flow continues and the email goes out exactly once.
+    const provider = new RecordingProvider();
+    await advanceEnrollment(db, { queue: asQueue(queue) }, stuck.enrollmentId!);
+    await sendAutomationNode({ enrollmentId: stuck.enrollmentId!, accountId: account.id }, sendDeps(db, queue, provider));
+    expect(provider.sent).toHaveLength(1);
+    expect((await enrollmentRow(db, stuck.enrollmentId!)).currentNodeKey).toBe("nd_wait");
   });
 
-  it("resolves the pending ledger row a failed enrollment leaves behind", async () => {
+  it("re-claims the pending ledger row exhausted retries left behind and sends once", async () => {
     // The transient path gives the ledger row back as `pending` and throws for
-    // BullMQ; once the retries run out and the enrollment is swept, nothing is
-    // left to claim that row, so the sweep must not leave it counting as in-flight.
+    // BullMQ; when the retries run out the enrollment sits in `sending` with a
+    // pending row nobody owns. The sweep hands it back; the handler sends.
     const { db, account, audience, alice } = await setup();
     const { automation } = await seedAutomation(db, {
       accountId: account.id,
@@ -841,19 +849,196 @@ describe("cron sweep", () => {
       updatedAt: now,
     });
 
-    const result = await sweepAutomationEnrollments(db, asQueue(new FakeQueue()), new Date());
-    expect(result.failed).toBe(1);
-    const [ledger] = await ledgerRows(db, r.enrollmentId!);
-    expect(ledger.status).toBe("failed");
-    expect(ledger.error).toContain("stuck lock");
-    // A retried send job that arrives late finds the enrollment failed and drops out.
+    const queue = new FakeQueue();
+    const result = await sweepAutomationEnrollments(db, asQueue(queue), new Date());
+    expect(result.restored).toBe(1);
+    expect((await enrollmentRow(db, r.enrollmentId!)).status).toBe("active");
+
     const provider = new RecordingProvider();
-    await sendAutomationNode(
-      { enrollmentId: r.enrollmentId!, accountId: account.id },
-      sendDeps(db, new FakeQueue(), provider),
-    );
+    await advanceEnrollment(db, { queue: asQueue(queue) }, r.enrollmentId!);
+    await sendAutomationNode({ enrollmentId: r.enrollmentId!, accountId: account.id }, sendDeps(db, queue, provider));
+    expect(provider.sent).toHaveLength(1);
+    const ledger = await ledgerRows(db, r.enrollmentId!);
+    expect(ledger).toHaveLength(1);
+    expect(ledger[0].status).toBe("sent");
+  });
+
+  it("a terminal ledger row means the email left: the re-dispatch only moves the cursor", async () => {
+    const { db, account, audience, alice } = await setup();
+    const { automation } = await seedAutomation(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      graph: FLOW,
+    });
+    const r = await enrollSubscriber(db, null, { automation, subscriberId: alice.id, source: "manual" });
+    await db
+      .update(automationEnrollments)
+      .set({ status: "sending", currentNodeKey: "nd_send1", visitCount: 1, lockedAt: minutesAgo(20) })
+      .where(eq(automationEnrollments.id, r.enrollmentId!));
+    const now = nowIso();
+    await db.insert(campaignRecipients).values({
+      id: newId("rcp"),
+      campaignId: null,
+      accountId: account.id,
+      subscriberId: alice.id,
+      email: alice.email,
+      automationId: automation.id,
+      automationEnrollmentId: r.enrollmentId!,
+      automationNodeKey: "nd_send1",
+      visitNo: 0,
+      status: "sent",
+      sentAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const queue = new FakeQueue();
+    expect((await sweepAutomationEnrollments(db, asQueue(queue), new Date())).restored).toBe(1);
+    const provider = new RecordingProvider();
+    await advanceEnrollment(db, { queue: asQueue(queue) }, r.enrollmentId!);
+    await sendAutomationNode({ enrollmentId: r.enrollmentId!, accountId: account.id }, sendDeps(db, queue, provider));
     expect(provider.sent).toHaveLength(0);
-    expect((await enrollmentRow(db, r.enrollmentId!)).status).toBe("failed");
+    const row = await enrollmentRow(db, r.enrollmentId!);
+    expect(row.status).toBe("active");
+    expect(row.currentNodeKey).toBe("nd_wait");
+    expect(row.sendCount).toBe(1);
+    expect(await ledgerRows(db, r.enrollmentId!)).toHaveLength(1);
+  });
+
+  it("defers an enrollment whose ledger row is still mid-send on a fresh lock", async () => {
+    const { db, account, audience, alice } = await setup();
+    const { automation } = await seedAutomation(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      graph: FLOW,
+    });
+    const r = await enrollSubscriber(db, null, { automation, subscriberId: alice.id, source: "manual" });
+    await db
+      .update(automationEnrollments)
+      .set({ status: "sending", currentNodeKey: "nd_send1", lockedAt: minutesAgo(20) })
+      .where(eq(automationEnrollments.id, r.enrollmentId!));
+    const now = nowIso();
+    await db.insert(campaignRecipients).values({
+      id: newId("rcp"),
+      campaignId: null,
+      accountId: account.id,
+      subscriberId: alice.id,
+      email: alice.email,
+      automationId: automation.id,
+      automationEnrollmentId: r.enrollmentId!,
+      automationNodeKey: "nd_send1",
+      visitNo: 0,
+      status: "sending",
+      lockedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const result = await sweepAutomationEnrollments(db, asQueue(new FakeQueue()), new Date());
+    expect(result).toEqual({ restored: 0, deferred: 1, requeued: 0 });
+    expect((await enrollmentRow(db, r.enrollmentId!)).status).toBe("sending");
+  });
+});
+
+describe("paused automations", () => {
+  it("still enroll, held at the trigger with no immediate advance, and run once released", async () => {
+    const { db, account, audience, alice } = await setup();
+    const { automation } = await seedAutomation(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      graph: ONE_SEND,
+      status: "paused",
+    });
+    const queue = new FakeQueue();
+    const r = await enrollSubscriber(db, asQueue(queue), { automation, subscriberId: alice.id, source: "audience_join" });
+    expect(r.outcome).toBe("enrolled");
+    expect(queue.messages).toHaveLength(0);
+    const row = await enrollmentRow(db, r.enrollmentId!);
+    expect(row.status).toBe("active");
+    expect(row.holdReason).toBe("automation_paused");
+    expect(row.currentNodeKey).toBe("nd_trigger");
+    expect(Date.parse(row.nextRunAt!)).toBeGreaterThan(Date.now());
+    expect((await runAutomationTick({ db, queue: asQueue(queue) })).advanced).toBe(0);
+
+    // What resumeAutomation does to the rows: active automation, hold released.
+    await db.update(automations).set({ status: "active" }).where(eq(automations.id, automation.id));
+    await db
+      .update(automationEnrollments)
+      .set({ nextRunAt: nowIso(), holdReason: null, heldSince: null })
+      .where(eq(automationEnrollments.id, r.enrollmentId!));
+    expect((await runAutomationTick({ db, queue: asQueue(queue) })).advanced).toBe(1);
+    expect((await enrollmentRow(db, r.enrollmentId!)).status).toBe("sending");
+  });
+
+  it("the audience-join hook enrolls into a paused automation too", async () => {
+    const { db, account, audience, alice } = await setup();
+    const { automation } = await seedAutomation(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      graph: ONE_SEND,
+      status: "paused",
+    });
+    await enrollAudienceJoin(db, asQueue(new FakeQueue()), {
+      accountId: account.id,
+      audienceId: audience.id,
+      subscriberIds: [alice.id],
+    });
+    const rows = await db
+      .select()
+      .from(automationEnrollments)
+      .where(eq(automationEnrollments.automationId, automation.id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].holdReason).toBe("automation_paused");
+  });
+});
+
+describe("sending domain state", () => {
+  it("an operator-overridden domain sends, exactly as publish allows it", async () => {
+    const { db, account, audience, alice } = await setup();
+    const overridden = await seedDomain(db, account.id, {
+      domain: "override.test.co",
+      fromEmail: "news@override.test.co",
+      verificationStatus: "pending",
+      adminOverrideVerified: true,
+    });
+    const { automation } = await seedAutomation(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      graph: ONE_SEND,
+      sendingDomainId: overridden.id,
+      fromEmail: "news@override.test.co",
+    });
+    const queue = new FakeQueue();
+    const provider = new RecordingProvider();
+    const r = await enrollSubscriber(db, null, { automation, subscriberId: alice.id, source: "manual" });
+    await advanceEnrollment(db, { queue: asQueue(queue) }, r.enrollmentId!);
+    await sendAutomationNode({ enrollmentId: r.enrollmentId!, accountId: account.id }, sendDeps(db, queue, provider));
+    expect(provider.sent).toHaveLength(1);
+    expect((await enrollmentRow(db, r.enrollmentId!)).holdReason).toBeNull();
+  });
+
+  it("a domain that lost verification holds the send instead of burning the node", async () => {
+    const { db, account, audience, alice } = await setup();
+    const lost = await seedDomain(db, account.id, {
+      domain: "lost.test.co",
+      fromEmail: "news@lost.test.co",
+      verificationStatus: "failed",
+    });
+    const { automation } = await seedAutomation(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      graph: ONE_SEND,
+      sendingDomainId: lost.id,
+      fromEmail: "news@lost.test.co",
+    });
+    const queue = new FakeQueue();
+    const provider = new RecordingProvider();
+    const r = await enrollSubscriber(db, null, { automation, subscriberId: alice.id, source: "manual" });
+    await advanceEnrollment(db, { queue: asQueue(queue) }, r.enrollmentId!);
+    await sendAutomationNode({ enrollmentId: r.enrollmentId!, accountId: account.id }, sendDeps(db, queue, provider));
+    expect(provider.sent).toHaveLength(0);
+    const row = await enrollmentRow(db, r.enrollmentId!);
+    expect(row.status).toBe("active");
+    expect(row.holdReason).toBe("domain_not_verified");
   });
 });
 

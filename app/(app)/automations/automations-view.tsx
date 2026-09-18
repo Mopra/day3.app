@@ -85,6 +85,9 @@ export function AutomationsView({
   const [status, setStatus] = useState("all");
   const [confirm, setConfirm] = useState<AutomationListRow | null>(null);
   const [removing, setRemoving] = useState(false);
+  // The row whose pause/resume request is in flight: a double click must not
+  // send two POSTs (the second answers 409 with a confusing message).
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   // Pause/resume answer with the full detail; fold the parts the list shows back
   // into the row so the badge flips before the server re-render lands.
@@ -106,17 +109,23 @@ export function AutomationsView({
   }
 
   async function pause(a: AutomationListRow) {
+    if (busyId) return;
+    setBusyId(a.id);
     try {
       const detail = await api.post<AutomationDetail>(`/api/automations/${a.id}/pause`);
       applyDetail(detail);
-      toast.success("Automation paused");
+      toast.success("Automation paused. People who join meanwhile wait at the start.");
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't pause the automation");
+    } finally {
+      setBusyId(null);
     }
   }
 
   async function resume(a: AutomationListRow) {
+    if (busyId) return;
+    setBusyId(a.id);
     try {
       const detail = await api.post<AutomationDetail>(`/api/automations/${a.id}/resume`);
       applyDetail(detail);
@@ -124,6 +133,8 @@ export function AutomationsView({
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't resume the automation");
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -304,13 +315,13 @@ export function AutomationsView({
                           <RowOpen href={`/automations/${a.id}`} />
                           <RowActions>
                             {a.status === "active" && (
-                              <MenuItem onClick={() => pause(a)}>
+                              <MenuItem disabled={busyId === a.id} onClick={() => pause(a)}>
                                 <Pause />
                                 Pause
                               </MenuItem>
                             )}
                             {a.status === "paused" && (
-                              <MenuItem onClick={() => resume(a)}>
+                              <MenuItem disabled={busyId === a.id} onClick={() => resume(a)}>
                                 <Play />
                                 Resume
                               </MenuItem>
@@ -374,8 +385,11 @@ function PeopleCell({ counts }: { counts: AutomationListRow["counts"] }) {
   return (
     <div className="flex flex-col leading-tight">
       <span className="tabular-nums">
-        {counts.active.toLocaleString()}{" "}
+        {(counts.active - counts.held).toLocaleString()}{" "}
         <span className="text-muted-foreground">in progress</span>
+        {counts.held > 0 && (
+          <span className="text-caramel"> · {counts.held.toLocaleString()} held</span>
+        )}
       </span>
       <span className="text-xs text-muted-foreground tabular-nums">
         {counts.completed.toLocaleString()} completed

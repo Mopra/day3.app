@@ -33,6 +33,7 @@ export function PublishDialog({
   open,
   onOpenChange,
   detail,
+  planSandbox,
   serverValidation,
   onPublished,
   onFailure,
@@ -40,6 +41,9 @@ export function PublishDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   detail: AutomationDetail;
+  // What THIS publish will stamp. detail.sandbox is only what the last one did,
+  // and is false before the first, which is exactly when the warning matters.
+  planSandbox: boolean;
   // The verdict from the last failed publish, held by the page until the graph
   // changes. Shown again on reopen so a gate the canvas cannot draw (no From
   // address, no mailing address) is not forgotten the moment the dialog closes.
@@ -105,7 +109,9 @@ export function PublishDialog({
           <DialogTitle>{live ? `Publish changes as v${nextVersion}?` : "Publish this automation?"}</DialogTitle>
           <DialogDescription>
             {live
-              ? "The new version takes over for everyone who enters from now on."
+              ? detail.status === "paused"
+                ? "The new version is saved as live, but the automation stays paused until you resume it."
+                : "The new version takes over for everyone who enters from now on."
               : "Publishing turns the automation on: contacts who match the trigger start entering right away."}
           </DialogDescription>
         </DialogHeader>
@@ -164,10 +170,10 @@ export function PublishDialog({
             </p>
           )}
 
-          {detail.sandbox && (
+          {planSandbox && (
             <p className="text-muted-foreground">
-              Sandbox mode: on the Free plan this automation only reaches members of your
-              organization.
+              Sandbox mode: on the Free plan only members of your organization are enrolled and
+              emailed. Everyone else who joins the audience is skipped until you upgrade.
             </p>
           )}
 

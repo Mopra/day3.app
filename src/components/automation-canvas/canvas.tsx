@@ -333,6 +333,11 @@ function CanvasInner({
     [stats],
   );
 
+  const liveKeys = useMemo(
+    () => (detail.live ? new Set(detail.live.nodes.map((n) => n.key)) : null),
+    [detail.live],
+  );
+
   const rfNodes = useMemo<CanvasNode[]>(
     () =>
       graph.nodes.map((n) => {
@@ -345,6 +350,7 @@ function CanvasInner({
           error: issues?.errors[0]?.message ?? null,
           warning: issues?.warnings[0]?.message ?? null,
           readOnly,
+          unpublished: liveKeys !== null && !liveKeys.has(n.key),
         };
         return {
           id: n.key,
@@ -357,7 +363,7 @@ function CanvasInner({
           connectable: !readOnly,
         };
       }),
-    [graph.nodes, issuesByNode, statsByKey, selectedKey, readOnly],
+    [graph.nodes, issuesByNode, statsByKey, selectedKey, readOnly, liveKeys],
   );
 
   const rfEdges = useMemo<Edge[]>(() => {

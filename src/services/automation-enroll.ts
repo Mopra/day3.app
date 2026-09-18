@@ -12,6 +12,7 @@ import { canonicalizeEmail } from "../lib/csv";
 import { newId, nowIso } from "../lib/ids";
 import { logger } from "../lib/logger";
 import { safeParseSegmentFilter, segmentFilterCondition } from "../lib/segment-filter";
+import { PAUSED_RETRY_MS } from "./automation-engine";
 import { enqueueBestEffort } from "../queue/enqueue";
 import type { JobQueue } from "../queue/messages";
 import { orgMemberEmails } from "./sandbox";
@@ -82,7 +83,9 @@ export async function enrollAudienceJoin(
           eq(automations.accountId, input.accountId),
           eq(automations.audienceId, input.audienceId),
           eq(automations.triggerKind, "audience_join"),
-          eq(automations.status, "active"),
+          // Paused automations still enroll (held at the trigger, released by
+          // Resume): pausing to fix a typo must not lose the hour's signups.
+          inArray(automations.status, ["active", "paused"]),
           isNotNull(automations.liveVersionId),
           // A form-narrowed trigger only fires for signups from that form; a
           // manual add or an import carries no form and skips it.
@@ -134,7 +137,14 @@ export async function enrollBatch(
   const ids = [...new Set(subscriberIds)];
   const fail = (id: string, outcome: EnrollOutcome) => results.set(id, { outcome, enrollmentId: null });
 
-  if (automation.status !== "active" || !automation.liveVersionId) {
+  // A paused automation accepts enrollments but holds them at the trigger: the
+  // row is written already held (`automation_paused`), which is exactly the
+  // state the engine would put it in on the first tick, and the state Resume
+  // releases. Without this, "pause for an hour to fix a typo" silently drops
+  // every signup in that hour; a queued welcome email is recoverable, a missing
+  // one is not.
+  const paused = automation.status === "paused";
+  if ((automation.status !== "active" && !paused) || !automation.liveVersionId) {
     for (const id of ids) fail(id, "automation_not_active");
     return results;
   }
@@ -265,7 +275,9 @@ export async function enrollBatch(
           status: "active" as const,
           reentryMode: automation.reentry,
           currentNodeKey: trigger.key,
-          nextRunAt: now,
+          nextRunAt: paused ? new Date(Date.now() + PAUSED_RETRY_MS).toISOString() : now,
+          holdReason: paused ? "automation_paused" : null,
+          heldSince: paused ? now : null,
           lockedAt: null,
           visitCount: 0,
           sendCount: 0,
@@ -294,7 +306,7 @@ export async function enrollBatch(
   // The immediate path: a zero-wait welcome email leaves in seconds instead of
   // on the next tick. Best-effort by construction; the row is already active
   // and due, so the tick is the durable backstop for any enqueue that fails.
-  if (queue && inserted.length > 0) {
+  if (queue && !paused && inserted.length > 0) {
     for (const row of inserted.slice(0, IMMEDIATE_ENQUEUE_MAX)) {
       try {
         await queue.send({

@@ -16,7 +16,7 @@ Landed:
 - The tick engine (§5): `automation_tick` every 60 s, `advance_automation_enrollment`,
   `send_automation_node`; waits in `next_run_at`; round-robin claim by account with
   a per-account per-tick cap; quota holds with the 7-day staleness cutoff; loop
-  guards; stuck-`sending` sweep to `failed`.
+  guards; stuck-`sending` sweep back to `active` (the ledger row decides, §5.3).
 - Triggers (§6): audience join (form signup/confirm, manual add, CSV import,
   `POST /v1/audiences/{id}/contacts`, optional form narrowing) and
   `POST /v1/automations/{id}/enroll` behind the `automations:enroll` scope, plus
@@ -520,9 +520,17 @@ moves to the next account. Fairness is a property of the dispatcher, not of the
 rate ceiling — the ceiling bounds a single org's total, round-robin makes sure a
 single org can't front-load the queue.
 
-Stuck `sending` rows are swept to `failed` — **never back to `pending`** — by the
-existing 15-minute sweep, mirroring the campaign rule exactly (re-sending could
-duplicate).
+A stuck `sending` enrollment is swept **back to `active`**, due now, by the
+existing 15-minute sweep. This deliberately does not mirror the campaign rule:
+a campaign recipient failed by the sweep loses one email, an enrollment failed
+by it loses every remaining step (and, under `once` re-entry, can never be
+enrolled again). The enrollment does not have to guess whether its email left:
+the ledger row for its current node says. No row or a `pending` row means
+nothing went out, so the re-dispatched send handler sends; a terminal row means
+only the cursor move was lost, so it moves on; a row still `sending` on a fresh
+lock means a job may be mid-send, so that enrollment waits for the next sweep.
+Duplicate-safety still lives entirely on the `(enrollment, node, visit_no)`
+ledger index; the sweep never touches it.
 
 ### 5.4 Advancing one enrollment
 

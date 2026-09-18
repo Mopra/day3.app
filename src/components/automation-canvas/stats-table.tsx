@@ -19,14 +19,17 @@ function pct(part: number, whole: number): string {
   return whole > 0 ? `${Math.round((part / whole) * 100)}%` : "";
 }
 
+// Every reason the engine and the send handler write into `error` on a skipped
+// ledger row (automation-engine.ts writeSkippedLedgerRow callers).
 const REASON_LABELS: Record<string, string> = {
   suppressed: "suppressed",
   unsubscribed: "unsubscribed",
   not_subscribed: "not subscribed",
-  topic_opt_out: "opted out of the topic",
+  topic_opted_out: "opted out of the topic",
   sandbox_not_member: "not an org member (sandbox)",
-  quota: "monthly allowance reached",
-  already_sent: "already received it",
+  invalid_config: "email had no subject or content",
+  too_stale: "held for over a week, skipped",
+  provider_suppressed: "on the provider's suppression list",
 };
 
 function reasonLabel(reason: string): string {

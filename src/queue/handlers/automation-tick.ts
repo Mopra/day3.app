@@ -1,4 +1,4 @@
-import { and, asc, eq, lte } from "drizzle-orm";
+import { and, asc, eq, lte, sql } from "drizzle-orm";
 import type { Db } from "../../db/client";
 import { automationEnrollments } from "../../db/schema";
 import { logJob } from "../../lib/job-log";
@@ -48,14 +48,23 @@ export async function runAutomationTick(deps: AutomationTickDeps): Promise<Autom
   const nowStr = (deps.now ?? new Date()).toISOString();
   const result: AutomationTickResult = { accounts: 0, advanced: 0, errors: 0, deadlineHit: false };
 
-  // Which accounts have work. Served by the partial (next_run_at) index, which
-  // only ever holds live enrollments.
+  // Which accounts have work, oldest due work first. Served by the partial
+  // (next_run_at) index, which only ever holds live enrollments. The ORDER BY
+  // matters under the deadline below: a pass that runs out of budget stops
+  // part-way through this list, and without an order the same accounts could
+  // land at the tail every tick. Ordered by oldest due work, whoever was skipped
+  // has the oldest work next time and goes first.
   const accountRows = await db
-    .selectDistinct({ accountId: automationEnrollments.accountId })
+    .select({
+      accountId: automationEnrollments.accountId,
+      oldestDue: sql<string>`min(${automationEnrollments.nextRunAt})`.as("oldest_due"),
+    })
     .from(automationEnrollments)
     .where(
       and(eq(automationEnrollments.status, "active"), lte(automationEnrollments.nextRunAt, nowStr)),
-    );
+    )
+    .groupBy(automationEnrollments.accountId)
+    .orderBy(sql`oldest_due asc`);
   if (accountRows.length === 0) return result;
 
   // One cache for the whole pass: thousands of enrollments share a few

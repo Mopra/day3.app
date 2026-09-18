@@ -4,6 +4,7 @@ import { listAudiences, listForms } from "@/api/lists";
 import { listSendersWithDomain } from "@/api/senders";
 import { getAutomationDetail } from "@/services/automations";
 import { parseAutomationTab } from "@/lib/automation-types";
+import { planSandboxMode } from "@/lib/plans-catalog";
 import { AutomationView } from "./automation-view";
 
 // Server-rendered, see the note in ../../campaigns/page.tsx. The audiences,
@@ -32,6 +33,7 @@ export default async function AutomationDetailPage({
       audiences={audiences}
       senders={senders}
       forms={forms}
+      planSandbox={planSandboxMode(account.plan)}
     />
   );
 }

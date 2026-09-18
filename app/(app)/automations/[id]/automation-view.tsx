@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Archive, Pause, Play, Rocket } from "lucide-react";
+import { Archive, Pause, Play, Rocket, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -16,7 +16,7 @@ import { EnrollmentsTab } from "@/components/automation-canvas/enrollments-tab";
 import { PublishDialog } from "@/components/automation-canvas/publish-dialog";
 import { StatsTable } from "@/components/automation-canvas/stats-table";
 import { PreviewBadge } from "@/components/preview-notice";
-import { SandboxBadge } from "@/components/sandbox-notice";
+import { SandboxBadge, SandboxBanner } from "@/components/sandbox-notice";
 import { AutomationStatusBadge } from "@/components/ui/status-badge";
 import { useApi } from "@/lib/api";
 import type { GraphValidation } from "@/lib/automation-graph";
@@ -37,12 +37,16 @@ export function AutomationView({
   audiences,
   senders,
   forms,
+  planSandbox,
 }: {
   initialDetail: AutomationDetail;
   initialTab: AutomationTab;
   audiences: Audience[];
   senders: Sender[];
   forms: SignupForm[];
+  // Whether the account's CURRENT plan publishes in sandbox mode. `detail.sandbox`
+  // is what the last publish stamped; this is what the next one will.
+  planSandbox: boolean;
 }) {
   const api = useApi();
   const router = useRouter();
@@ -70,7 +74,11 @@ export function AutomationView({
     try {
       const s = await api.get<AutomationStats>(`/api/automations/${detail.id}/stats`);
       setStats(s);
-      setDetail((d) => ({ ...d, counts: s.counts }));
+      // Same counts, same object: the settings panel resyncs its fields from
+      // `detail`, and a fresh object every 15 s would snap a half-typed value.
+      setDetail((d) =>
+        JSON.stringify(d.counts) === JSON.stringify(s.counts) ? d : { ...d, counts: s.counts },
+      );
     } catch {
       // A missed poll is not worth a toast; the next one will land.
     } finally {
@@ -110,7 +118,7 @@ export function AutomationView({
     if (next === detail.name) return;
     try {
       const updated = await api.patch<AutomationDetail>(`/api/automations/${detail.id}`, { name: next });
-      setDetail(updated);
+      onDetailChange(updated);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't rename");
       setName(detail.name);
@@ -143,11 +151,29 @@ export function AutomationView({
     }
   }
 
-  // Any edit to the graph invalidates a stale server verdict.
+  // Any edit (graph, settings, name) invalidates a stale server verdict: the
+  // gates publish reports (no From address, no mailing address) are fixed on
+  // the Settings tab, and the Publish button must unlock the moment they are.
   function onDetailChange(updated: AutomationDetail) {
     setDetail(updated);
     setServerValidation(null);
     setFocusNodeKey(null);
+  }
+
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const [discarding, setDiscarding] = useState(false);
+  async function discardDraft() {
+    setDiscarding(true);
+    try {
+      const updated = await api.post<AutomationDetail>(`/api/automations/${detail.id}/draft/discard`);
+      onDetailChange(updated);
+      setDiscardOpen(false);
+      toast.success("Draft reset to the live version");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't discard the draft");
+    } finally {
+      setDiscarding(false);
+    }
   }
 
   const archived = detail.status === "archived";
@@ -160,6 +186,7 @@ export function AutomationView({
       ? `v${live.version} live, draft has changes`
       : `v${live.version} live`;
   const inFlight = detail.counts.active + detail.counts.sending;
+  const held = detail.counts.held;
 
   return (
     <div className="space-y-6">
@@ -202,6 +229,12 @@ export function AutomationView({
 
         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <span className="text-xs text-muted-foreground">{versionText}</span>
+          {live && detail.draftDirty && !archived && (
+            <Button variant="ghost" disabled={busy || saving} onClick={() => setDiscardOpen(true)}>
+              <Undo2 />
+              Discard changes
+            </Button>
+          )}
           {canPublish && (
             <Button disabled={busy || saving} onClick={() => setPublishOpen(true)}>
               <Rocket />
@@ -244,9 +277,34 @@ export function AutomationView({
 
       {detail.status === "paused" && (
         <CollapsibleNotice noticeKey="automation-paused" title="Paused">
-          Nobody new enters and nobody mid-flight moves on until you resume.
+          Nobody moves on until you resume. People who join while it is paused wait at the
+          start and continue when you resume; an email that was already being sent still
+          arrives. After Resume, people move on within a minute.
           {inFlight > 0 && ` ${inFlight.toLocaleString()} ${inFlight === 1 ? "person is" : "people are"} waiting.`}
         </CollapsibleNotice>
+      )}
+
+      {detail.status === "active" && held > 0 && (
+        <CollapsibleNotice
+          noticeKey={`automation-held-${detail.id}`}
+          title={`${held.toLocaleString()} ${held === 1 ? "person is" : "people are"} held, not running`}
+        >
+          Something is stopping their next email from going out: the monthly allowance, billing,
+          a paused account, or a From address or domain that is no longer valid. Nobody is lost;
+          each step retries every hour and is skipped only if it stays held for a week.{" "}
+          <button
+            type="button"
+            onClick={() => changeTab("people")}
+            className="underline underline-offset-2 hover:text-foreground"
+          >
+            See why on the People tab
+          </button>
+          .
+        </CollapsibleNotice>
+      )}
+
+      {(detail.sandbox || (planSandbox && !live)) && !archived && (
+        <SandboxBanner surface="automation" />
       )}
 
       <Tabs value={tab} onValueChange={(v) => changeTab(v as AutomationTab)}>
@@ -283,7 +341,7 @@ export function AutomationView({
           audiences={audiences}
           senders={senders}
           forms={forms}
-          onSaved={setDetail}
+          onSaved={onDetailChange}
         />
       )}
       {tab === "people" && <EnrollmentsTab detail={detail} onCountsChanged={() => void loadStats()} />}
@@ -295,6 +353,7 @@ export function AutomationView({
         open={publishOpen}
         onOpenChange={setPublishOpen}
         detail={detail}
+        planSandbox={planSandbox}
         serverValidation={serverValidation}
         onPublished={(updated) => {
           setDetail(updated);
@@ -310,6 +369,16 @@ export function AutomationView({
             changeTab("canvas");
           }
         }}
+      />
+
+      <ConfirmDialog
+        open={discardOpen}
+        onOpenChange={setDiscardOpen}
+        title="Discard the draft changes?"
+        description={`The canvas goes back to v${live?.version ?? ""}, the version that is live. Nothing changes for anyone in the flow.`}
+        confirmLabel="Discard changes"
+        busy={discarding}
+        onConfirm={discardDraft}
       />
 
       <ConfirmDialog

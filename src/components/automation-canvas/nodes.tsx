@@ -21,6 +21,10 @@ export type CanvasNodeData = {
   error: string | null;
   warning: string | null;
   readOnly: boolean;
+  // True when a version is live and this node is not on it: the canvas always
+  // draws the draft, so without this a step added since the last publish looks
+  // like it is already running.
+  unpublished: boolean;
   [key: string]: unknown;
 };
 
@@ -73,7 +77,7 @@ function StatBadges({ kind, stats }: { kind: AutomationNodeKind; stats: NodeStat
 }
 
 function StepNodeComponent({ data, selected }: NodeProps<CanvasNode>) {
-  const { node, title, summary, stats, error, warning, readOnly } = data;
+  const { node, title, summary, stats, error, warning, readOnly, unpublished } = data;
   const meta = KIND_META[node.kind];
   const Icon = meta.icon;
   const isBranch = node.kind === "branch";
@@ -110,8 +114,16 @@ function StepNodeComponent({ data, selected }: NodeProps<CanvasNode>) {
           <Icon className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+          <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
             {meta.label}
+            {unpublished && (
+              <span
+                className="rounded-4xl bg-caramel/15 px-1.5 text-caramel"
+                title="Not published yet: this step is only in the draft"
+              >
+                Draft
+              </span>
+            )}
           </div>
           <div className="truncate text-sm font-medium leading-5" title={title}>
             {title}

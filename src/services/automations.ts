@@ -319,6 +319,7 @@ const EMPTY_COUNTS = (): EnrollmentCounts => ({
   completed: 0,
   exited: 0,
   failed: 0,
+  held: 0,
   total: 0,
 });
 
@@ -336,6 +337,11 @@ export async function enrollmentCountsByAutomation(
       automationId: automationEnrollments.automationId,
       status: automationEnrollments.status,
       count: sql<number>`count(*)::int`.as("count"),
+      // Active rows parked by a hold (quota, billing, pause, identity): counted
+      // separately so the page can say "N people are held" instead of "Active".
+      held: sql<number>`count(*) filter (where ${automationEnrollments.holdReason} is not null and ${automationEnrollments.status} = 'active')::int`.as(
+        "held",
+      ),
     })
     .from(automationEnrollments)
     .where(
@@ -350,6 +356,7 @@ export async function enrollmentCountsByAutomation(
     const n = Number(row.count);
     counts[row.status] += n;
     counts.total += n;
+    counts.held += Number(row.held);
     out.set(row.automationId, counts);
   }
   return out;
@@ -691,6 +698,18 @@ export async function updateAutomationSettings(
     }
   }
 
+  // A published automation sends from these fields on every step, and the send
+  // handler holds (then, after a week, skips) a node with no From address. So
+  // once live, the identity may be changed but never cleared; publish is where
+  // it is required in the first place.
+  if (automation.liveVersionId) {
+    const fromEmail = set.fromEmail !== undefined ? set.fromEmail : automation.fromEmail;
+    const domainId = set.sendingDomainId !== undefined ? set.sendingDomainId : automation.sendingDomainId;
+    if (!fromEmail?.trim() || !domainId) {
+      throw new HttpError(400, "A published automation needs a From address. Pick a sender instead of clearing it.");
+    }
+  }
+
   await db
     .update(automations)
     .set(set)
@@ -783,6 +802,14 @@ export async function saveDraftGraph(
   // canvas, and a wholesale swap inside one transaction cannot leave a node
   // pointing at an edge that was deleted a statement earlier.
   await db.transaction(async (tx) => {
+    // Serialise saves per automation. Two overlapping saves (the canvas
+    // autosave firing twice, two tabs) would otherwise both delete, both insert
+    // and the second hit the unique (version, key) index as a raw 500.
+    await tx
+      .select({ id: automations.id })
+      .from(automations)
+      .where(eq(automations.id, automation.id))
+      .for("update");
     await tx
       .delete(automationEdges)
       .where(and(eq(automationEdges.automationVersionId, versionId), eq(automationEdges.accountId, account.id)));
@@ -794,6 +821,44 @@ export async function saveDraftGraph(
     await tx.update(automations).set({ updatedAt: now }).where(eq(automations.id, automation.id));
   });
 
+  return (await getAutomationDetail(db, account.id, automation.id))!;
+}
+
+// "Discard changes": reset the draft to the live graph. Node keys, labels,
+// configs and positions are copied verbatim (risk verdicts are not: they belong
+// to the published rows). Only meaningful once something is live; a
+// never-published draft has nothing to go back to.
+export async function discardDraftGraph(db: Db, account: Account, id: string): Promise<AutomationDetail> {
+  const automation = await findAutomationOr404(db, account.id, id);
+  assertNotArchived(automation);
+  if (!automation.liveVersionId) {
+    throw new HttpError(409, "Nothing is published yet, so there is no version to go back to.");
+  }
+  const live = await loadGraph(db, account.id, automation.liveVersionId);
+  const versionId = await ensureDraftVersionId(db, automation);
+  const now = nowIso();
+  await db.transaction(async (tx) => {
+    await tx
+      .select({ id: automations.id })
+      .from(automations)
+      .where(eq(automations.id, automation.id))
+      .for("update");
+    await tx
+      .delete(automationEdges)
+      .where(and(eq(automationEdges.automationVersionId, versionId), eq(automationEdges.accountId, account.id)));
+    await tx
+      .delete(automationNodes)
+      .where(and(eq(automationNodes.automationVersionId, versionId), eq(automationNodes.accountId, account.id)));
+    await insertGraphRows(
+      tx,
+      account.id,
+      versionId,
+      { nodes: live.nodes.map((n) => ({ ...n, risk: null })), edges: live.edges },
+      now,
+    );
+    await tx.update(automationVersions).set({ updatedAt: now }).where(eq(automationVersions.id, versionId));
+    await tx.update(automations).set({ updatedAt: now }).where(eq(automations.id, automation.id));
+  });
   return (await getAutomationDetail(db, account.id, automation.id))!;
 }
 
@@ -834,6 +899,10 @@ export async function publishAutomation(
     : undefined;
   if (!automation.fromEmail?.trim() || !automation.sendingDomainId) {
     gate("Choose a From address in the automation's settings before publishing.");
+  } else if (!automation.fromName?.trim()) {
+    // The send handler falls back to the account name, but a missing From name
+    // is almost always a half-finished settings form; say so here, with a fix.
+    gate("Add a From name in the automation's settings before publishing.");
   } else if (!domain || !(domain.verificationStatus === "verified" || domain.adminOverrideVerified)) {
     gate("Verify your sending domain before publishing. Email can only go out from a verified domain.");
   } else if (!automation.fromEmail.trim().toLowerCase().endsWith(`@${domain.domain.toLowerCase()}`)) {
@@ -958,8 +1027,13 @@ export async function publishAutomation(
         ),
       );
     // Publishing while paused keeps the pause: the user chose to stop enrollment
-    // and a content edit is not consent to resume.
-    await tx
+    // and a content edit is not consent to resume. Guarded on the row not having
+    // been archived since it was read at the top: the risk review above is an
+    // AI call that can take seconds, long enough for a Delete click to land, and
+    // an unconditional write here would resurrect the archived automation with
+    // a fresh live version (or, for a hard-deleted draft, leave orphan version
+    // rows behind). Throwing rolls the whole publish back.
+    const flipped = await tx
       .update(automations)
       .set({
         liveVersionId: newVersionId,
@@ -967,7 +1041,11 @@ export async function publishAutomation(
         sandbox,
         updatedAt: now,
       })
-      .where(eq(automations.id, automation.id));
+      .where(and(eq(automations.id, automation.id), ne(automations.status, "archived")))
+      .returning({ id: automations.id });
+    if (flipped.length === 0) {
+      throw new HttpError(409, "This automation was archived while it was being published.");
+    }
   });
 
   return { ok: true, detail: (await getAutomationDetail(db, account.id, automation.id))! };
@@ -982,10 +1060,13 @@ export async function pauseAutomation(db: Db, account: Account, id: string): Pro
   if (automation.status !== "active") {
     throw new HttpError(409, `An automation with status "${automation.status}" cannot be paused.`);
   }
-  await db
+  // The status is part of the WHERE so a concurrent archive is never overwritten.
+  const paused = await db
     .update(automations)
     .set({ status: "paused", updatedAt: nowIso() })
-    .where(eq(automations.id, automation.id));
+    .where(and(eq(automations.id, automation.id), eq(automations.status, "active")))
+    .returning({ id: automations.id });
+  if (paused.length === 0) throw new HttpError(409, "The automation changed state; refresh and try again.");
   return (await getAutomationDetail(db, account.id, automation.id))!;
 }
 
@@ -995,16 +1076,21 @@ export async function resumeAutomation(db: Db, account: Account, id: string): Pr
     throw new HttpError(409, `An automation with status "${automation.status}" cannot be resumed.`);
   }
   const now = nowIso();
-  await db
+  const resumed = await db
     .update(automations)
     .set({ status: "active", updatedAt: now })
-    .where(eq(automations.id, automation.id));
-  // Enrollments that reached a send node while paused are holding with a
-  // 5-minute recheck (engine PAUSED_RETRY_MS). Make them due now so "Resume"
-  // visibly resumes; the next tick picks them up within a minute.
+    .where(and(eq(automations.id, automation.id), eq(automations.status, "paused")))
+    .returning({ id: automations.id });
+  if (resumed.length === 0) throw new HttpError(409, "The automation changed state; refresh and try again.");
+  // Enrollments that came due while paused (and anyone who joined during the
+  // pause) are holding with a 5-minute recheck (engine PAUSED_RETRY_MS). Make
+  // them due now so "Resume" visibly resumes; the next tick picks them up within
+  // a minute. The hold is cleared with it: `heldSince` would otherwise carry the
+  // pause's start into the next genuine hold, and a pause longer than the
+  // 7-day staleness cutoff would make a later quota hold skip the node at once.
   await db
     .update(automationEnrollments)
-    .set({ nextRunAt: now, updatedAt: now })
+    .set({ nextRunAt: now, holdReason: null, heldSince: null, updatedAt: now })
     .where(
       and(
         eq(automationEnrollments.automationId, automation.id),
@@ -1274,11 +1360,13 @@ export async function enrollContactByApi(
   automation: Automation,
   input: { email: string; attributes?: Record<string, string | null> },
 ): Promise<EnrollResult> {
-  if (automation.status !== "active" || !automation.liveVersionId) {
+  // A paused automation still accepts enrollments: they wait at the trigger and
+  // move on at Resume (see enrollBatch), so a pause never loses a signup.
+  if ((automation.status !== "active" && automation.status !== "paused") || !automation.liveVersionId) {
     throw new ApiError(
       409,
       "invalid_request",
-      `This automation is ${automation.status === "draft" ? "not published" : automation.status}. Publish and activate it in Day3 before enrolling anyone.`,
+      `This automation is ${automation.status === "draft" ? "not published" : automation.status}. Publish it in Day3 before enrolling anyone.`,
     );
   }
   const email = canonicalizeEmail(input.email);
@@ -1408,6 +1496,7 @@ export async function sendAutomationNodeTest(
   nodeKey: string,
   toEmails: string[],
 ): Promise<TestSendResult> {
+  assertNotArchived(automation);
   const draftVersionId = await ensureDraftVersionId(db, automation);
   const node = await db.query.automationNodes.findFirst({
     where: and(

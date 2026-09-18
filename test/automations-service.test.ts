@@ -611,6 +611,41 @@ describe("publishAutomation", () => {
     expect(result.detail.status).toBe("active");
   });
 
+  it("requires a From name, since every step sends under it", async () => {
+    const created = await svc.createAutomation(db, account, { name: "W", audienceId: audience.id });
+    await svc.saveDraftGraph(db, account, created.id, linearDraft());
+    await db.update(automations).set({ fromName: null }).where(eq(automations.id, created.id));
+    const result = await svc.publishAutomation(db, account, created.id, "user_test");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.validation.errors.map((e) => e.message).join(" ")).toMatch(/From name/);
+  });
+
+  it("never lets a published automation lose its From address through settings", async () => {
+    const live = await publishedAutomation();
+    await expect(
+      svc.updateAutomationSettings(db, account, live.id, { senderId: null, fromEmail: null, sendingDomainId: null }),
+    ).rejects.toMatchObject({ status: 400 });
+    // Changing to another valid identity is fine.
+    const other = await seedSender(db, account.id, domain.id, { fromEmail: "hello@updates.test.co", fromName: "Hello" });
+    const updated = await svc.updateAutomationSettings(db, account, live.id, { senderId: other.id });
+    expect(updated.fromEmail).toBe("hello@updates.test.co");
+  });
+
+  it("discards the draft back to the live graph", async () => {
+    const live = await publishedAutomation();
+    const draft = linearDraft("nd_send1", "Changed subject", "New body.");
+    draft.nodes.push({ key: "nd_extra", kind: "end", config: {}, label: null, x: 0, y: 600 });
+    const dirty = await svc.saveDraftGraph(db, account, live.id, draft);
+    expect(dirty.draftDirty).toBe(true);
+    const reset = await svc.discardDraftGraph(db, account, live.id);
+    expect(reset.draftDirty).toBe(false);
+    expect(reset.draft.nodes.map((n) => n.key).sort()).toEqual(live.live!.nodes.map((n) => n.key).sort());
+    // Nothing to discard before the first publish.
+    const created = await svc.createAutomation(db, account, { name: "D", audienceId: audience.id });
+    await expect(svc.discardDraftGraph(db, account, created.id)).rejects.toMatchObject({ status: 409 });
+  });
+
   it("refuses a paused account and an archived automation", async () => {
     const created = await svc.createAutomation(db, account, { name: "W", audienceId: audience.id });
     await svc.saveDraftGraph(db, account, created.id, linearDraft());
@@ -628,6 +663,39 @@ describe("publishAutomation", () => {
 });
 
 describe("pause, resume, archive", () => {
+  it("enrolls while paused and releases the hold on resume", async () => {
+    const detail = await publishedAutomation();
+    await svc.pauseAutomation(db, account, detail.id);
+    const automation = (await svc.findAutomationOr404(db, account.id, detail.id))!;
+    await seedSubscribers(db, account.id, audience.id, ["alice@example.com"]);
+    queue.messages.length = 0;
+    const r = await svc.enrollByEmail(db, account, automation, "alice@example.com", "manual");
+    expect(r.outcome).toBe("enrolled");
+    expect(queue.messages).toHaveLength(0);
+    const held = (await svc.getAutomationDetail(db, account.id, detail.id))!.counts;
+    expect(held.held).toBe(1);
+    expect(held.active).toBe(1);
+
+    await svc.resumeAutomation(db, account, detail.id);
+    const row = await db.query.automationEnrollments.findFirst({ where: eq(automationEnrollments.id, r.enrollmentId!) });
+    expect(row?.holdReason).toBeNull();
+    expect(row?.heldSince).toBeNull();
+    expect(Date.parse(row!.nextRunAt!)).toBeLessThanOrEqual(Date.now());
+    expect((await svc.getAutomationDetail(db, account.id, detail.id))!.counts.held).toBe(0);
+  });
+
+  it("re-stamps sandbox on the account's automations when the plan changes", async () => {
+    const { restampAutomationSandbox } = await import("../src/services/automation-sandbox");
+    const live = await publishedAutomation();
+    expect(live.sandbox).toBe(false);
+    expect(await restampAutomationSandbox(db, account.id, "free_org")).toBe(1);
+    expect((await svc.getAutomationDetail(db, account.id, live.id))!.sandbox).toBe(true);
+    // Idempotent: the same plan again touches nothing.
+    expect(await restampAutomationSandbox(db, account.id, "free_org")).toBe(0);
+    expect(await restampAutomationSandbox(db, account.id, "10k_plan")).toBe(1);
+    expect((await svc.getAutomationDetail(db, account.id, live.id))!.sandbox).toBe(false);
+  });
+
   it("flips status and refuses impossible transitions", async () => {
     const detail = await publishedAutomation();
     const paused = await svc.pauseAutomation(db, account, detail.id);
@@ -717,7 +785,7 @@ describe("enrollments", () => {
     expect(none.total).toBe(0);
 
     const counts = (await svc.getAutomationDetail(db, account.id, detail.id))!.counts;
-    expect(counts).toEqual({ active: 1, sending: 0, completed: 0, exited: 0, failed: 0, total: 1 });
+    expect(counts).toEqual({ active: 1, sending: 0, completed: 0, exited: 0, failed: 0, held: 0, total: 1 });
   });
 
   it("run-now pulls next_run_at forward and pokes the engine; exit stops the run", async () => {

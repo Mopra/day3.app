@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { enrollAudienceJoin } from "@/services/automation-enroll";
 import { z } from "zod";
 import { apiRoute, readJson } from "@/api/v1/route";
 import { ApiError, apiJson } from "@/api/v1/errors";
@@ -89,6 +90,15 @@ export const PATCH = apiRoute<Params>(async (req, { db, account }, { params }) =
     .set(set)
     .where(eq(subscribers.id, contact.id))
     .returning();
+  // Flipping back to `subscribed` is an audience join, the same as the bulk
+  // upsert treats it: the trigger hook fires (best-effort, never throws).
+  if (set.status === "subscribed" && contact.status !== "subscribed") {
+    await enrollAudienceJoin(db, null, {
+      accountId: account.id,
+      audienceId: audience.id,
+      subscriberIds: [updated.id],
+    });
+  }
   return apiJson(serializeContact(updated));
 });
 

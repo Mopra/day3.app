@@ -20,6 +20,7 @@ import { useApi } from "@/lib/api";
 import {
   BranchNodeConfigSchema,
   SendNodeConfigSchema,
+  MAX_WAIT_MS,
   WAIT_UNITS,
   WaitNodeConfigSchema,
   nodeTitle,
@@ -317,6 +318,12 @@ const UNIT_LABELS: Record<WaitUnit, string> = {
   days: "days",
 };
 
+const UNIT_MS_LOCAL: Record<WaitUnit, number> = {
+  minutes: 60 * 1000,
+  hours: 60 * 60 * 1000,
+  days: 24 * 60 * 60 * 1000,
+};
+
 function WaitForm({
   node,
   hasSendWindow,
@@ -360,7 +367,11 @@ function WaitForm({
             onChange={(e) => {
               setText(e.target.value);
               const n = Number.parseInt(e.target.value, 10);
-              if (Number.isFinite(n) && n >= 1) commit({ value: n });
+              // Clamp to the schema's ceiling (365 days in the chosen unit) so
+              // the node never holds a value publish would reject as
+              // "not fully configured".
+              const max = Math.floor(MAX_WAIT_MS / UNIT_MS_LOCAL[unit]);
+              if (Number.isFinite(n) && n >= 1) commit({ value: Math.min(n, max) });
             }}
             // A value the schema would reject ("", "0") never reaches the node;
             // on blur the field snaps back to what the node actually holds so
@@ -371,7 +382,12 @@ function WaitForm({
             items={UNIT_LABELS}
             value={unit}
             disabled={readOnly}
-            onValueChange={(v) => v && commit({ unit: v as WaitUnit })}
+            onValueChange={(v) => {
+              if (!v) return;
+              const next = v as WaitUnit;
+              const max = Math.floor(MAX_WAIT_MS / UNIT_MS_LOCAL[next]);
+              commit({ unit: next, value: Math.min(value, max) });
+            }}
           >
             <SelectTrigger aria-label="Unit" className="flex-1">
               <SelectValue />

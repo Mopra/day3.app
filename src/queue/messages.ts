@@ -149,11 +149,15 @@ export function jobPriorityFor(type: QueueMessage["type"]): number {
 // cadence; a confirmation has no ledger at all), so it rides out a longer
 // provider or database blip on its own: 8 attempts ≈ 10.5 minutes. Retrying is
 // safe for both — their handlers only send from an unclaimed row / a pending
-// subscriber, so a redelivery after a lost response never double-sends.
+// subscriber, so a redelivery after a lost response never double-sends. An
+// automation send gets the same budget for the same reason: its enrollment sits
+// in `sending` while the job retries, and if the budget runs out the 15-minute
+// sweep is what re-dispatches it, so a longer budget is a faster welcome email.
 export function jobAttemptsFor(type: QueueMessage["type"]): number {
   switch (type) {
     case "send_transactional":
     case "send_form_confirmation":
+    case "send_automation_node":
       return 8;
     default:
       return DEFAULT_JOB_OPTIONS.attempts;

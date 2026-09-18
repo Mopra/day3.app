@@ -290,6 +290,37 @@ describe("automation graph engagement predicates", () => {
     const graph = withPredicate(K.end);
     expect(codes(validateGraph(graph).errors)).toContain("unknown_engagement_target");
   });
+
+  it("warns when the branch runs straight after the email it asks about", () => {
+    // Send → branch with no wait: evaluated seconds after the send, before
+    // anyone could open it, so "did not open" is true for everyone.
+    const result = validateGraph(withPredicate(K.welcome));
+    expect(result.ok).toBe(true);
+    expect(codes(result.warnings)).toContain("engagement_without_wait");
+    expect(codes(validateGraph(withPredicate(null)).warnings)).toContain("engagement_without_wait");
+  });
+
+  it("does not warn once a wait sits between the email and the branch", () => {
+    const graph: AutomationGraph = {
+      nodes: [
+        node(K.trigger, "trigger"),
+        node(K.welcome, "send", sendConfig(), "Welcome email"),
+        node(K.wait, "wait", { value: 2, unit: "days" }),
+        node(K.branch, "branch", {
+          condition: { kind: "engagement", event: "not_opened", nodeKey: K.welcome },
+        }),
+        node(K.end, "end"),
+      ],
+      edges: [
+        edge(K.trigger, "next", K.welcome),
+        edge(K.welcome, "next", K.wait),
+        edge(K.wait, "next", K.branch),
+        edge(K.branch, "yes", K.end),
+        edge(K.branch, "no", K.end),
+      ],
+    };
+    expect(codes(validateGraph(graph).warnings)).not.toContain("engagement_without_wait");
+  });
 });
 
 describe("automation graph ceilings", () => {

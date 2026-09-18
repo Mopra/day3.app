@@ -26,7 +26,7 @@ Two rules shape every answer below:
 
 | Clock | Cadence | Owner |
 | --- | --- | --- |
-| BullMQ retry | 5 s, 10 s, 20 s, 40 s, 80 s … (5 attempts; 8 for transactional and form confirmations) | Redis |
+| BullMQ retry | 5 s, 10 s, 20 s, 40 s, 80 s … (5 attempts; 8 for transactional, form confirmations and automation sends) | Redis |
 | BullMQ stalled-job check | ~30 s lock, redelivered up to 3 times | Redis |
 | Automation tick | every 60 s | worker scheduler |
 | Cron sweep | every 15 min | worker scheduler |
@@ -49,9 +49,13 @@ Two rules shape every answer below:
   and can resend deliberately. Rows still `queued` are unaffected: their job is
   redelivered by BullMQ when the worker returns, and the sweep re-enqueues any
   that have no live job.
-- **Automation send in flight.** Enrollment and ledger row are failed by the
-  sweep (never re-dispatched). Other enrollments are untouched and advance on
-  the next tick.
+- **Automation send in flight.** The ledger row follows the campaign rule
+  (`attempted_at` set → failed, unset → back to pending). The enrollment does
+  NOT: after 15 min the sweep puts it back to `active`, due now, and the
+  re-dispatched send handler either sends (no row / pending row) or only moves
+  the cursor (terminal row). Nobody's series is ended by a lost job; a person
+  gets their next email up to 15 min late. Only an enrollment whose ledger row
+  is still `sending` on a fresh lock waits for the next sweep.
 - **Imports, recipient generation, review.** The BullMQ job is redelivered as
   stalled; each handler resumes idempotently (`onConflictDoNothing`).
 - **The queue itself.** Jobs live in Redis with AOF persistence, so nothing

@@ -1279,8 +1279,14 @@ successful publish snapshots the graph as an **immutable version**; people alrea
 in the flow **finish on the version they entered**, and new entrants take the new
 one, so editing a live automation can never strand someone mid-flight. Moving
 in-flight people onto a new version is planned, not shipped. An automation can be
-**paused** (nobody new enters) and **resumed**, or **archived**, which exits
-everyone still in it.
+**paused** and **resumed**, or **archived**, which exits everyone still in it.
+While paused nobody moves on, but people who join the audience are still
+enrolled and wait at the start, so pausing for an hour to fix a typo never loses
+that hour's signups; Resume lets everyone continue within a minute. A published
+automation's From address can be changed but not cleared. **Discard changes**
+resets the draft to the live version, and steps that exist only in the draft are
+marked *Draft* on the canvas. The free tier's sandbox flag follows the plan: an
+upgrade lifts it for new signups immediately, without a republish.
 
 **Templates.** Four starters with draft copy already written and laid out, one
 click when creating an automation: **Welcome email** (a single send, the common

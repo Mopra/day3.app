@@ -4,6 +4,7 @@ import type { Db } from "../db/client";
 import { accountUsers, accounts, type Account } from "../db/schema";
 import type { JobQueue } from "../queue/messages";
 import { newId, nowIso } from "../lib/ids";
+import { restampAutomationSandbox } from "./automation-sandbox";
 import {
   FREE_PLAN,
   entitlementsFor,
@@ -260,6 +261,9 @@ export async function syncCurrentOrganization(
       .update(accounts)
       .set({ ...entitlementFields(account, effectivePlan, effectiveLifecycle), updatedAt: now })
       .where(eq(accounts.id, account.id));
+    if (account.plan !== effectivePlan) {
+      await restampAutomationSandbox(db, account.id, effectivePlan);
+    }
     account = (await getAccountByClerkOrgId(db, auth.orgId))!;
   }
 
@@ -354,4 +358,7 @@ export async function applySubscriptionEvent(
       updatedAt: nowIso(),
     })
     .where(eq(accounts.id, account.id));
+  if (account.plan !== plan) {
+    await restampAutomationSandbox(db, account.id, plan);
+  }
 }
