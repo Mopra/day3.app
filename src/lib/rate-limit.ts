@@ -52,6 +52,12 @@ const DEFAULTS: Record<string, RateLimitRule> = {
   // hitting a public form; double opt-in is the real reputation guard, this just
   // caps volume per source.
   form_submit: { limit: 20, windowMs: 60_000 },
+  // The same public submit, keyed by FORM instead of by IP. The per-IP bucket
+  // is blind to a distributed flood — a thousand hosts at one request each pass
+  // it untouched while burying one tenant's form. Set well above any real
+  // form's peak (a launch-day spike on a popular newsletter is single-digit
+  // signups a second) so it only ever bites an attack.
+  form_submit_per_form: { limit: 300, windowMs: 60_000 },
   // Public confirmation-link clicks (unauthenticated, keyed by IP).
   form_confirm: { limit: 60, windowMs: 60_000 },
   // Cloudflare OAuth connect start.

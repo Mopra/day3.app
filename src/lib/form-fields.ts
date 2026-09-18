@@ -94,6 +94,9 @@ export function normalizeAttributes(
 // column values and the custom attribute bag, honouring a form's declared fields.
 // Keys not declared on the form are ignored, so a crafted POST can't write
 // arbitrary attributes. `email` is handled by the caller (it is always required).
+// `missingRequired` lists the labels of required fields that arrived empty. The
+// public submit endpoint enforces it: the browser's `required` attribute is a
+// convenience for humans, not a constraint, and a direct POST ignores it.
 export function splitSubmittedFields(
   fields: FormField[],
   values: Record<string, string>,
@@ -101,13 +104,18 @@ export function splitSubmittedFields(
   firstName: string | null;
   lastName: string | null;
   attributes: Record<string, string> | null;
+  missingRequired: string[];
 } {
   let firstName: string | null = null;
   let lastName: string | null = null;
   const attributes: Record<string, string> = {};
+  const missingRequired: string[] = [];
   for (const f of fields) {
     const value = (values[f.key] ?? "").trim();
-    if (!value) continue;
+    if (!value) {
+      if (f.required) missingRequired.push(f.label);
+      continue;
+    }
     if (f.key === "first_name") firstName = value.slice(0, MAX_NAME_LEN);
     else if (f.key === "last_name") lastName = value.slice(0, MAX_NAME_LEN);
     else attributes[f.key] = value.slice(0, MAX_VALUE_LEN);
@@ -116,5 +124,6 @@ export function splitSubmittedFields(
     firstName,
     lastName,
     attributes: Object.keys(attributes).length > 0 ? attributes : null,
+    missingRequired,
   };
 }

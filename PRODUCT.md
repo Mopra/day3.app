@@ -564,6 +564,21 @@ the same "Saving… / Saved" indicator as the campaign composer.
 - **Double opt-in is ON by default** for deliverability. A pending signup is **never
   emailed a campaign** until it confirms via a signed confirmation link (token valid
   30 days). Double opt-in requires a verified sending domain (to send the confirmation).
+- **Confirmation emails are metered like every other send.** A confirmation is a real
+  email to an address the account does not control, so it reserves against the same
+  monthly allowance as campaigns and the transactional API — one meter, never a second.
+  The **free tier's forms do work**: they confirm real signups from anyone, drawing on
+  the free plan's sandbox allowance (100 emails/month, shared with test sends and
+  sandbox campaigns) rather than the org-members-only restriction that applies to free
+  campaigns. Past the allowance — or while the account is past due, has sending
+  disabled, or is paused for reputation — the signup is still **captured as `pending`**
+  and the owner is notified, so nothing is lost and they can rescue it by upgrading or
+  fixing the block.
+- **Confirmation resends are throttled per subscriber**: at most one every 15 minutes
+  and 5 in total. The submit endpoint is public and the recipient is chosen by whoever
+  posts to it, so an unthrottled resend is a mail bomb aimed at a stranger. Repeat
+  submits always look identical to the visitor.
+- **Required fields are enforced server-side**, not only by the browser.
 - **GDPR:** consent IP is stored for form signups.
 - Form submission is **idempotent** and **never resurrects** an opted-out/suppressed
   address.

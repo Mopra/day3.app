@@ -351,7 +351,9 @@ export function PublicFormView({ form, companyName, state, reason, embed = false
           >
             {reason === "email"
               ? "Please enter a valid email address."
-              : "Something went wrong. Please try again."}
+              : reason === "required"
+                ? "Please fill in every required field."
+                : "Something went wrong. Please try again."}
           </div>
         ) : null}
 

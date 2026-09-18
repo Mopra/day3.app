@@ -21,12 +21,20 @@ export function buildFormInstall(form: Form, accountSlug: string | null): FormIn
 
   // The iframe + a tiny listener that resizes it to the form's content height
   // (the form posts its height via postMessage — see public-form-view.tsx).
+  // The origin check is not decoration: without it any other framed third party
+  // on the customer's page can post a `day3:resize` and set our iframe's height,
+  // which at height 0 quietly removes their signup form. embed.js does the same
+  // job by matching event.source; a hand-pasted snippet has no handle on the
+  // frame it created, so it compares the origin instead.
   const iframeSnippet = `<iframe src="${hostedUrl}?embed=1" data-day3-form="${form.id}" title="${escapeAttr(form.name)}" style="border:0;width:100%;max-width:440px;height:520px;overflow:hidden" loading="lazy"></iframe>
 <script>
   window.addEventListener("message", function (e) {
+    if (e.origin !== "${base}") return;
     if (!e.data || e.data.type !== "day3:resize") return;
+    var h = parseInt(e.data.height, 10);
+    if (!h || h < 0) return;
     var f = document.querySelector('iframe[data-day3-form="${form.id}"]');
-    if (f) f.style.height = e.data.height + "px";
+    if (f) f.style.height = h + "px";
   });
 </script>`;
 

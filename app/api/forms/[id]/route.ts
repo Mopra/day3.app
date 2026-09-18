@@ -73,7 +73,23 @@ const UpdateFormSchema = z.object({
   design: FormDesignSchema.optional(),
   buttonLabel: z.string().trim().min(1).max(40).optional(),
   successMessage: z.string().trim().max(300).optional().or(z.literal("")),
-  redirectUrl: z.string().trim().url().max(2000).optional().or(z.literal("")),
+  // http(s) only: zod's .url() accepts javascript:, data: and every other
+  // scheme, and this value is handed straight to a Location header.
+  redirectUrl: z
+    .string()
+    .trim()
+    .max(2000)
+    .refine((v) => /^https?:\/\//i.test(v), "must start with http:// or https://")
+    .refine((v) => {
+      try {
+        new URL(v);
+        return true;
+      } catch {
+        return false;
+      }
+    }, "must be a valid URL")
+    .optional()
+    .or(z.literal("")),
   // Any plain color (hex/rgb/named) — same gate the design colors use, so the accent
   // control can share the styling popover.
   accentColor: z

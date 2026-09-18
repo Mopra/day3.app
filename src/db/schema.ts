@@ -222,6 +222,18 @@ export const subscribers = pgTable(
     // Double opt-in: when the subscriber clicked the confirmation link (pending →
     // subscribed). Null while pending or for non-form sources.
     confirmedAt: tstz("confirmed_at"),
+    // When a confirmation email was last CLAIMED for this subscriber, and how
+    // many have been claimed in total. Together these are the anti-bombing
+    // guard on the public signup form: anyone can POST a stranger's address to
+    // a public form repeatedly, and the `already_pending` path re-sends the
+    // confirmation every time. The claim is an atomic guarded UPDATE (see
+    // claimConfirmationSend), so concurrent submits produce one email, and the
+    // lifetime count stops a slow drip that a cooldown alone would allow.
+    // Stamped at claim time rather than at send time on purpose: a claim that
+    // fails to send must still burn the cooldown, or a send that errors every
+    // time becomes an unbounded retry loop aimed at someone's inbox.
+    confirmationSentAt: tstz("confirmation_sent_at"),
+    confirmationSendCount: integer("confirmation_send_count").notNull().default(0),
     // Consent proof captured at signup (GDPR): the submitter's IP. Stored only
     // for form signups.
     consentIp: text("consent_ip"),
@@ -891,10 +903,22 @@ export const NOTIFICATION_KINDS = [
   // it verifies.
   "domain_verification_lost",
   "domain_return_path_lost",
+  // A pending domain finished verifying. The whole point of the DNS step's
+  // background re-check is that the user can paste the records and walk away, and
+  // that promise is only kept if something tells them when it lands. Emitted from
+  // inside the guarded transition to verified (queue/cron.ts) so a later re-check
+  // that finds it still verified can never notify twice.
+  "domain_verified",
   // An automation enrollment hit the per-recipient visit or send cap and was
   // exited (docs/automations-design.md §1.2). Throttled to once a day per
   // automation, because a misdrawn loop fires it for every enrollment.
   "automation_loop_guard",
+  // A signup form captured a real person but the confirmation email could not
+  // be sent, so they are stranded as `pending` and will never receive a
+  // campaign. The account can always fix this (upgrade, pay, verify a domain),
+  // and nothing else tells them: the visitor saw "check your inbox" and the
+  // owner just sees signups that never confirm. Throttled to once a day.
+  "form_confirmation_blocked",
 ] as const;
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 

@@ -121,8 +121,11 @@ describe("submitFormSignup", () => {
       .from(subscribers)
       .where(eq(subscribers.email, "dupe@example.com"));
     expect(rows).toHaveLength(1);
-    // The confirmation is re-sent so a lost first email can be recovered.
-    expect(queue.messages).toHaveLength(2);
+    // The immediate repeat does NOT re-send: the endpoint is public and the
+    // address is chosen by whoever posts, so an unthrottled resend is a mail
+    // bomb aimed at a stranger. A lost first email is still recoverable once
+    // the cooldown expires — see forms-hardening.test.ts.
+    expect(queue.messages).toHaveLength(1);
   });
 
   it("respects the suppression list and never resurrects opt-outs", async () => {

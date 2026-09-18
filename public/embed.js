@@ -91,11 +91,14 @@
   // contentWindow === event.source so multiple forms on one page each track
   // their own height.
   window.addEventListener("message", function (e) {
+    if (origin && e.origin !== origin) return;
     if (!e.data || e.data.type !== "day3:resize") return;
+    var h = parseInt(e.data.height, 10);
+    if (!h || h < 0) return;
     var frames = document.querySelectorAll("iframe[data-day3-frame]");
     for (var i = 0; i < frames.length; i++) {
       if (frames[i].contentWindow === e.source) {
-        frames[i].style.height = e.data.height + "px";
+        frames[i].style.height = h + "px";
       }
     }
   });

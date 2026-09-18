@@ -46,9 +46,25 @@ function wantsJson(req: NextRequest): boolean {
   return contentType.includes("application/json");
 }
 
+// The form owner's own post-signup redirect. Validated again at read time, not
+// just on write: the column predates the http(s)-only rule, and a stored value
+// that `new URL` rejects would otherwise throw here and 500 a real signup that
+// has already been written to Postgres. An unusable value falls back to the
+// hosted result page rather than losing the visitor.
+function ownerRedirect(value: string | null): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function successRedirect(req: NextRequest, form: { id: string; doubleOptIn: boolean; redirectUrl: string | null }): NextResponse {
-  if (form.redirectUrl) {
-    return NextResponse.redirect(form.redirectUrl, 303);
+  const target = ownerRedirect(form.redirectUrl);
+  if (target) {
+    return NextResponse.redirect(target, 303);
   }
   const state = form.doubleOptIn ? "check-inbox" : "subscribed";
   const url = new URL(`/f/${form.id}`, req.nextUrl.origin);
@@ -65,7 +81,11 @@ function errorRedirect(req: NextRequest, formId: string, reason: string): NextRe
 
 export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { params }) => {
   const { id } = await params;
+  // Two buckets, because they bound different attacks. Per-IP stops one source
+  // hammering every form; per-form stops a distributed flood concentrating on a
+  // single tenant's form, which the IP bucket cannot see at all.
   await enforceRateLimit("form_submit", clientIp(req));
+  await enforceRateLimit("form_submit_per_form", id);
 
   const db = getDb();
   const form = await db.query.forms.findFirst({ where: eq(forms.id, id) });
@@ -97,7 +117,19 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
   };
   // Only keys declared on the form are read; everything else is ignored, so a
   // crafted POST can't write arbitrary attributes onto a subscriber.
-  const { firstName, lastName, attributes } = splitSubmittedFields(form.fields, values);
+  const { firstName, lastName, attributes, missingRequired } = splitSubmittedFields(
+    form.fields,
+    values,
+  );
+
+  // Required fields are enforced here, not only by the browser's `required`
+  // attribute: the submit endpoint is public and a direct POST skips the markup
+  // entirely, so without this a field the owner marked required arrives empty
+  // and they never learn the data they rely on is optional in practice.
+  if (missingRequired.length > 0) {
+    if (json_) throw new HttpError(400, `Missing required field(s): ${missingRequired.join(", ")}`);
+    return errorRedirect(req, form.id, "required");
+  }
 
   const result = await submitFormSignup(db, getQueue(), {
     form,
