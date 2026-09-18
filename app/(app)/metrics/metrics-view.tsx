@@ -45,6 +45,7 @@ import {
 import { Reveal } from "@/components/ui/reveal";
 import { SandboxBadge } from "@/components/sandbox-notice";
 import { cn } from "@/lib/utils";
+import { Bar, StatusPill, TONE_TEXT, type Tone } from "@/components/ui/rate-bar";
 import { formatDate } from "@/lib/format";
 import type {
   AutomationMetricsRow,
@@ -86,29 +87,6 @@ const n = (v: number): string => v.toLocaleString();
 // isn't reporting deliveries, fall back to sent so the rate still means something.
 const engagementBase = (c: CampaignMetricCounts): number => c.delivered || c.sent;
 
-type Tone = "good" | "warn" | "bad" | "neutral";
-
-const TONE_BAR: Record<Tone, string> = {
-  good: "bg-olive",
-  warn: "bg-amber-500",
-  bad: "bg-destructive",
-  neutral: "bg-foreground/30",
-};
-
-const TONE_DOT: Record<Tone, string> = {
-  good: "bg-olive",
-  warn: "bg-amber-500",
-  bad: "bg-destructive",
-  neutral: "bg-muted-foreground/40",
-};
-
-const TONE_TEXT: Record<Tone, string> = {
-  good: "",
-  warn: "text-amber-600",
-  bad: "text-destructive",
-  neutral: "",
-};
-
 /* ────────────────────────────── scope ───────────────────────────────── */
 
 // What the page is looking at. "all" is every send the account made; the other
@@ -131,15 +109,6 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 /* ──────────────────────────── small parts ───────────────────────────── */
-
-function StatusPill({ tone, label }: { tone: Tone; label: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 text-sm font-medium">
-      <span className={cn("size-2 rounded-full", TONE_DOT[tone])} aria-hidden />
-      {label}
-    </span>
-  );
-}
 
 function MetricTile({
   label,
@@ -171,33 +140,6 @@ function MetricTile({
 // A labelled progress bar. `width` (0–1) drives the fill; `right` is what's shown
 // on the right (they differ for the funnel, where the bar is a share of sent but
 // the caption carries the count too).
-function Bar({
-  label,
-  width,
-  tone,
-  right,
-}: {
-  label: React.ReactNode;
-  width: number;
-  tone: Tone;
-  right: React.ReactNode;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <div className="flex items-baseline justify-between gap-2 text-sm">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-medium tabular-nums">{right}</span>
-      </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className={cn("h-full rounded-full transition-all", TONE_BAR[tone])}
-          style={{ width: `${Math.min(100, Math.max(width * 100, 0))}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
 /* ─────────────────────────── reputation card ────────────────────────── */
 
 // The one card on this page that is NOT scope-filtered, because reputation is

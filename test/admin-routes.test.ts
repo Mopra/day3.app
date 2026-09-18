@@ -101,6 +101,12 @@ function adminRoutes(): AdminRoute[] {
       build: async () => ({ url: "http://localhost/api/admin/overview" }),
     },
     {
+      path: "ses",
+      importPath: "../app/api/admin/ses/route",
+      method: "GET",
+      build: async () => ({ url: "http://localhost/api/admin/ses" }),
+    },
+    {
       path: "reviews",
       importPath: "../app/api/admin/reviews/route",
       method: "GET",

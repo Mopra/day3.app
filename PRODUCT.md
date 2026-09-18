@@ -712,6 +712,11 @@ other. Each domain still opens to its own detail page.
 
 ### 6.9 Admin (staff only)
 - Platform overview: account counts, campaigns by status, recent failed/dead-letter jobs.
+- **Amazon SES card:** the whole SES account as AWS judges it, read live: enforcement status
+  (healthy / probation / shut off), production access, the 24-hour quota and send rate, and
+  bounce/complaint rates over the last 14 full days from Virtual Deliverability Manager,
+  shown against Amazon's own review (5% / 0.1%) and pause (10% / 0.5%) bars. Staff-only and
+  informational: it never feeds per-account enforcement (§6.7), which uses Day3's own ledger.
 - Per-account drill-down: pause/resume sending, usage, bounce/complaint rates, domains, campaigns.
 - **Campaign review queue:** approve & send, or block (with reason) flagged campaigns.
 - Force-verify a domain; suppress addresses globally.

@@ -33,6 +33,7 @@ import { useApi } from "@/lib/api";
 import { formatDateTime, statusLabel, statusVariant } from "@/lib/format";
 import { planLabel } from "@/lib/plans-catalog";
 import type { Account } from "@/lib/types";
+import { SesAccountCard } from "./ses-card";
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -165,6 +166,8 @@ export default function AdminOverviewPage() {
           </CardContent>
         </Card>
       </div>
+
+      <SesAccountCard />
 
       <Card>
         <CardHeader>
