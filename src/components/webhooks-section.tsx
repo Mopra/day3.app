@@ -17,6 +17,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { OrbitLoader } from "@/components/ui/orbit-loader";
 import { useApi, ApiError } from "@/lib/api";
+import { REFERENCE } from "@/lib/docs-links";
+import { DocsInlineLink } from "@/components/docs-link";
 
 // The webhooks surface on /api-keys. Endpoints are the inverse of API keys: a
 // key lets your code reach into Day3, an endpoint lets Day3 reach out to your
@@ -185,6 +187,12 @@ export function WebhooksSection() {
           <p className="text-sm text-muted-foreground">
             Day3 POSTs an event to your server when a message is delivered, bounces, or an address
             gets suppressed — so your app can keep its own records in step without polling.
+          </p>
+          {/* A receiver has to verify the signature to be safe, and that
+              algorithm is only written down in the reference. */}
+          <p className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            <DocsInlineLink link={REFERENCE.webhooks} label="Event payloads & signatures" />
+            <DocsInlineLink link={REFERENCE.webhookEndpoints} label="Retries & delivery history" />
           </p>
         </div>
         {!adminOnly && (

@@ -45,6 +45,8 @@ import {
 import { Reveal } from "@/components/ui/reveal";
 import { SandboxBadge } from "@/components/sandbox-notice";
 import { cn } from "@/lib/utils";
+import { GUIDE } from "@/lib/docs-links";
+import { DocsInlineLink } from "@/components/docs-link";
 import { Bar, StatusPill, TONE_TEXT, type Tone } from "@/components/ui/rate-bar";
 import { formatDate } from "@/lib/format";
 import type {
@@ -303,6 +305,13 @@ function ReputationCard({ rep }: { rep: ReputationSummary }) {
           )}{" "}
           Campaigns, automations and API sends all count toward the same reputation — AWS sees one
           sender.
+        </p>
+
+        {/* Knowing the rate is over the line is only half of it; the other half
+            is what to change, and that is long-form, not a tooltip. */}
+        <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+          <DocsInlineLink link={GUIDE.whySpam} label="How to bring these rates down" />
+          <DocsInlineLink link={GUIDE.deliverability} label="Deliverability, end to end" />
         </p>
       </CardContent>
     </Card>

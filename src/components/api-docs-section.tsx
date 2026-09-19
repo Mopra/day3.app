@@ -30,6 +30,8 @@ import {
   type SubscriberLimit,
 } from "@/lib/api-docs";
 import { MARKDOWN_DIALECT_REFERENCE } from "@/lib/campaign-markdown-docs";
+import { REFERENCE } from "@/lib/docs-links";
+import { DocsInlineLink, DocsLinkRow } from "@/components/docs-link";
 
 // Everything below the key list on /api-keys: a quickstart wired to the user's
 // real audience id, copy-paste prompts for an AI assistant, per-language
@@ -270,12 +272,17 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
       {/* ── Quickstart ─────────────────────────────────────────────── */}
       <Card>
         <CardContent className="space-y-5">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Terminal className="size-4 text-muted-foreground" />
             <h3 className="text-sm font-medium">Quickstart</h3>
             <Badge variant="outline" className="font-normal text-muted-foreground">
               about a minute
             </Badge>
+            <DocsInlineLink
+              link={REFERENCE.quickstart}
+              label="Read the full version"
+              className="ml-auto text-xs"
+            />
           </div>
 
           <Step n={1} title="Point your code at the API">
@@ -311,12 +318,17 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
       {/* ── MCP ────────────────────────────────────────────────────── */}
       <Card>
         <CardContent className="space-y-5">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Plug className="size-4 text-muted-foreground" />
             <h3 className="text-sm font-medium">Write emails in your AI editor</h3>
             <Badge variant="outline" className="font-normal text-muted-foreground">
               MCP
             </Badge>
+            <DocsInlineLink
+              link={REFERENCE.mcp}
+              label="Every tool it exposes"
+              className="ml-auto text-xs"
+            />
           </div>
           <p className="text-sm text-muted-foreground">
             Connect Day3 to Claude Code, Cursor or VS Code and write campaigns where you already
@@ -482,6 +494,19 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
             own version. Webhooks are set up above rather than over the API. Rate limit: 600
             requests per minute per organization; batch calls count as one.
           </p>
+
+          {/* This map is a map. Request and response shapes, error codes and
+              the rules that apply to every call live in the reference. */}
+          <div className="space-y-2 border-t border-border pt-4">
+            <p className="text-sm font-medium">Full documentation</p>
+            <div className="-mx-2 flex flex-col sm:grid sm:grid-cols-2">
+              {[REFERENCE.home, REFERENCE.conventions, REFERENCE.errors, REFERENCE.guides].map(
+                (link) => (
+                  <DocsLinkRow key={link.href} link={link} />
+                ),
+              )}
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>

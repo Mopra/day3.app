@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowUpRight, Code2, Sparkles } from "lucide-react";
+import { Code2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -18,6 +18,8 @@ import { CopyLine, Snippet } from "@/components/api-snippet";
 import { ApiError, useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { apiBaseUrl, type ApiPanelContent } from "@/lib/api-docs";
+import { REFERENCE } from "@/lib/docs-links";
+import { DocsLinkRow } from "@/components/docs-link";
 
 // The </> button on resource pages — a Resend-style slide-out with everything a
 // developer needs to work with the resource in view: its real ids, the base
@@ -226,14 +228,27 @@ export function ApiPanel({
               </section>
             )}
 
-            <div className="border-t border-border pt-4">
-              <Link
-                href="/api-keys"
-                className="inline-flex items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-              >
-                Full API docs, quickstart &amp; keys
-                <ArrowUpRight className="size-3.5" />
-              </Link>
+            {/* ── Where to read more ────────────────────────────────── */}
+            <div className="space-y-2 border-t border-border pt-4">
+              <SectionTitle>Documentation</SectionTitle>
+              <div className="flex flex-col">
+                {(content.docs ?? [REFERENCE.home]).map((doc) => (
+                  <DocsLinkRow key={doc.href} link={doc} className="-mx-2" />
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-xs text-muted-foreground">
+                <a
+                  href={REFERENCE.home.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="transition-colors hover:text-foreground"
+                >
+                  Full API reference
+                </a>
+                <Link href="/api-keys" className="transition-colors hover:text-foreground">
+                  Keys &amp; quickstart
+                </Link>
+              </div>
             </div>
           </div>
         )}

@@ -15,6 +15,8 @@ import {
   Zap,
 } from "lucide-react";
 import Link from "next/link";
+import { GUIDE } from "@/lib/docs-links";
+import { DocsInlineLink } from "@/components/docs-link";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1266,6 +1268,12 @@ function HelpSection({ root, registrar }: { root: string; registrar: RegistrarGu
           <p className="mt-1">
             These records prove you own the domain and let inbox providers trust your emails, so
             your campaigns land in the inbox instead of spam.
+          </p>
+          {/* The one screen in the product where a non-technical user is most
+              likely to want the background rather than the next click. */}
+          <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            <DocsInlineLink link={GUIDE.spfDkimDmarc} label="What SPF, DKIM and DMARC actually do" />
+            <DocsInlineLink link={GUIDE.deliverability} label="Deliverability, end to end" />
           </p>
         </div>
       </div>

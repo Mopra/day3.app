@@ -12,6 +12,7 @@
 //      on the first try instead of inventing endpoints.
 
 import { MARKDOWN_DIALECT_REFERENCE } from "./campaign-markdown-docs";
+import { GUIDE, REFERENCE, type HelpLink } from "./docs-links";
 
 export const PLACEHOLDER_KEY = "day3_live_xxxxxxxxxxxxxxxxxxxx";
 export const PLACEHOLDER_AUDIENCE = "aud_YOUR_AUDIENCE_ID";
@@ -925,6 +926,13 @@ export type ApiPanelContent = {
   prompt: string | null;
   /** Shown when the resource isn't in the public API yet. */
   note?: string;
+  /**
+   * Reference pages for the resource in view, linked from the panel footer.
+   * Deep links rather than one link to the docs home: someone who opened this
+   * panel on Segments wants the Segments page, and the extra click to find it
+   * is where people give up. Empty when nothing in the reference covers it.
+   */
+  docs?: HelpLink[];
 };
 
 /** Named ids the context-pack prompt can carry beyond the audience itself. */
@@ -1305,6 +1313,15 @@ export function buildAudiencePanelContent(input: {
   const fieldKeys = input.fields?.map((f) => f.key) ?? null;
   const tab = input.tab ?? "contacts";
 
+  // The panel's snippets already follow the open tab; the reference link does
+  // too, so "read more about this" lands on the page the snippets came from.
+  const docsForTab: Record<AudiencePanelTab, HelpLink[]> = {
+    contacts: [REFERENCE.contacts, REFERENCE.suppressions],
+    fields: [REFERENCE.fields, REFERENCE.contacts],
+    segments: [REFERENCE.segments, REFERENCE.fields],
+    topics: [REFERENCE.topics, REFERENCE.contacts],
+  };
+
   const tasks =
     tab === "fields"
       ? buildFieldSnippets(ctx, fieldKeys)
@@ -1348,6 +1365,7 @@ export function buildAudiencePanelContent(input: {
       topics: input.topics,
       fieldKeys,
     }),
+    docs: docsForTab[tab],
   };
 }
 
@@ -1375,6 +1393,7 @@ export function buildAudiencesPanelContent(input: {
       ...buildSnippetTasks(ctx).filter((t) => t.id === "add"),
     ],
     prompt: buildPanelPrompt(ctx, { audiences: list }),
+    docs: [REFERENCE.audiences, REFERENCE.contacts, REFERENCE.migrateList],
   };
 }
 
@@ -1416,6 +1435,7 @@ export function buildEmailsPanelContent(input: {
       input.verifiedDomains.length === 0
         ? "Sends are rejected until a sending domain is verified — set one up under Domains first."
         : undefined,
+    docs: [REFERENCE.emails, REFERENCE.errors, REFERENCE.webhooks],
   };
 }
 
@@ -1443,6 +1463,9 @@ export function buildDomainsPanelContent(input: {
     tasks: [],
     prompt: null,
     note: NOT_IN_V1_NOTE,
+    // No reference page to point at, so this links what actually helps at a
+    // DNS host: the record explainer, not an endpoint that doesn't exist.
+    docs: [GUIDE.spfDkimDmarc, GUIDE.deliverability],
   };
 }
 
@@ -1468,5 +1491,6 @@ export function buildSendersPanelContent(input: {
     tasks: [],
     prompt: null,
     note: NOT_IN_V1_NOTE,
+    docs: [GUIDE.oneDomain, GUIDE.spfDkimDmarc],
   };
 }

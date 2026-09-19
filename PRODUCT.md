@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-09-18**.
+> Last verified against the codebase: **2026-09-19**.
 
 ---
 
@@ -844,11 +844,38 @@ send:
   shows when the API source is selected.
 
 ### 6.12 In-app help
-A **Help** button sits at the bottom of the sidebar on every page. It opens a small
-popover with a single message box; sending relays the message to the support inbox
-(`connect@day3.app`) with the signed-in user set as Reply-To, so the team can reply
-straight back by email. The popover also links the same address directly for users who
-prefer their own mail client. Available on every plan; there is no separate docs site yet.
+A **Help & docs** button sits at the bottom of the sidebar on every page. It opens a
+popover with two things: the written help for the page you are on, and a message box.
+
+**Reading comes first**, because it usually answers the question without costing anyone
+a reply. The links are chosen by route, not fixed: Sending offers the SPF/DKIM/DMARC
+explainer, Audiences offers the Contacts reference and the list-migration guide, Billing
+offers the pricing pages. Each shows a one-line summary of what it answers, so the list
+is scannable by someone who has not read it before.
+
+Help lives on two domains and they are not interchangeable:
+
+- **`docs.day3.app`** is the **API reference** — written for someone with an editor
+  open, and covering only what the v1 API covers.
+- **`day3.app`** carries the long-form help — deliverability, SPF/DKIM/DMARC, double
+  opt-in, the GDPR — which is what most users need when they get stuck.
+
+There is deliberately **no flat "Documentation" item in the sidebar**: a single link to
+the reference drops a non-technical user on `POST /v1/emails` when what they wanted was
+the DNS explainer. The route→help map lives in `src/lib/docs-links.ts` and is the single
+source for every docs link in the product; a test asserts every reference link resolves
+to a page that exists and that no page ships a hardcoded docs URL.
+
+Beyond the popover, the reference is linked wherever a developer is already working: the
+`</>` API panel deep-links the page for the resource in view (and follows the open tab on
+an audience), the API keys page links the quickstart, MCP tools and conventions, and the
+webhooks section links the payload and signature reference. The DNS setup guide and the
+Reputation card link the deliverability long-form.
+
+Sending a message relays it to the support inbox (`connect@day3.app`) with the signed-in
+user set as Reply-To, so the team can reply straight back by email. The popover also
+links the same address directly for users who prefer their own mail client. Available on
+every plan.
 
 ### 6.13 Notifications
 Day3 tells you about things that happen while you're not looking, on two channels:
@@ -904,9 +931,10 @@ Full reference spec: `docs/api-v1-spec.md`.
   `suppressed`, `entry_filter_no_match`, `automation_not_active`, ...) plus the
   `enrollment_id`. Idempotent under `Idempotency-Key`. Building, publishing and
   pausing an automation are app-only for now.
-- **The API keys page is also the documentation.** There is no separate docs site;
-  everything needed to use the API sits below the key list, filled in with the
-  account's real audience id:
+- **The API keys page is documentation you can run.** The full reference lives at
+  **`docs.day3.app`** (linked from the page, and deep-linked from every `</>` panel);
+  what sits below the key list here is the part worth having prefilled with the
+  account's own audience id and key:
   - a **quickstart** (base URL → `export DAY3_API_KEY=…`, prefilled with the key
     just minted → a verification request),
   - **copy-paste prompts for an AI coding assistant** — *integrate into my app*,
