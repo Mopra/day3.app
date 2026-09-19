@@ -18,7 +18,8 @@
     "test": "vitest run",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "accounts:review-pauses": "tsx scripts/review-reputation-pauses.ts"
+    "accounts:review-pauses": "tsx scripts/review-reputation-pauses.ts",
+    "sending:setup-shared-domain": "tsx scripts/setup-shared-domain.ts"
   },
   "dependencies": {
     "@aws-sdk/client-sesv2": "^3.1071.0",

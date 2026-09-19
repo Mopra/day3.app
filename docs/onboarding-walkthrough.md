@@ -28,6 +28,46 @@ its next sign-in.
 Unset `SHARED_SANDBOX_DOMAIN` turns both off and the account starts on the old
 verify-first path. `DAY3_POSTAL_ADDRESS` is required alongside it (`src/lib/env.ts`).
 
+## Turning it on
+
+1. **Pick a dedicated subdomain you own**, e.g. `sandbox.day3.app`. Not the apex,
+   and not the domain your own transactional mail leaves from: a reputation
+   problem on this identity reaches every tenant using it, so keep the blast
+   radius off anything that matters.
+2. **Create the SES identity and get the DNS records:**
+   ```
+   SHARED_SANDBOX_DOMAIN=sandbox.day3.app    DAY3_POSTAL_ADDRESS="Day3 ApS, ..."    npm run sending:setup-shared-domain
+   ```
+   It needs `AWS_REGION` and picks up `SES_CONFIGURATION_SET` so the identity is
+   attached to the same event pipeline as customer domains (open/click/bounce
+   tracking depends on it). Idempotent: re-run it to check progress.
+3. **Publish the records it prints** in that zone. The DKIM CNAMEs are required;
+   the Return-Path MX/SPF and DMARC are deliverability polish and worth doing.
+4. **Re-run the script until it reports `verified`.** SES polls for the DKIM
+   CNAMEs for 72 hours after the identity is created.
+
+   On Cloudflare: there is no record for `sandbox.day3.app` itself. Add the
+   records *under* it, into the existing `day3.app` zone, and set every CNAME to
+   **DNS only (grey cloud)**. Cloudflare proxies new CNAMEs by default, and a
+   proxied DKIM record answers with Cloudflare's IPs instead of the Amazon
+   target, so SES never verifies. This is the single most common way this step
+   stalls.
+5. **Set both variables on the web tier and the worker**, then deploy:
+   ```
+   SHARED_SANDBOX_DOMAIN=sandbox.day3.app
+   DAY3_POSTAL_ADDRESS=Day3 ApS, 1 Example Way, 1234 Copenhagen, Denmark
+   ```
+   Both tiers need them: the worker renders the footer on every send, and
+   `validateEnv` refuses to boot with the domain set and the address missing.
+6. **Nothing to backfill.** Existing accounts provision the shared domain and the
+   team audience on their next sign-in, because both `ensure*` helpers are
+   idempotent and run from `syncCurrentOrganization`.
+
+To check it worked: sign in with a fresh org and confirm the dashboard offers
+**Write my first email**, and that `/sending` shows the "Your Day3 test address"
+card above an empty domain list. To turn it off again, unset
+`SHARED_SANDBOX_DOMAIN`; provisioned rows stay but the day-one path closes.
+
 ## Flow
 
 1. **Sign up / sign in.** Unauthenticated users hitting any `/(app)` route are
