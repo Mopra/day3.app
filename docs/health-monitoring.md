@@ -86,8 +86,21 @@ Three properties keep it fixed (`src/lib/deadline.ts`, `src/db/client.ts`):
    cancelled, and keeps occupying its connection — so the pool *must* be thrown
    away or the wedge outlives the request. This is what collapses a multi-minute
    run of failures into a single failed probe (verified: 1 of 5 vs 5 of 5).
-3. **`max_lifetime` + `keep_alive`** on the web pool, so stale sockets are recycled
+3. **`idle_timeout` + `keep_alive`** on the web pool, so stale sockets are recycled
    and dead peers are detected instead of trusted indefinitely.
+
+`max_lifetime` used to be the third property and has been switched off, because it
+caused the very failure it was meant to prevent. postgres.js arms that timer once
+at connect and never cancels it, so it can fire while a query is in flight: the
+connection is pulled out of the pool but not terminated, and with `max: 1` the
+instance is left with no connection at all. Every later query queues behind a
+socket nothing will ever close, so the pool wedges permanently and silently. The
+run of `write CONNECTION_DESTROYED` 500s that follows is this recovery path firing
+on the collateral: the hung requests trip their deadlines, the health probe calls
+`resetDb()`, and postgres.js's `destroy()` rejects every other queued query on the
+instance. `idle_timeout` does the recycling job instead, and the pool cancels *that*
+timer whenever the connection is busy, so it can never retire live work. See the
+comment in `src/db/client.ts` for the full reasoning.
 
 The general lesson, which applies well beyond this endpoint: **`statement_timeout`
 is a runaway-query cap, not a hang guard.** Any web-tier query that must not hang

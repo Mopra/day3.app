@@ -293,6 +293,18 @@ page share a single account lookup instead of one per caller.
   `withDeadline` (`src/lib/deadline.ts`) and call `resetDb()` when one trips —
   abandoning a query does not free its connection. This caused weeks of phantom
   `/api/health` "outages"; see `docs/health-monitoring.md`.
+- **Never set `max_lifetime` on the web pool.** postgres.js arms that timer once at
+  connect and never cancels it, so it fires whatever the connection is doing. If a
+  query is in flight it pulls the connection out of the pool but declines to
+  terminate it, and with `max: 1` the instance is then holding no connection at
+  all: later queries queue behind a socket nothing will ever close, `onclose` never
+  runs, and the pool wedges permanently with no error raised. The visible damage is
+  a burst of unrelated `write CONNECTION_DESTROYED` 500s, which is the recovery
+  path, not the fault — the hung requests trip `withDeadline`, `/api/health` calls
+  `resetDb()`, and postgres.js's `destroy()` rejects every other queued query on
+  that instance. `idle_timeout` is the safe equivalent: the pool cancels it
+  whenever the connection is busy (`move()` in postgres.js), so it can only ever
+  retire an idle connection — which is exactly the one that may have gone stale.
 - **`pending_review` is not a human review.** Submitting a campaign runs the
   automated AI risk review and, if it passes, delivery starts — there is no
   approval step in between. Anything described as "submit for review" in a UI or

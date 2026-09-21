@@ -51,8 +51,10 @@ function createDbWithClient(
   // *establishing* a connection) ever fires. postgres.js has no client-side query
   // timeout, so the query hangs indefinitely and the request returns no response
   // at all. Two mitigations below, plus `withDeadline` at the call site:
-  //   - max_lifetime recycles connections so a stale socket is far less likely to
-  //     be reused after the instance thaws, and
+  //   - idle_timeout retires a connection that has been sitting in the pool, so a
+  //     socket that went stale while the instance was frozen is dropped rather
+  //     than reused after it thaws (see the note on max_lifetime, which used to
+  //     do this job and wedged the pool doing it), and
   //   - keep_alive makes the kernel probe an idle socket so a dead peer is
   //     eventually detected rather than trusted forever.
   const statementTimeoutMs = Number(
@@ -71,9 +73,40 @@ function createDbWithClient(
           // Release idle serverless connections back to the Supabase pooler so
           // many warm-but-idle instances don't sit on pooler slots.
           idle_timeout: Number(process.env.DB_IDLE_TIMEOUT_S ?? "20"),
-          // Hard cap on connection age. Bounds how long a serverless instance can
-          // keep handing requests to a socket that went stale while it was frozen.
-          max_lifetime: Number(process.env.DB_MAX_LIFETIME_S ?? "120"),
+          // max_lifetime is OFF here, and that is the fix for a hard outage, not
+          // an oversight. It used to be 120s, as a hard cap on connection age so
+          // a serverless instance couldn't keep handing requests to a socket that
+          // went stale while it was frozen. But postgres.js starts the lifetime
+          // timer once, at connect, and never cancels it: when it fires it calls
+          // the connection's `end()`, which moves the connection OUT of the pool
+          // and then, because a query is in flight, declines to terminate it. With
+          // `max: 1` there is now no connection left to serve anyone. Every later
+          // query lands on the pool's backlog, nothing ever closes the socket, so
+          // `onclose` never runs and the backlog is never drained: the instance's
+          // pool is wedged permanently, silently, with no error raised. Reproduced
+          // against the real pooler by compressing the timer — throughput goes to
+          // zero at the first expiry and never recovers.
+          //
+          // What follows is the visible damage: the hung requests trip
+          // `withDeadline`, /api/health calls `resetDb()`, and postgres.js's
+          // `destroy()` rejects every other queued query on that instance with
+          // `write CONNECTION_DESTROYED` — a burst of unrelated 500s across
+          // whatever routes that instance happened to be holding.
+          //
+          // Nothing is given up by switching it off. `idle_timeout` above covers
+          // the stale-socket case it was there for, and covers it better: a socket
+          // that went stale while the instance was frozen is by definition an idle
+          // one, the idle timer is armed the moment a connection returns to the
+          // pool, and 20s is a tighter bound than 120s. Crucially the pool cancels
+          // the idle timer whenever the connection is busy (`move()` in
+          // postgres.js), so unlike the lifetime timer it can never retire a
+          // connection out from under a live query. The only thing max_lifetime
+          // uniquely caps is a connection that is never idle for 20s — one that is
+          // continuously answering queries, i.e. provably not stale.
+          //
+          // DB_MAX_LIFETIME_S still overrides if a future pooler makes an age cap
+          // necessary; 0 disables, and that is the default.
+          max_lifetime: Number(process.env.DB_MAX_LIFETIME_S ?? "0"),
         }
       : {}),
     ...(statementTimeoutMs > 0
