@@ -144,6 +144,68 @@ export function ListFilter({
   );
 }
 
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * Builds the options for a <ListFilter/> from the values actually present in the
+ * data, with an "all" option in front.
+ *
+ * `active` is kept in the list even when no row currently carries it. A filter
+ * that survives a page visit (see `ListPersistence`) can outlive the rows that
+ * justified it — "paused" is a real choice today and an absent value tomorrow —
+ * and dropping it would leave a select showing a blank label over an empty
+ * table, with nothing on screen explaining why.
+ */
+export function buildFilterOptions({
+  all,
+  values,
+  active,
+  label = capitalize,
+}: {
+  /** Label for the leading "no filter" option, whose value is always "all". */
+  all: string;
+  values: Iterable<string>;
+  active: string;
+  label?: (value: string) => string;
+}): FilterOption[] {
+  const present = new Set(values);
+  if (active && active !== "all") present.add(active);
+  return [
+    { value: "all", label: all },
+    ...Array.from(present)
+      .sort()
+      .map((v) => ({ value: v, label: label(v) })),
+  ];
+}
+
+/**
+ * Clears a list's search and filters. Rendered only while something is actually
+ * narrowing the list — which is the point: a filter restored from a previous
+ * visit has to announce itself, or a short list reads as missing data.
+ */
+export function ListClear({
+  show,
+  onClear,
+  className,
+}: {
+  show: boolean;
+  onClear: () => void;
+  className?: string;
+}) {
+  if (!show) return null;
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={onClear}
+      className={cn("text-muted-foreground", className)}
+    >
+      <X className="size-4" />
+      Clear
+    </Button>
+  );
+}
+
 export type ChipOption = { value: string; label: string; count: number; tone?: "default" | "alert" };
 
 /**
@@ -466,22 +528,206 @@ function compare(a: Primitive, b: Primitive): number {
   return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
 }
 
+/* ──────────────────────── state that outlives a visit ───────────────── */
+
+/**
+ * Makes a list's search, filters, and sort survive leaving the page.
+ *
+ * Without it, narrowing a list is worth exactly one screen: open a row, come
+ * back, and the filter is gone — so anyone working through a filtered list
+ * re-applies it on every return trip.
+ *
+ * State lives in TWO places, deliberately:
+ *   • the URL, so the view is linkable and Back restores exactly what you left;
+ *   • storage, so arriving at the bare path (a nav click, a fresh tab) still
+ *     lands you where you were.
+ * The URL wins whenever it carries state; storage fills in when it doesn't.
+ *
+ * Only what differs from the page's defaults is written, so a cleared list
+ * leaves a clean URL and no stored entry — "no filters" is never something you
+ * have to restore.
+ */
+export type ListPersistence = {
+  /** Stable id for this list. Scopes the stored entry; keep it unique app-wide. */
+  key: string;
+  /** Prefix for this list's URL params. Only needed when one page has two lists. */
+  param?: string;
+  /** "session" forgets at tab close; "local" (the default) outlives it. */
+  scope?: "local" | "session";
+};
+
+type ListState = {
+  q: string;
+  filters: Record<string, string>;
+  sort: SortState;
+};
+
+const STORE_PREFIX = "day3.list.";
+const NO_FILTERS: Record<string, string> = {};
+
+function sameSort(a: SortState, b: SortState): boolean {
+  return a?.key === b?.key && a?.dir === b?.dir;
+}
+
+function paramName(p: ListPersistence, name: string): string {
+  return p.param ? `${p.param}_${name}` : name;
+}
+
+function storageFor(p: ListPersistence): Storage | null {
+  // Access itself throws when a browser blocks site data; a list must still work.
+  try {
+    return p.scope === "session" ? window.sessionStorage : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function parseSort(raw: string | null): SortState | undefined {
+  if (!raw) return undefined;
+  const [key, dir] = raw.split(":");
+  if (!key || (dir !== "asc" && dir !== "desc")) return undefined;
+  return { key, dir };
+}
+
+function readUrlState(p: ListPersistence, names: string[]): Partial<ListState> | null {
+  const sp = new URLSearchParams(window.location.search);
+  const out: Partial<ListState> = {};
+  let found = false;
+
+  const q = sp.get(paramName(p, "q"));
+  if (q !== null) {
+    out.q = q;
+    found = true;
+  }
+  const filters: Record<string, string> = {};
+  for (const name of names) {
+    const value = sp.get(paramName(p, name));
+    if (value !== null) filters[name] = value;
+  }
+  if (Object.keys(filters).length > 0) {
+    out.filters = filters;
+    found = true;
+  }
+  const sort = parseSort(sp.get(paramName(p, "sort")));
+  if (sort) {
+    out.sort = sort;
+    found = true;
+  }
+  return found ? out : null;
+}
+
+function readStoredState(p: ListPersistence): Partial<ListState> | null {
+  const store = storageFor(p);
+  if (!store) return null;
+  try {
+    const raw = store.getItem(STORE_PREFIX + p.key);
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as Partial<ListState>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeState(
+  p: ListPersistence,
+  state: ListState,
+  defaults: Record<string, string>,
+  initialSort: SortState,
+): void {
+  const dirty: Partial<ListState> = {};
+  if (state.q) dirty.q = state.q;
+  const filters: Record<string, string> = {};
+  for (const name of Object.keys(defaults)) {
+    if (state.filters[name] !== defaults[name]) filters[name] = state.filters[name];
+  }
+  if (Object.keys(filters).length > 0) dirty.filters = filters;
+  if (state.sort && !sameSort(state.sort, initialSort)) dirty.sort = state.sort;
+
+  const store = storageFor(p);
+  if (store) {
+    try {
+      if (Object.keys(dirty).length > 0) {
+        store.setItem(STORE_PREFIX + p.key, JSON.stringify(dirty));
+      } else {
+        store.removeItem(STORE_PREFIX + p.key);
+      }
+    } catch {
+      // Quota or blocked storage. The URL still carries the state.
+    }
+  }
+
+  const sp = new URLSearchParams(window.location.search);
+  const put = (name: string, value: string | undefined) => {
+    if (value) sp.set(paramName(p, name), value);
+    else sp.delete(paramName(p, name));
+  };
+  put("q", dirty.q);
+  for (const name of Object.keys(defaults)) put(name, dirty.filters?.[name]);
+  put("sort", dirty.sort ? `${dirty.sort.key}:${dirty.sort.dir}` : undefined);
+
+  const query = sp.toString();
+  const next = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (next === current) return;
+  // replaceState, not router.replace: this is view state, not a navigation. It
+  // must not push a history entry (Back would then walk keystrokes) and must not
+  // re-run the server component on every character typed into the search box.
+  window.history.replaceState(window.history.state, "", next);
+}
+
+/**
+ * A stable string for one list state, used to tell "the user changed something"
+ * from "this is what we just restored". Without it the mount pass writes the
+ * still-default state back out before the restored one lands, and momentarily
+ * erases the very entry it read.
+ */
+function signature(state: ListState, defaults: Record<string, string>): string {
+  return JSON.stringify([
+    state.q,
+    Object.keys(defaults).map((name) => state.filters[name]),
+    state.sort?.key ?? "",
+    state.sort?.dir ?? "",
+  ]);
+}
+
+// The restore has to land before the browser paints, or a persisted filter shows
+// up as a visible flash of the unfiltered list.
+const useIsoLayoutEffect = typeof window === "undefined" ? React.useEffect : React.useLayoutEffect;
+
+/* ────────────────────────────── the hook ────────────────────────────── */
+
 type ListControllerConfig<T> = {
   /** Text matched against the search box (compared case-insensitively). */
   searchText?: (item: T) => string;
-  /** Extra filtering driven by the page's filter selects. */
-  predicate?: (item: T) => boolean;
+  /**
+   * The list's filter selects, as `name → default value`. Declaring them here
+   * rather than as the page's own `useState` is what lets the controller reset
+   * and persist them alongside the search box and the sort.
+   */
+  filters?: Record<string, string>;
+  /** Extra filtering, driven by the current `filters` values. */
+  predicate?: (item: T, filters: Record<string, string>) => boolean;
   /** Accessors for each sortable column key. */
   sortAccessors?: Record<string, (item: T) => Primitive>;
   initialSort?: SortState;
+  /** Opt in to search/filter/sort surviving the visit. See `ListPersistence`. */
+  persist?: ListPersistence;
 };
 
 type ListController<T, View extends T[] | null> = {
   search: string;
   setSearch: React.Dispatch<React.SetStateAction<string>>;
+  /** Current value of each declared filter. */
+  filters: Record<string, string>;
+  setFilter: (name: string, value: string) => void;
   sort: SortState;
   setSort: React.Dispatch<React.SetStateAction<SortState>>;
   toggleSort: (key: string) => void;
+  /** Search or a filter is away from its default — i.e. rows are being hidden. */
+  isFiltered: boolean;
+  /** Resets search and filters to their defaults. Sort is a view, not a filter. */
+  clearFilters: () => void;
   /** Filtered + sorted rows (null only when the source is still loading). */
   view: View;
   total: number;
@@ -514,8 +760,65 @@ export function useListController<T>(
   items: T[] | null,
   config: ListControllerConfig<T> = {},
 ) {
+  // Callers pass fresh object literals every render. Pin the ones that are
+  // configuration rather than state (a lazy useState, so they keep their first
+  // value), and effects and resets stop chasing a new identity every pass.
+  const [defaults] = React.useState(() => config.filters ?? NO_FILTERS);
+  const [initialSort] = React.useState<SortState>(() => config.initialSort ?? null);
+  const [persist] = React.useState(() => config.persist);
+
   const [search, setSearch] = React.useState("");
-  const [sort, setSort] = React.useState<SortState>(config.initialSort ?? null);
+  const [filters, setFilters] = React.useState<Record<string, string>>(defaults);
+  const [sort, setSort] = React.useState<SortState>(initialSort);
+
+  // Restoring in an effect rather than in the initial state is deliberate: these
+  // pages are server-rendered too, and reading window during render would make
+  // the first client render disagree with the server's HTML.
+  const written = React.useRef<string | null>(null);
+  useIsoLayoutEffect(() => {
+    if (!persist || written.current !== null) return;
+    const fromUrl = readUrlState(persist, Object.keys(defaults));
+    const saved = fromUrl ?? readStoredState(persist);
+    // Only the filters this list declares are taken back out of a stored entry —
+    // an older build's leftover names must not leak into the current state.
+    const restoredFilters: Record<string, string> = { ...defaults };
+    for (const name of Object.keys(defaults)) {
+      const value = saved?.filters?.[name];
+      if (typeof value === "string") restoredFilters[name] = value;
+    }
+    const next: ListState = {
+      q: typeof saved?.q === "string" ? saved.q : "",
+      filters: restoredFilters,
+      sort: saved?.sort ?? initialSort,
+    };
+    written.current = signature(next, defaults);
+    if (!saved) return;
+    setSearch(next.q);
+    setFilters(next.filters);
+    setSort(next.sort);
+    // Restored from storage, so the URL doesn't show this view yet. Write it here
+    // with the state in hand rather than waiting for the sync effect below, which
+    // would first see the render that is still holding the defaults.
+    if (!fromUrl) writeState(persist, next, defaults, initialSort);
+  }, [persist, defaults, initialSort]);
+
+  React.useEffect(() => {
+    if (!persist) return;
+    const state: ListState = { q: search, filters, sort };
+    const sig = signature(state, defaults);
+    if (sig === written.current) return;
+    written.current = sig;
+    writeState(persist, state, defaults, initialSort);
+  }, [persist, defaults, initialSort, search, filters, sort]);
+
+  const setFilter = React.useCallback((name: string, value: string) => {
+    setFilters((cur) => ({ ...cur, [name]: value }));
+  }, []);
+
+  const clearFilters = React.useCallback(() => {
+    setSearch("");
+    setFilters(defaults);
+  }, [defaults]);
 
   const toggleSort = React.useCallback((key: string) => {
     setSort((cur) =>
@@ -529,7 +832,7 @@ export function useListController<T>(
     if (!items) return null;
     const q = search.trim().toLowerCase();
     let out = items;
-    if (predicate) out = out.filter(predicate);
+    if (predicate) out = out.filter((it) => predicate(it, filters));
     if (q && searchText) out = out.filter((it) => searchText(it).toLowerCase().includes(q));
     if (sort && sortAccessors?.[sort.key]) {
       const acc = sortAccessors[sort.key];
@@ -538,17 +841,24 @@ export function useListController<T>(
     return out;
     // predicate/searchText are inline closures (recomputed each render) — fine for
     // the small lists this powers, and keeps filter state always fresh.
-  }, [items, search, predicate, searchText, sort, sortAccessors]);
+  }, [items, search, filters, predicate, searchText, sort, sortAccessors]);
 
   const total = items?.length ?? 0;
   const shown = view?.length ?? 0;
+  const isFiltered =
+    search.trim() !== "" ||
+    Object.keys(defaults).some((name) => filters[name] !== defaults[name]);
 
   return {
     search,
     setSearch,
+    filters,
+    setFilter,
     sort,
     setSort,
     toggleSort,
+    isFiltered,
+    clearFilters,
     /** Filtered + sorted rows (null while the source is still loading). */
     view,
     total,

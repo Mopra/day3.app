@@ -2,6 +2,7 @@ import { desc, eq, inArray, or, sql } from "drizzle-orm";
 import { route, json } from "@/api/http";
 import { requireAdmin } from "@/api/context";
 import { accounts, campaigns } from "@/db/schema";
+import { safeParseTheme } from "@/lib/theme";
 
 // Campaigns needing attention: blocked / pending_review, or any with medium+ risk.
 export const GET = route(async () => {
@@ -29,5 +30,11 @@ export const GET = route(async () => {
     )
     .orderBy(desc(campaigns.updatedAt))
     .limit(100);
-  return json({ reviews: rows });
+  // The preview renders through wrapEmailDocument, which wants the parsed theme
+  // rather than the raw JSON column — same shape GET /api/campaigns/[id] returns.
+  const reviews = rows.map((r) => ({
+    ...r,
+    campaign: { ...r.campaign, theme: safeParseTheme(r.campaign.themeJson) },
+  }));
+  return json({ reviews });
 });

@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  ListClear,
   ListCount,
   ListEmpty,
   ListFilter,
@@ -15,19 +16,18 @@ import {
   ListSearch,
   ListSkeleton,
   ListToolbar,
+  buildFilterOptions,
   useListController,
 } from "@/components/ui/data-list";
+import { EmailPreview } from "@/components/email-preview";
 import { useApi } from "@/lib/api";
 import { statusLabel, statusVariant } from "@/lib/format";
 import type { AdminReviewRow } from "@/lib/types";
-
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export default function AdminReviewsPage() {
   const api = useApi();
   const [reviews, setReviews] = useState<AdminReviewRow[] | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [risk, setRisk] = useState("all");
 
   const load = useCallback(() => {
     api
@@ -39,20 +39,25 @@ export default function AdminReviewsPage() {
 
   useEffect(load, [load]);
 
-  const riskOptions = useMemo(() => {
-    const present = Array.from(
-      new Set((reviews ?? []).map((r) => r.campaign.riskLevel ?? "unscored")),
-    );
-    return [{ value: "all", label: "All risk levels" }, ...present.map((s) => ({ value: s, label: cap(s) }))];
-  }, [reviews]);
-
   // Highest-risk campaigns surface first — that's what a reviewer wants to see.
   const list = useListController(reviews, {
     searchText: (r) => `${r.campaign.name} ${r.accountName} ${r.campaign.subject}`,
-    predicate: (r) => risk === "all" || (r.campaign.riskLevel ?? "unscored") === risk,
+    filters: { risk: "all" },
+    predicate: (r, f) => f.risk === "all" || (r.campaign.riskLevel ?? "unscored") === f.risk,
     sortAccessors: { risk: (r) => r.campaign.riskScore ?? -1 },
     initialSort: { key: "risk", dir: "desc" },
+    persist: { key: "admin.reviews" },
   });
+
+  const riskOptions = useMemo(
+    () =>
+      buildFilterOptions({
+        all: "All risk levels",
+        values: (reviews ?? []).map((r) => r.campaign.riskLevel ?? "unscored"),
+        active: list.filters.risk,
+      }),
+    [reviews, list.filters.risk],
+  );
 
   async function act(campaignId: string, action: "approve" | "block", body?: unknown) {
     setBusyId(campaignId);
@@ -79,11 +84,12 @@ export default function AdminReviewsPage() {
             placeholder="Search campaign or account…"
           />
           <ListFilter
-            value={risk}
-            onChange={setRisk}
+            value={list.filters.risk}
+            onChange={(v) => list.setFilter("risk", v)}
             options={riskOptions}
             ariaLabel="Filter by risk level"
           />
+          <ListClear show={list.isFiltered} onClear={list.clearFilters} />
           <ListCount shown={list.shown} total={list.total} noun="review" className="ml-auto" />
         </ListToolbar>
       )}
@@ -103,7 +109,7 @@ export default function AdminReviewsPage() {
       ) : list.isFilteredEmpty ? (
         <Card>
           <CardContent>
-            <ListNoResults onClear={() => { list.setSearch(""); setRisk("all"); }} />
+            <ListNoResults onClear={list.clearFilters} />
           </CardContent>
         </Card>
       ) : (
@@ -141,14 +147,12 @@ export default function AdminReviewsPage() {
                 {campaign.riskSummary && <span>Risk: {campaign.riskSummary}</span>}
                 {campaign.pausedReason && <span>Reason: {campaign.pausedReason}</span>}
               </div>
-              <div className="max-h-64 overflow-auto rounded-lg border border-border bg-white p-3">
-                <iframe
-                  title={`Preview ${campaign.id}`}
-                  sandbox=""
-                  srcDoc={campaign.htmlBody}
-                  className="h-56 w-full border-0"
-                />
-              </div>
+              <EmailPreview
+                htmlBody={campaign.htmlBody}
+                theme={campaign.theme}
+                className="max-h-64"
+                frameClassName="h-56"
+              />
               <div className="flex gap-2">
                 <Button
                   size="sm"

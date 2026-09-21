@@ -17,6 +17,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  ListClear,
   ListCount,
   ListEmpty,
   ListFilter,
@@ -26,6 +27,7 @@ import {
   ListToolbar,
   RowOpen,
   SortableHead,
+  buildFilterOptions,
   rowLinkProps,
   useListController,
 } from "@/components/ui/data-list";
@@ -34,8 +36,6 @@ import { formatDateTime, statusLabel, statusVariant } from "@/lib/format";
 import { planLabel } from "@/lib/plans-catalog";
 import type { Account } from "@/lib/types";
 import { SesAccountCard } from "./ses-card";
-
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 type FailedJob = {
   id: string;
@@ -59,8 +59,6 @@ export default function AdminOverviewPage() {
   const router = useRouter();
   const [overview, setOverview] = useState<Overview | null>(null);
   const [accounts, setAccounts] = useState<Account[] | null>(null);
-  const [risk, setRisk] = useState("all");
-  const [jobStatus, setJobStatus] = useState("all");
 
   useEffect(() => {
     api
@@ -74,17 +72,10 @@ export default function AdminOverviewPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const riskOptions = useMemo(() => {
-    const present = Array.from(new Set((accounts ?? []).map((a) => a.riskStatus)));
-    return [
-      { value: "all", label: "All accounts" },
-      ...present.map((s) => ({ value: s, label: cap(s) })),
-    ];
-  }, [accounts]);
-
   const accountList = useListController(accounts, {
     searchText: (a) => a.name,
-    predicate: (a) => risk === "all" || a.riskStatus === risk,
+    filters: { risk: "all" },
+    predicate: (a, f) => f.risk === "all" || a.riskStatus === f.risk,
     sortAccessors: {
       name: (a) => a.name,
       plan: (a) => a.plan,
@@ -94,26 +85,43 @@ export default function AdminOverviewPage() {
       used: (a) => a.monthlyEmailSentCount,
     },
     initialSort: { key: "name", dir: "asc" },
+    persist: { key: "admin.accounts" },
   });
-
-  const jobStatusOptions = useMemo(() => {
-    const present = Array.from(new Set((overview?.failedJobs ?? []).map((j) => j.status)));
-    return [
-      { value: "all", label: "All states" },
-      ...present.map((s) => ({ value: s, label: cap(statusLabel(s)) })),
-    ];
-  }, [overview]);
 
   const jobList = useListController(overview?.failedJobs ?? null, {
     searchText: (j) => `${j.jobType} ${j.entityType ?? ""} ${j.entityId ?? ""} ${j.error ?? ""}`,
-    predicate: (j) => jobStatus === "all" || j.status === jobStatus,
+    filters: { status: "all" },
+    predicate: (j, f) => f.status === "all" || j.status === f.status,
     sortAccessors: {
       job: (j) => j.jobType,
       status: (j) => j.status,
       createdAt: (j) => j.createdAt,
     },
     initialSort: { key: "createdAt", dir: "desc" },
+    // Two lists on one page, so this one's params carry a prefix.
+    persist: { key: "admin.failed-jobs", param: "jobs" },
   });
+
+  const riskOptions = useMemo(
+    () =>
+      buildFilterOptions({
+        all: "All accounts",
+        values: (accounts ?? []).map((a) => a.riskStatus),
+        active: accountList.filters.risk,
+      }),
+    [accounts, accountList.filters.risk],
+  );
+
+  const jobStatusOptions = useMemo(
+    () =>
+      buildFilterOptions({
+        all: "All states",
+        values: (overview?.failedJobs ?? []).map((j) => j.status),
+        active: jobList.filters.status,
+        label: (s) => statusLabel(s),
+      }),
+    [overview, jobList.filters.status],
+  );
 
   return (
     <div className="space-y-6">
@@ -182,11 +190,12 @@ export default function AdminOverviewPage() {
                 placeholder="Search accounts…"
               />
               <ListFilter
-                value={risk}
-                onChange={setRisk}
+                value={accountList.filters.risk}
+                onChange={(v) => accountList.setFilter("risk", v)}
                 options={riskOptions}
                 ariaLabel="Filter by risk"
               />
+              <ListClear show={accountList.isFiltered} onClear={accountList.clearFilters} />
               <ListCount
                 shown={accountList.shown}
                 total={accountList.total}
@@ -200,7 +209,7 @@ export default function AdminOverviewPage() {
           ) : accountList.isEmpty ? (
             <ListEmpty icon={Users} title="No accounts yet" />
           ) : accountList.isFilteredEmpty ? (
-            <ListNoResults onClear={() => { accountList.setSearch(""); setRisk("all"); }} />
+            <ListNoResults onClear={accountList.clearFilters} />
           ) : (
             <Table>
               <TableHeader>
@@ -278,11 +287,12 @@ export default function AdminOverviewPage() {
                   placeholder="Search jobs…"
                 />
                 <ListFilter
-                  value={jobStatus}
-                  onChange={setJobStatus}
+                  value={jobList.filters.status}
+                  onChange={(v) => jobList.setFilter("status", v)}
                   options={jobStatusOptions}
                   ariaLabel="Filter by state"
                 />
+                <ListClear show={jobList.isFiltered} onClear={jobList.clearFilters} />
                 <ListCount
                   shown={jobList.shown}
                   total={jobList.total}
@@ -291,7 +301,7 @@ export default function AdminOverviewPage() {
                 />
               </ListToolbar>
               {jobList.isFilteredEmpty ? (
-                <ListNoResults onClear={() => { jobList.setSearch(""); setJobStatus("all"); }} />
+                <ListNoResults onClear={jobList.clearFilters} />
               ) : (
                 <Table>
                   <TableHeader>
