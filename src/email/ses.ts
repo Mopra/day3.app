@@ -4,7 +4,12 @@ import {
   DeleteEmailIdentityCommand,
   GetAccountCommand,
 } from "@aws-sdk/client-sesv2";
-import type { EmailProvider, SendEmailInput, SendEmailResult } from "./provider";
+import type {
+  EmailProvider,
+  ProviderSendQuota,
+  SendEmailInput,
+  SendEmailResult,
+} from "./provider";
 
 export type SesConfig = {
   region: string;
@@ -75,9 +80,26 @@ export class SesEmailProvider implements EmailProvider {
   // one; errors propagate so the caller can distinguish "no ceiling reported"
   // from "we could not ask" and fall back conservatively.
   async maxSendRate(): Promise<number | null> {
+    return (await this.sendQuota())?.maxSendRate ?? null;
+  }
+
+  // The 24-hour ceiling and what SES has already counted against it, which the
+  // daily send budget (src/email/send-budget.ts) meters bulk mail against. One
+  // GetAccount answers both this and maxSendRate, so the two callers cost one
+  // API call between them. `sent24h` is SES own rolling count, which includes
+  // mail the worker never saw (web-tier transactional sends), so it is the
+  // authority on the level while our Redis ledger supplies the shape.
+  async sendQuota(): Promise<ProviderSendQuota | null> {
     const res = await this.client.send(new GetAccountCommand({}));
-    const rate = res.SendQuota?.MaxSendRate;
-    return typeof rate === "number" && Number.isFinite(rate) && rate > 0 ? rate : null;
+    const quota = res.SendQuota;
+    const max24h = quota?.Max24HourSend;
+    if (typeof max24h !== "number" || !Number.isFinite(max24h) || max24h <= 0) return null;
+    const rate = quota?.MaxSendRate;
+    return {
+      max24h,
+      sent24h: typeof quota?.SentLast24Hours === "number" ? quota.SentLast24Hours : 0,
+      maxSendRate: typeof rate === "number" && Number.isFinite(rate) && rate > 0 ? rate : null,
+    };
   }
 
   // Deletes a verified domain identity on account purge. Idempotent: SES raises

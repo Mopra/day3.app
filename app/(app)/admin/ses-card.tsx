@@ -13,6 +13,24 @@ const n = (v: number): string => v.toLocaleString();
 // Rate tone against Amazon's own bars: review opens at the first, sending is
 // paused at the second. No count floor here, unlike the per-tenant card: AWS
 // applies its thresholds to the whole account and this is the whole account.
+// The levels that page (ALERT_LEVELS in src/email/send-budget.ts) and the slice
+// of the ceiling that module holds back for transactional mail. Restated rather
+// than imported: that module reaches AWS, and this is a client component. Move
+// them together.
+const QUOTA_WARN = 0.7;
+const QUOTA_CRITICAL = 0.9;
+const QUOTA_RESERVE = 0.02;
+
+function quotaUsed(quota: { max24Hour: number; sentLast24Hours: number }): number {
+  return quota.max24Hour > 0 ? quota.sentLast24Hours / quota.max24Hour : 0;
+}
+
+function quotaTone(used: number): Tone {
+  if (used >= QUOTA_CRITICAL) return "bad";
+  if (used >= QUOTA_WARN) return "warn";
+  return "neutral";
+}
+
 function rateTone(rate: number, sent: number, review: number, pause: number): Tone {
   if (sent === 0) return "neutral";
   if (rate >= pause) return "bad";
@@ -125,14 +143,18 @@ export function SesAccountCard() {
                     </span>
                   </>
                 }
-                width={
-                  health.quota.max24Hour > 0
-                    ? health.quota.sentLast24Hours / health.quota.max24Hour
-                    : 0
-                }
-                tone="neutral"
+                width={quotaUsed(health.quota)}
+                tone={quotaTone(quotaUsed(health.quota))}
                 right={`${n(health.quota.sentLast24Hours)} of ${n(health.quota.max24Hour)}`}
               />
+            ) : null}
+            {health?.quota && quotaUsed(health.quota) >= QUOTA_WARN ? (
+              <p className="text-xs text-muted-foreground">
+                {pct(quotaUsed(health.quota), 0)} of the daily ceiling is spent. Campaign and
+                automation mail is held back before the last {pct(QUOTA_RESERVE, 0)}, so signup
+                confirmations keep going out; held campaigns resume on their own as the window
+                frees up. Raising the quota with AWS takes about a day, so start now.
+              </p>
             ) : null}
             {m && health?.metricsError ? (
               <p className="text-xs text-muted-foreground">{health.metricsError}</p>

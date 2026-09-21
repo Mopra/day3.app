@@ -348,6 +348,10 @@ export async function sendAutomationNode(
   const result = await deps.emailProvider.send({
     accountId: enrollment.accountId,
     recipientId: ledger.id,
+    // Automation mail is bulk (src/email/send-budget.ts): it yields to
+    // transactional mail when the provider's daily ceiling runs short, and the
+    // refusal arrives as the provider_daily_limit hold below.
+    kind: "bulk",
     fromEmail: automation.fromEmail!,
     fromName,
     replyTo: automation.replyTo ?? undefined,
@@ -727,7 +731,9 @@ async function holdOrSkip(
 // the account's daily SES quota, a platform suspension, a misconfiguration.
 // Returned as the hold reason; null means "an ordinary throttle, just retry".
 function providerHoldReason(error: string): string | null {
-  if (error === E_DAILY_LIMIT_EXCEEDED) return "provider_daily_limit";
+  // startsWith, not equality: the daily send budget refuses with the same code
+  // plus an estimated retry time (src/email/send-budget.ts).
+  if (error.startsWith(E_DAILY_LIMIT_EXCEEDED)) return "provider_daily_limit";
   if (error.startsWith(E_ACCOUNT_SUSPENDED)) return "provider_suspended";
   if (error.startsWith(E_SENDING_MISCONFIGURED)) return "provider_misconfigured";
   return null;

@@ -170,6 +170,28 @@ page share a single account lookup instead of one per caller.
   overrides. It fails open (unpaced, logged once) rather than blocking mail, and
   absorbs a stray throttle with a braked retry — but only a *plain* throttle.
   Daily-quota/suspension/misconfig still reach the handler and pause the campaign.
+- **The daily ceiling is metered, and bulk yields to transactional at it.** SES
+  caps the AWS account per rolling 24 hours as well as per second, and that cliff
+  stops every tenant at once, so `src/email/send-budget.ts` wraps the provider
+  *outside* the pacer: an hourly Redis ledger (one Lua round trip per send, so
+  every lane and replica draws down one number) plus SES's own `SentLast24Hours`
+  as the authority on the level. Campaign and automation sends pass
+  `kind: "bulk"` and are refused once they would eat the reserve held back for
+  transactional mail; transactional is never refused here, because a signup
+  confirmation nobody receives breaks the product for someone standing there
+  waiting. A refusal is deliberately the same `rate_limited` +
+  `E_DAILY_LIMIT_EXCEEDED` contract SES itself returns, so the handlers already
+  do the right thing (batch back to `pending`, campaign paused `daily_limit`,
+  automation held `provider_daily_limit`) and only the wording and the resume
+  timing are new: the sweep resumes on real headroom instead of a blind 2h timer.
+  Match on that code with `startsWith`, never `===`, because the budget appends
+  its retry estimate. Everything fails OPEN (unknown ceiling, dead Redis, failed
+  `GetAccount` all mean "send it"): this exists to stop mail being lost, and a
+  budget that stops mail on its own would be worse than the problem. Crossing
+  70 / 90 / 98% pages via `logger.reportError`, deduped in Redis so replicas
+  raise one page; the admin SES card mirrors those thresholds and restates them
+  locally (it is a client component and this module reaches AWS), so move them
+  together.
 - The SES client deliberately runs with `maxAttempts: 1` — SDK-internal retries
   can silently double-send when a response is lost after SES accepted the
   message. Retry policy lives in the send-batch handler, where

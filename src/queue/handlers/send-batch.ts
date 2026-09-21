@@ -16,6 +16,7 @@ import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
 import { logger } from "../../lib/logger";
 import type { EmailProvider } from "../../email/provider";
+import { dailyLimitPauseReason, parseRetryAt } from "../../email/send-budget";
 import {
   E_ACCOUNT_SUSPENDED,
   E_DAILY_LIMIT_EXCEEDED,
@@ -609,6 +610,10 @@ async function sendToClaimed(
         accountId: account.id,
         campaignId: campaign.id,
         recipientId: recipient.id,
+        // Campaign mail is bulk: when the provider's 24-hour ceiling runs short
+        // this yields so signup confirmations keep flowing, and comes back as a
+        // daily_limit pause the sweep resumes (src/email/send-budget.ts).
+        kind: "bulk",
         fromEmail: campaign.fromEmail,
         fromName: campaign.fromName,
         replyTo: campaign.replyTo ?? undefined,
@@ -677,10 +682,12 @@ async function sendToClaimed(
         const err = result.error ?? "";
         let code: PausedCode = "rate_limit";
         let reason = "Provider rate limit hit. Sending resumes automatically within minutes.";
-        if (err === E_DAILY_LIMIT_EXCEEDED) {
+        if (err.startsWith(E_DAILY_LIMIT_EXCEEDED)) {
+          // Either SES refused us, or the daily budget held this back before it
+          // had to. Same outcome for the campaign, and when the budget refused
+          // it the error carries an estimate of when capacity returns.
           code = "daily_limit";
-          reason =
-            "Provider daily sending limit reached. Sending resumes automatically once the daily window resets.";
+          reason = dailyLimitPauseReason(parseRetryAt(err));
         } else if (err.startsWith(E_ACCOUNT_SUSPENDED)) {
           code = "suspended";
           reason = "The email provider has suspended sending. Our team has been alerted.";

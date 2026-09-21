@@ -22,6 +22,7 @@ import { releaseReservation } from "../services/quota";
 import { getDomainIdentity, type DomainIdentityState } from "../services/ses-identity";
 import { TRANSACTIONAL_BODY_RETENTION_DAYS } from "../services/transactional";
 import { WEBHOOK_STUCK_LOCK_MS } from "../services/webhooks";
+import type { SendBudget } from "../email/send-budget";
 import { laneCountFor, SEND_BATCH_SIZE, type JobQueue } from "./messages";
 
 const STUCK_LOCK_MINUTES = 15;
@@ -517,10 +518,16 @@ async function reconcileSendingCampaigns(db: Db, jobsQueue: JobQueue): Promise<v
 // restores full lane width.
 const RESUME_RATE_LIMIT_MS = 10 * 60 * 1000; // throttle: back off one sweep
 const RESUME_DAILY_LIMIT_MS = 2 * 60 * 60 * 1000; // daily quota: try every ~2h until the window rolls
+// Headroom a daily-limit pause must see before it is worth resuming. Resuming
+// into a handful of free slots would send a few emails, hit the ceiling again,
+// and re-notify the account. One batch's worth is the smallest resume that
+// does real work.
+const RESUME_MIN_BULK_HEADROOM = SEND_BATCH_SIZE;
 export async function resumePausedCampaigns(
   db: Db,
   jobsQueue: JobQueue,
   now: Date,
+  sendBudget?: SendBudget,
 ): Promise<number> {
   const candidates = await db
     .select()
@@ -536,12 +543,27 @@ export async function resumePausedCampaigns(
     .orderBy(asc(campaigns.updatedAt))
     .limit(SWEEP_PAGE);
 
+  // Read once for the whole pass: the daily ceiling moves on the scale of hours,
+  // and every candidate is asking the same question of the same shared budget.
+  const budget = candidates.some((c) => c.pausedCode === "daily_limit")
+    ? await sendBudget?.status()
+    : undefined;
+
   let resumed = 0;
   for (const campaign of candidates) {
     try {
       const pausedAgoMs = now.getTime() - Date.parse(campaign.updatedAt);
       if (campaign.pausedCode === "rate_limit" && pausedAgoMs < RESUME_RATE_LIMIT_MS) continue;
-      if (campaign.pausedCode === "daily_limit" && pausedAgoMs < RESUME_DAILY_LIMIT_MS) continue;
+      if (campaign.pausedCode === "daily_limit") {
+        // When the budget can see the provider's ceiling it IS the resume
+        // condition: capacity comes back gradually as old sends age out of the
+        // rolling 24h window, so waiting a fixed two hours either strands the
+        // campaign long after there was room or wakes it into a wall. Without a
+        // budget (mock provider, unreadable quota) the blind cool-down stands.
+        if (budget?.known) {
+          if (budget.bulkHeadroom < RESUME_MIN_BULK_HEADROOM) continue;
+        } else if (pausedAgoMs < RESUME_DAILY_LIMIT_MS) continue;
+      }
 
       const account = await db.query.accounts.findFirst({
         where: eq(accounts.id, campaign.accountId),
@@ -1071,7 +1093,10 @@ export async function resetMonthlyUsage(db: Db, now: Date = new Date()): Promise
   return reset.length;
 }
 
-export type CronDeps = { db: Db; queue: JobQueue };
+// `sendBudget` is optional because only the worker has one (it owns the Redis
+// connection and the provider): without it the sweep keeps its old time-based
+// behaviour rather than losing a stage.
+export type CronDeps = { db: Db; queue: JobQueue; sendBudget?: SendBudget };
 
 // The 15-minute sweep, formerly the Worker `scheduled` handler. Driven by a
 // BullMQ repeatable job (worker/index.ts); `now` is injected so the time-based
@@ -1106,7 +1131,8 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
   // campaigns in the same run.
   const usageReset = (await stage("usage_reset", () => resetMonthlyUsage(db, now))) ?? 0;
   const released = (await stage("release_due", () => releaseDueCampaigns(db, queue, now))) ?? 0;
-  const resumed = (await stage("resume_paused", () => resumePausedCampaigns(db, queue, now))) ?? 0;
+  const resumed =
+    (await stage("resume_paused", () => resumePausedCampaigns(db, queue, now, deps.sendBudget))) ?? 0;
   await stage("reconcile", () => reconcileSendingCampaigns(db, queue));
   const rescued = (await stage("rescue_pipeline", () => rescueStuckPipelineCampaigns(db, queue, now))) ?? 0;
   const webhooks = (await stage("webhook_deliveries", () => sweepWebhookDeliveries(db, queue, now))) ?? 0;

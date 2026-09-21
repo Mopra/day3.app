@@ -208,7 +208,9 @@ describe("end-to-end failure paths", () => {
 
     let fresh = await db.query.campaigns.findFirst({ where: eq(campaigns.id, campaign.id) });
     expect(fresh?.status).toBe("paused");
-    expect(fresh?.pausedReason).toMatch(/daily sending limit/i);
+    expect(fresh?.pausedReason).toMatch(/daily sending ceiling/i);
+    // The hold has to read as recoverable, not as the user's own limit.
+    expect(fresh?.pausedReason).toMatch(/nothing is lost/i);
     // 2 accepted before the limit; the remaining 3 are back to pending (not
     // stuck in "sending"). The usage counter reflects only the 2 that sent.
     const afterPause = await db

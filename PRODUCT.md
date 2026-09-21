@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-09-19**.
+> Last verified against the codebase: **2026-09-21**.
 
 ---
 
@@ -1493,6 +1493,22 @@ password reset from waiting behind a campaign drain). The same SNS webhook
 updates transactional emails' delivery status, and the same cron sweep recovers
 their crashed/lost sends.
 
+**The daily ceiling, and what happens at it.** SES caps the whole Day3 AWS
+account at a number of emails per rolling 24 hours, separately from the
+per-second rate. That ceiling is shared by every tenant, so the send path meters
+it (`src/email/send-budget.ts`): an hourly Redis ledger plus SES's own
+`SentLast24Hours` says how much is left and, from the shape of the window, when
+more comes back. Two consequences. Campaign and automation mail is held back
+before the last ~2% of the ceiling, so signup confirmations, notifications and
+API sends keep going out after bulk has stopped. And a held campaign is paused,
+never dropped: its remaining recipients stay `pending`, the account is told what
+happened and roughly how long it will take, and the cron sweep resumes it as
+soon as there is real headroom rather than on a blind timer. Nobody's plan is
+capped by this: a customer who buys 100k emails may still spend all 100k in one
+day. Staff see the level on the admin SES card, and usage crossing 70 / 90 / 98%
+of the ceiling pages the team, because raising the quota with AWS takes about a
+day.
+
 **The automation path** (§6.19) adds a scheduler beside the pipeline, not a
 second pipeline. An enrollment's whole schedule is one indexed column,
 `automation_enrollments.next_run_at`, held in Postgres (never a delayed queue
@@ -1520,6 +1536,9 @@ send through the same ledger lookup as a campaign send.
 - **Stuck `sending` recipients are swept to `failed`, never back to `pending`** (resending
   could duplicate).
 - **All email goes through the `EmailProvider` interface** — `mock` logs, `ses` sends.
+- **Running out of provider capacity holds mail, it never loses it.** Bulk sending
+  yields to transactional sending at the shared daily ceiling, held work resumes
+  automatically when capacity returns, and the account is notified while it waits.
 
 ---
 

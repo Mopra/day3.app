@@ -13,7 +13,19 @@ export type SendEmailInput = {
   html?: string;
   text?: string;
   headers?: Record<string, string>;
+  // Which class of mail this is, for the account-wide daily budget
+  // (src/email/send-budget.ts). Bulk mail yields to transactional mail when the
+  // provider's 24-hour ceiling runs short; the default is "transactional"
+  // because that class is never held back, so a send path that forgets to
+  // classify itself keeps working exactly as before.
+  kind?: SendKind;
 };
+
+// "bulk" is campaign and automation mail: a large, schedulable fan-out where a
+// few hours' delay is recoverable. "transactional" is everything a person is
+// waiting for right now (signup confirmations, account notifications, test
+// sends, API messages), which is never deferred on our side.
+export type SendKind = "bulk" | "transactional";
 
 // Status semantics (the send-batch handler branches on these — see the
 // duplicate-safety notes in mapSesError before changing them):
@@ -34,6 +46,16 @@ export type SendEmailResult = {
   error?: string;
 };
 
+/** What a provider can report about its own rolling 24-hour ceiling. */
+export type ProviderSendQuota = {
+  /** Emails the provider will accept per rolling 24 hours. */
+  max24h: number;
+  /** What the provider says it has accepted in the trailing 24 hours. */
+  sent24h: number;
+  /** The per-second ceiling, when the same call reports it. */
+  maxSendRate: number | null;
+};
+
 export interface EmailProvider {
   send(input: SendEmailInput): Promise<SendEmailResult>;
   // Releases a verified sending identity (a domain) when its owning account is
@@ -48,4 +70,9 @@ export interface EmailProvider {
   // throttles: its absence is what tells the pacer to stay out of the way
   // (the mock has no ceiling worth pacing against).
   maxSendRate?(): Promise<number | null>;
+  // The provider's rolling 24-hour ceiling and its own count against it, used by
+  // the daily send budget (src/email/send-budget.ts). Implement it ONLY on a
+  // provider that actually enforces a daily cap: its absence is what tells the
+  // budget to stay out of the way and meter nothing.
+  sendQuota?(): Promise<ProviderSendQuota | null>;
 }

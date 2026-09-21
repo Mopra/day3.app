@@ -35,6 +35,7 @@ import { logger } from "../src/lib/logger";
 import { getDb } from "../src/db/client";
 import { emailProviderFromEnv } from "../src/email/factory";
 import { createSendPacer, withSendPacing } from "../src/email/send-rate";
+import { createSendBudget, withSendBudget } from "../src/email/send-budget";
 import { createSupabaseObjectStore } from "../src/lib/supabase-storage";
 import { requireAppUrl, requireUnsubscribeSecret, validateEnv } from "../src/lib/env";
 import { writeHeartbeat, HEARTBEAT_INTERVAL_MS } from "../src/lib/heartbeat";
@@ -154,10 +155,22 @@ const sendPacer = createSendPacer({
     : undefined,
 });
 
+// The pacer's sibling: the per-second ceiling is a queueing problem, the
+// 24-hour one is a cliff that stops every tenant at once. The budget meters
+// every send against the provider's daily quota, holds campaign and automation
+// mail back before SES has to reject it (so signup confirmations still get
+// through), pages when usage crosses 70/90/98%, and tells the sweep when there
+// is room to resume. Wrapped OUTSIDE the pacer so a send that will be held does
+// not first wait for, or consume, a rate slot.
+const sendBudget = createSendBudget({
+  store: queueConnection,
+  quota: baseEmailProvider.sendQuota ? () => baseEmailProvider.sendQuota!() : undefined,
+});
+
 const deps: QueueDeps = {
   db: getDb(),
   queue: jobQueue,
-  emailProvider: withSendPacing(baseEmailProvider, sendPacer),
+  emailProvider: withSendBudget(withSendPacing(baseEmailProvider, sendPacer), sendBudget),
   store: createSupabaseObjectStore(),
   appUrl: requireAppUrl(),
   unsubscribeSecret: requireUnsubscribeSecret(),
@@ -169,13 +182,17 @@ const deps: QueueDeps = {
 // and the effective rate is in the startup logs. Best-effort by construction:
 // warmUp falls back to the conservative default rather than throwing.
 await sendPacer.warmUp();
+// Same reasoning for the budget: resolve the daily ceiling before consuming, so
+// the first campaign of a boot is metered and the headroom is in the startup
+// logs. Best-effort by construction, an unreadable quota means unmetered.
+await sendBudget.warmUp();
 
 const workerConnection = makeConnection();
 const worker = new Worker(
   QUEUE_NAME,
   async (job) => {
     if (job.name === SWEEP_JOB) {
-      await runScheduledSweeps({ db: deps.db, queue: deps.queue });
+      await runScheduledSweeps({ db: deps.db, queue: deps.queue, sendBudget });
       return;
     }
     // A thrown error fails the job; BullMQ retries per DEFAULT_JOB_OPTIONS. The
