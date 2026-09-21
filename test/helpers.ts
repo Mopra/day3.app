@@ -109,6 +109,11 @@ export async function seedAccount(db: Db, overrides: Partial<Account> = {}): Pro
     monthlyEmailSentCount: 0,
     sendingEnabled: true,
     riskStatus: "normal",
+    // Seeded accounts are ESTABLISHED by default: `createdAt` is now, which
+    // would otherwise put every test account in the new-account ramp's first
+    // tier (services/send-ramp.ts) and cap it at 500 emails a day. Tests about
+    // the ramp itself pass `rampLiftedAt: null` to opt back in.
+    rampLiftedAt: now,
     createdAt: now,
     updatedAt: now,
     ...overrides,

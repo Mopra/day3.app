@@ -3,7 +3,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type { Db } from "../src/db/client";
-import { accounts, campaigns, jobLogs, sendingDomains, suppressionEntries } from "../src/db/schema";
+import {
+  accounts,
+  apiKeys,
+  campaigns,
+  jobLogs,
+  sendingDomains,
+  suppressionEntries,
+} from "../src/db/schema";
+import { newId, nowIso } from "../src/lib/ids";
 import {
   seedAccount,
   seedAudience,
@@ -78,10 +86,23 @@ async function seedFixtures(db: Db) {
     sendingDomainId: domain.id,
     status: "pending_review",
   });
+  // An API key, so the admin revoke route has a real target to act on.
+  const apiKeyId = newId("key");
+  await db.insert(apiKeys).values({
+    id: apiKeyId,
+    accountId: account.id,
+    name: "test",
+    keyHash: `hash_${apiKeyId}`,
+    keyPrefix: "day3_live_test",
+    createdBy: "user_seed",
+    createdAt: nowIso(),
+    updatedAt: nowIso(),
+  });
   return {
     accountId: account.id,
     domainId: domain.id,
     campaignId: campaign.id,
+    apiKeyId,
     email: subs[0].email,
   };
 }
@@ -190,6 +211,25 @@ function adminRoutes(): AdminRoute[] {
       }),
     },
     {
+      path: "accounts/[id]/ramp",
+      importPath: "../app/api/admin/accounts/[id]/ramp/route",
+      method: "POST",
+      build: async () => ({
+        url: `http://localhost/api/admin/accounts/${seeded.accountId}/ramp`,
+        params: { id: seeded.accountId },
+        body: { lifted: true },
+      }),
+    },
+    {
+      path: "accounts/[id]/api-keys/[keyId]",
+      importPath: "../app/api/admin/accounts/[id]/api-keys/[keyId]/route",
+      method: "DELETE",
+      build: async () => ({
+        url: `http://localhost/api/admin/accounts/${seeded.accountId}/api-keys/${seeded.apiKeyId}`,
+        params: { id: seeded.accountId, keyId: seeded.apiKeyId },
+      }),
+    },
+    {
       path: "suppress",
       importPath: "../app/api/admin/suppress/route",
       method: "POST",
@@ -266,6 +306,58 @@ describe("admin route hardening", () => {
     const overview = ROUTES.find((r) => r.path === "overview")!;
     const res = await callRoute(overview);
     expect(res.status).toBe(200);
+  });
+
+  // The admin previews render through wrapEmailDocument, which takes the parsed
+  // theme. Handing the client the raw theme_json column instead renders every
+  // campaign with the default theme — a preview that quietly misrepresents the
+  // email an operator is deciding about.
+  describe("campaign content reaches the admin previews", () => {
+    beforeEach(async () => {
+      await currentDb
+        .update(campaigns)
+        .set({ themeJson: JSON.stringify({ pageBg: "#101014" }) })
+        .where(eq(campaigns.id, seeded.campaignId));
+    });
+
+    it("account detail returns each campaign's body and parsed theme", async () => {
+      const mod = await import("../app/api/admin/accounts/[id]/route");
+      const res = await mod.GET(new Request("http://localhost/x") as Request, {
+        params: Promise.resolve({ id: seeded.accountId }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        campaigns: { id: string; htmlBody: string; theme: { pageBg?: string } | null }[];
+      };
+      const row = body.campaigns.find((c) => c.id === seeded.campaignId)!;
+      expect(row.htmlBody).toContain("new dashboard");
+      expect(row.theme).toEqual({ pageBg: "#101014" });
+    });
+
+    it("reviews returns the parsed theme too", async () => {
+      const mod = await import("../app/api/admin/reviews/route");
+      const res = await mod.GET(new Request("http://localhost/x") as Request, {});
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        reviews: { campaign: { id: string; theme: { pageBg?: string } | null } }[];
+      };
+      const row = body.reviews.find((r) => r.campaign.id === seeded.campaignId)!;
+      expect(row.campaign.theme).toEqual({ pageBg: "#101014" });
+    });
+
+    it("a hand-edited theme column falls back to the defaults rather than throwing", async () => {
+      await currentDb
+        .update(campaigns)
+        .set({ themeJson: "{not json" })
+        .where(eq(campaigns.id, seeded.campaignId));
+      const mod = await import("../app/api/admin/accounts/[id]/route");
+      const res = await mod.GET(new Request("http://localhost/x") as Request, {
+        params: Promise.resolve({ id: seeded.accountId }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { campaigns: { id: string; theme: unknown }[] };
+      expect(body.campaigns.find((c) => c.id === seeded.campaignId)!.theme).toBeNull();
+    });
   });
 
   describe("admin mutations write an audit record (who/what/when/target)", () => {

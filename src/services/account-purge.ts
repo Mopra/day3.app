@@ -13,6 +13,7 @@ import {
   imports,
   notifications,
   riskReviews,
+  contentReviews,
   segments,
   senders,
   sendingDomains,
@@ -55,6 +56,7 @@ export async function purgeAccountData(db: Db, accountId: string): Promise<void>
     await tx.delete(webhookDeliveries).where(eq(webhookDeliveries.accountId, accountId));
     await tx.delete(webhookEndpoints).where(eq(webhookEndpoints.accountId, accountId));
     await tx.delete(riskReviews).where(eq(riskReviews.accountId, accountId));
+    await tx.delete(contentReviews).where(eq(contentReviews.accountId, accountId));
     await tx.delete(notifications).where(eq(notifications.accountId, accountId));
     await tx.delete(topicSubscriptions).where(eq(topicSubscriptions.accountId, accountId));
     await tx.delete(topics).where(eq(topics.accountId, accountId));

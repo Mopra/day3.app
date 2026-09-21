@@ -31,6 +31,30 @@ export const BOUNCE_RATE_PAUSE = 0.08;
 export const COMPLAINT_RATE_WARNING = 0.001;
 export const COMPLAINT_RATE_PAUSE = 0.003;
 
+// SPAM REJECTIONS: the receiver's own verdict, which we used to throw away.
+//
+// SES reports a mailbox provider refusing a message for its CONTENT as a
+// *Transient* bounce ("ContentRejected", or a General bounce whose diagnostic
+// says spam or DMARC). Every rate above counts only Permanent/Undetermined
+// bounces, because a transient failure usually means a full mailbox or
+// greylisting and says nothing about the sender.
+//
+// A content rejection is the opposite: it is not the mailbox saying "not now",
+// it is Gmail, Outlook or Bigpond saying "we think this is spam". It is the
+// earliest and most direct evidence there is that a send is abusive, and it
+// arrives long before the complaints do — a phishing run reached 56% content
+// rejections while its hard-bounce rate sat at a blameless 1.4%, under every
+// bar on this page. So it gets a rate of its own.
+//
+// The bars are wide because an honest sender essentially never sees these in
+// volume: a healthy newsletter runs well under 1%. The absolute floors are high
+// for the same reason one bad receiver (a single corporate filter having a bad
+// day) must not be able to pause an account on its own.
+export const SPAM_REJECT_RATE_WARNING = 0.05;
+export const SPAM_REJECT_RATE_PAUSE = 0.15;
+export const MIN_SPAM_REJECTED_FOR_WARNING = 25;
+export const MIN_SPAM_REJECTED_FOR_PAUSE = 100;
+
 // Below this many attempted sends, rates are too noisy to say anything at all.
 export const MIN_ATTEMPTED_FOR_ENFORCEMENT = 50;
 
@@ -97,8 +121,14 @@ export type AccountHealth = {
   attempted: number;
   bounced: number;
   complained: number;
+  // Addresses whose mailbox provider refused the message as spam — counted
+  // account-wide off email_events, because a content rejection never flips a
+  // ledger row's status (it is a soft bounce) and reputation is account-wide
+  // regardless of which producer sent the mail.
+  spamRejected: number;
   bounceRate: number;
   complaintRate: number;
+  spamRejectRate: number;
   // Campaigns in the window that enforceCampaignHealth paused for their own
   // rate. Feeds the escalation rule; shown on the Metrics page.
   flaggedCampaigns: number;
@@ -136,6 +166,24 @@ export const TX_BAD_ADDRESS_COUNT_SQL = sql<number>`count(distinct (${emailEvent
 // appears exactly once in a bounce notification. The POSIX character class
 // avoids a backslash escape surviving the template literal.
 export const HARD_BOUNCE_ONLY_SQL = sql`(${emailEvents.eventType} <> 'bounce' OR ${emailEvents.payloadJson} ~ '"bounceType"[[:space:]]*:[[:space:]]*"(Permanent|Undetermined)"')`;
+
+// A bounce the RECEIVER attributed to the content rather than the address.
+// Matched textually for the same reason as HARD_BOUNCE_ONLY_SQL: payload_json
+// is raw SNS text and a `::jsonb` cast would throw on any unparseable row.
+//
+// Two shapes, because SES reports the same judgement two ways:
+//   - bounceSubType "ContentRejected" — the explicit one;
+//   - a General bounce whose diagnosticCode names spam or a DMARC policy
+//     failure, which is how Bigpond ("suspected spam"), Free.fr ("spam
+//     detected") and the Microsoft estate ("error evaluating DMARC policy")
+//     report it.
+// Deliberately NOT "every Transient bounce": a full mailbox or a greylist is a
+// transient failure that says nothing about the sender, and counting those
+// would put an honest list on the wrong side of the line.
+export const SPAM_REJECTED_SQL = sql`(
+  ${emailEvents.payloadJson} ~ '"bounceSubType"[[:space:]]*:[[:space:]]*"ContentRejected"'
+  OR ${emailEvents.payloadJson} ~* 'diagnosticCode[^,]{0,200}(suspected spam|spam detected|message content rejected|DMARC policy|blocked using|listed in|spamhaus)'
+)`;
 
 export const pct = (rate: number, digits = 2): string => `${(rate * 100).toFixed(digits)}%`;
 
@@ -213,6 +261,27 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
     )
     .groupBy(emailEvents.eventType);
 
+  // Spam rejections, account-wide and producer-agnostic.
+  //
+  // This reads email_events directly rather than joining a ledger, because a
+  // content rejection is a SOFT bounce: it never flips campaign_recipients.status
+  // or transactional_emails.status, so there is no ledger row to join to. The
+  // events table is already one row per (message, address, event type) — that is
+  // what its unique index guarantees — so count(*) here is a count of addresses
+  // that were refused, directly comparable to the per-address numerators above.
+  const [spamRejectedRow] = await db
+    .select({ count: sql<number>`count(*)`.as("count") })
+    .from(emailEvents)
+    .where(
+      and(
+        eq(emailEvents.accountId, accountId),
+        eq(emailEvents.eventType, "bounce"),
+        gte(emailEvents.createdAt, cutoff),
+        SPAM_REJECTED_SQL,
+      ),
+    );
+  const spamRejected = Number(spamRejectedRow?.count ?? 0);
+
   // Campaigns the campaign-level rule already paused inside the window. Soft-
   // deleted campaigns still count: deleting the campaign is not a way to
   // un-happen the send.
@@ -257,6 +326,7 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
 
   const bounceRate = attempted > 0 ? bounced / attempted : 0;
   const complaintRate = attempted > 0 ? complained / attempted : 0;
+  const spamRejectRate = attempted > 0 ? spamRejected / attempted : 0;
 
   let status: AccountHealth["status"] = "normal";
   let reason: string | undefined;
@@ -267,9 +337,19 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
     const bounceWarning = bounceRate >= BOUNCE_RATE_WARNING && bounced >= MIN_BOUNCED_FOR_WARNING;
     const complaintWarning =
       complaintRate >= COMPLAINT_RATE_WARNING && complained >= MIN_COMPLAINED_FOR_WARNING;
+    const spamRejectWarning =
+      spamRejectRate >= SPAM_REJECT_RATE_WARNING && spamRejected >= MIN_SPAM_REJECTED_FOR_WARNING;
     const days = `${HEALTH_WINDOW_DAYS} days`;
 
-    if (bounceRate >= BOUNCE_RATE_PAUSE && bounced >= MIN_BOUNCED_FOR_PAUSE) {
+    // Checked FIRST, ahead of the bounce and complaint rules. When mailbox
+    // providers are rejecting a sender's content outright, that is a stronger
+    // and much earlier statement than either of the other rates, and the reason
+    // string should say so rather than reporting whichever number happened to
+    // cross a line at the same moment.
+    if (spamRejectRate >= SPAM_REJECT_RATE_PAUSE && spamRejected >= MIN_SPAM_REJECTED_FOR_PAUSE) {
+      status = "paused";
+      reason = `Mailbox providers rejected ${pct(spamRejectRate)} of this workspace's mail as spam (${spamRejected} of ${attempted} sent in ${days})`;
+    } else if (bounceRate >= BOUNCE_RATE_PAUSE && bounced >= MIN_BOUNCED_FOR_PAUSE) {
       status = "paused";
       reason = `Bounce rate ${pct(bounceRate)} exceeded ${pct(BOUNCE_RATE_PAUSE, 0)} (${bounced} bounced of ${attempted} sent in ${days})`;
     } else if (complaintRate >= COMPLAINT_RATE_PAUSE && complained >= MIN_COMPLAINED_FOR_PAUSE) {
@@ -283,7 +363,7 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
       reason = bounceWarning
         ? `${flaggedCampaigns} campaigns were paused for bouncing in ${days} and the bounce rate is still ${pct(bounceRate)} (${bounced} bounced of ${attempted} sent)`
         : `${flaggedCampaigns} campaigns were paused for spam complaints in ${days} and the complaint rate is still ${pct(complaintRate, 3)} (${complained} complaints of ${attempted} sent)`;
-    } else if (bounceWarning || complaintWarning) {
+    } else if (bounceWarning || complaintWarning || spamRejectWarning) {
       // Warn early, pause late.
       status = "warning";
     }
@@ -293,8 +373,10 @@ export async function computeAccountHealth(db: Db, accountId: string): Promise<A
     attempted,
     bounced,
     complained,
+    spamRejected,
     bounceRate,
     complaintRate,
+    spamRejectRate,
     flaggedCampaigns,
     status,
     reason,
@@ -555,6 +637,14 @@ export function accountWarningNotification(health: AccountHealth) {
   ) {
     parts.push(
       `${health.complained} of the ${health.attempted} recipients you mailed in the last ${days} marked it as spam (${pct(health.complaintRate, 2)}).`,
+    );
+  }
+  if (
+    health.spamRejectRate >= SPAM_REJECT_RATE_WARNING &&
+    health.spamRejected >= MIN_SPAM_REJECTED_FOR_WARNING
+  ) {
+    parts.push(
+      `Mailbox providers refused ${health.spamRejected} of the ${health.attempted} emails your workspace sent in the last ${days} as spam (${pct(health.spamRejectRate)}).`,
     );
   }
   const why = `Amazon SES, which delivers Day3's mail, reviews senders above ${pct(BOUNCE_RATE_WARNING, 0)} bounces or ${pct(COMPLAINT_RATE_WARNING, 1)} complaints, so we pause a workspace that reaches ${pct(BOUNCE_RATE_PAUSE, 0)} bounces or ${pct(COMPLAINT_RATE_PAUSE, 1)} complaints.`;

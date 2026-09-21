@@ -75,7 +75,38 @@ serves the UI and the API routes; a separate long-running Node worker
    test/submit/schedule and `src/api/v1/campaigns.ts` for create/update. Add a
    gate in the service, never in a route handler — "which checks ran before this
    email went out" may not have two answers.
-6. **Sending over the API needs the `campaigns:send` scope**
+6. **Content review is not a campaign feature.** Every path that puts mail in a
+   stranger's inbox runs the same review engine (`src/services/risk.ts`). Campaigns
+   reach it through `queue/handlers/review-campaign.ts`; the transactional API
+   reaches it through `src/services/content-review.ts`. This rule exists because
+   it was once false: `POST /v1/emails` had no review at all, and in September
+   2026 a phishing run sent 16,642 messages impersonating a healthcare provider
+   through it without ever creating a campaign. **If you add a send path, it
+   reviews content — do not add a second engine, and do not add a path that
+   skips the one there is.**
+
+   The transactional side reviews per **content fingerprint**, not per request
+   (one API call per recipient makes per-request review unaffordable). Two things
+   about that fingerprint are load-bearing:
+   - It **normalises per-recipient variation away** (tokens, addresses, digits,
+     query strings) or a password-reset template would be a new shape on every
+     send and the cache would never hit.
+   - It **includes every link and image host**, because `htmlToText` strips tags:
+     without the hosts, an approved verdict would cover any email with the same
+     words, and an attacker could repoint the button at a credential harvester
+     and inherit the approval. Never widen the normaliser without asking what an
+     attacker could hide in what it erases.
+
+   In `runDeterministicRiskChecks`, **no single phishing signal blocks — it takes
+   a pair, and `brand_impersonation` must be one of them.** Each signal alone has
+   an innocent reading that real mail depends on: every signup confirmation says
+   "verify your account", every newsletter links to the companies it writes about,
+   and a customer migrating off SendGrid pastes in a template with the old pixel
+   still in it. Blocking on any one of those breaks a customer's auth flow on
+   their first day. Impersonation plus an ask has no innocent reading, which is
+   what makes it safe to block outright.
+
+7. **Sending over the API needs the `campaigns:send` scope**
    (`src/api/v1/scopes.ts`). Everything else a key can do is the base grant.
    When you add a public endpoint, ask whether it puts mail in a stranger's
    inbox: if so it is scoped, if not it isn't. Test sends deliberately are not.
@@ -239,6 +270,32 @@ page share a single account lookup instead of one per caller.
   would throw on. `scripts/review-reputation-pauses.ts` re-adjudicates existing
   pauses; it judges over the account's whole history, not the trailing window,
   because a paused account's window is empty by construction.
+- **The new-account send ramp is enforced inside `reserveQuota`, and that is
+  deliberate.** `src/services/send-ramp.ts` caps a workspace's daily sends by
+  account age (500 on day one, lifting entirely after 14 days) on top of the plan
+  limit, because the plan limit never answered "should an account created four
+  minutes ago put 100,000 emails on the shared SES identity tonight". It lives in
+  the quota statement — the one choke point every real send already passes
+  through — rather than at each send path, because a ceiling each caller has to
+  remember to apply is a ceiling the next send path forgets, and "the next send
+  path forgot" is exactly how the API came to have no content review. It only ever
+  LOWERS the ceiling, never grants above the plan: it is not a second meter. Both
+  counters move together in one statement and are released together, or abandoned
+  reservations would eat a young account's ramp for sends it never made.
+  `test/helpers.ts` seeds accounts with `rampLiftedAt` set, so tests that care
+  about the ramp must pass `rampLiftedAt: null` explicitly.
+- **`services/health.ts` counts spam rejections separately, and they are the
+  earliest signal there is.** A mailbox provider refusing a message for its
+  CONTENT ("suspected spam", a DMARC policy failure, a blocklist hit) arrives from
+  SES as a *Transient* bounce, which every hard-bounce rate deliberately ignores —
+  a transient failure usually means a full mailbox and says nothing about the
+  sender. A content rejection is the opposite: it is the receiver's verdict on the
+  send, and it moves long before the hard bounces or complaints do. The phishing
+  run that prompted this sat at 56% content rejections while its hard-bounce rate
+  was a blameless 1.4%, under every other bar on the page. `SPAM_REJECTED_SQL`
+  matches `bounceSubType: ContentRejected` plus the diagnostic texts the big
+  receivers use; do NOT widen it to all Transient bounces, which would put honest
+  ageing lists on the wrong side of the line.
 - **Automation waits live in Postgres, never as BullMQ delayed jobs.** A wait is
   `automation_enrollments.next_run_at` plus the partial index on it; Redis only
   carries ID-only "advance now" messages. A delayed job would break hard rule 2 (a

@@ -21,6 +21,10 @@ export type ApiErrorCode =
   | "sending_disabled"
   | "domain_not_verified"
   | "sandbox_recipient_not_allowed"
+  // The automated pre-send safety review refused this content
+  // (services/content-review.ts). Terminal: retrying the same body returns the
+  // same code, so a client must change the email rather than back off.
+  | "content_blocked"
   | "idempotency_conflict"
   | "immutable_field"
   | "rate_limit_exceeded"

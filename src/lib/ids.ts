@@ -20,6 +20,8 @@ export type IdPrefix =
   | "evt"
   | "sup"
   | "rsk"
+  // content_reviews — one cached pre-send verdict per (account, content fingerprint)
+  | "cvw"
   | "job"
   | "ntf"
   | "dnsint"

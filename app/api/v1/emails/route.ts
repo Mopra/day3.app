@@ -11,12 +11,21 @@ import {
   transactionalEmails,
   type TransactionalEmailStatus,
 } from "@/db/schema";
+import {
+  blockedMessage,
+  contentFingerprint,
+  countRefusal,
+  findContentReview,
+  isBlocking,
+  reviewAndStoreContent,
+  screenTransactionalContent,
+} from "@/services/content-review";
 import { canonicalizeEmail } from "@/lib/csv";
 import { newId, nowIso } from "@/lib/ids";
 import { logger } from "@/lib/logger";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { getQueue } from "@/queue/producer";
-import { releaseReservation, reserveQuota } from "@/services/quota";
+import { quotaBlockReason, releaseReservation, reserveQuota } from "@/services/quota";
 import {
   accountSandboxMode,
   orgMemberEmails,
@@ -254,6 +263,54 @@ export const POST = apiRoute(async (req, ctx) => {
     }
   }
 
+  // ---- Content safety ----
+  //
+  // The campaign front door has run an automated pre-send review since day one;
+  // this is the same review on the API front door, which did not have one. It
+  // is deliberately the FIRST thing after the identity checks and before any
+  // quota is spent, because a refused email should cost the attacker a 403 and
+  // cost us nothing.
+  //
+  // Two tiers, cheapest first:
+  //   - a cached verdict for this exact content (one indexed lookup) refuses
+  //     instantly — this is what turns "16,000 phishing sends" into "one
+  //     reviewed message and 15,999 rejections";
+  //   - otherwise the deterministic checks run inline (pure CPU, no I/O) and a
+  //     hard block is stored so the NEXT identical request takes the branch
+  //     above.
+  // Content not blocked here is accepted, and the worker runs the full review
+  // (including the AI pass) once per distinct fingerprint before it sends.
+  const reviewContent = {
+    subject: body.subject,
+    html: body.html ?? null,
+    text: body.text ?? null,
+    fromEmail: from.email,
+    fromName: from.name,
+    sendingDomain: domain.domain,
+  };
+  const fingerprint = contentFingerprint(reviewContent);
+  const cachedReview = await findContentReview(db, account.id, fingerprint);
+  if (cachedReview && isBlocking(cachedReview)) {
+    await countRefusal(db, cachedReview.id);
+    throw new ApiError(422, "content_blocked", blockedMessage(cachedReview));
+  }
+  if (!cachedReview) {
+    const screen = screenTransactionalContent(reviewContent);
+    if (screen.riskLevel === "blocked") {
+      // Persist the deterministic verdict (no AI call — `undefined` mode keeps
+      // this on the request path's zero-I/O budget) so every repeat is the
+      // cached branch above rather than a fresh screen.
+      const stored = await reviewAndStoreContent(db, account.id, reviewContent, undefined);
+      await countRefusal(db, stored.id);
+      void logger.reportError(
+        "transactional content blocked by pre-send review",
+        new Error(screen.summary),
+        { accountId: account.id, apiKeyId: apiKey.id, fingerprint, categories: screen.categories },
+      );
+      throw new ApiError(422, "content_blocked", blockedMessage(stored));
+    }
+  }
+
   // Deliverability suppressions block (hard bounce / complaint / provider
   // list); unsubscribes deliberately do NOT — this is transactional mail.
   const suppressed = await getSuppressedEmails(db, account.id, to, TRANSACTIONAL_SUPPRESSION_REASONS);
@@ -291,10 +348,16 @@ export const POST = apiRoute(async (req, ctx) => {
   );
   if (granted < to.length) {
     await releaseReservation(db, account.id, granted);
+    // A young account can be denied with plenty of plan left, so ask which
+    // ceiling actually bit before telling the caller to upgrade.
+    const { message: rampMessage } = await quotaBlockReason(db, account.id);
     throw new ApiError(
       403,
       "plan_limit_reached",
-      sandbox ? SANDBOX_EXHAUSTED_MESSAGE : "Monthly email limit reached. Upgrade your plan to send more.",
+      rampMessage ??
+        (sandbox
+          ? SANDBOX_EXHAUSTED_MESSAGE
+          : "Monthly email limit reached. Upgrade your plan to send more."),
     );
   }
 

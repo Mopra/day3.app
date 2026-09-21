@@ -709,8 +709,49 @@ other. Each domain still opens to its own detail page.
     or at the warning rate once **two campaigns** in the window have paused themselves.
     The notification explains that this is the line where SES would restrict the whole
     platform, that nothing sent is lost, and how to get re-enabled.
+  - **Spam rejections count too, and they move first.** When a mailbox provider
+    refuses a message for its *content* ("suspected spam", a DMARC policy failure, a
+    blocklist hit) SES reports it as a soft bounce, so none of the rates above ever
+    saw it. That is the receivers telling us directly what they think of a send, and
+    it shows up long before the hard bounces or the complaints do. Day3 tracks it as
+    its own rate: **warned at 5%** (at least 25 refusals), **paused at 15%** (at
+    least 100). An honest newsletter sits well under 1%. The bars are wide because
+    one corporate filter having a bad day must not be able to pause an account.
   - Deleting a campaign never resets these numbers: a campaign that reached inboxes is
     hidden, not erased (below, §6.3).
+- **Every send is content-reviewed, whichever door it came through.** The automated
+  pre-send safety review (§6.1) is not a campaign feature — it runs on transactional
+  mail sent through `POST /v1/emails` as well, using the same engine, so there is no
+  path into an inbox that skips it.
+  - Reviewed **per distinct piece of content**, not per request. A transactional API
+    sends one message per recipient, so reviewing every request would be unaffordable;
+    instead the verdict is cached against a fingerprint of what the email says and
+    where it points. Per-recipient variation (tokens, names, amounts, tracking query
+    strings) is normalised away, so a password-reset template is reviewed once and
+    then free forever — while changing the destination of a link is a *new* fingerprint
+    and earns a fresh review.
+  - The deterministic checks run inline on the request (a refused email costs the
+    caller a `422 content_blocked` and costs Day3 nothing); the AI pass runs in the
+    worker before the send, so a caller never waits on a model.
+  - **Brand impersonation is the thing it is tuned to catch.** Mail that signs as one
+    company in the From name while being authenticated by an unrelated domain, and
+    that also asks the reader to sign in, verify, pay or claim a refund, is refused
+    outright. So is mail carrying another email provider's tracking pixel while
+    wearing a brand it does not own — the signature of a template lifted out of
+    somebody else's genuine email.
+  - Each of those signals is harmless on its own and none of them blocks alone: real
+    password resets say "verify your account", real newsletters link to the companies
+    they write about, and a customer migrating from another platform often pastes in a
+    template with the old pixel still in it. It takes a **combination** to block.
+- **New workspaces ramp up their sending.** For the first two weeks an account's
+  daily send ceiling rises with its age (500 on day one, then 2,000, 10,000 and
+  50,000, lifting entirely after 14 days), capped always by the plan allowance and
+  never exceeding it. This is standard practice for new senders and it is good for
+  honest customers: a brand new domain that mails 50,000 strangers on its first night
+  gets filtered on reputation grounds no matter how clean the list is. Support can
+  lift the ramp for an account they have looked at. When the ramp is what stopped a
+  send, the message says so and does **not** suggest upgrading — the plan was never
+  the problem.
 - **Public Privacy Policy and Terms** pages (`/privacy`, `/terms`), linked from the
   marketing footer.
 
@@ -751,6 +792,12 @@ other. Each domain still opens to its own detail page.
 - Per-account drill-down: pause/resume sending, usage, bounce/complaint rates, domains, campaigns.
 - **Campaign review queue:** approve & send, or block (with reason) flagged campaigns.
 - Force-verify a domain; suppress addresses globally.
+- **Abuse response on the account page**: what the pre-send review has refused for
+  this account (subject, From, verdict, and how many sends each verdict has stopped
+  — the number that separates one customer mistake from an attack in progress), the
+  account's API keys with a **Revoke** button, and a **Lift send ramp** toggle.
+  Revoking matters during an incident: pausing an account refuses its sends, but the
+  caller keeps hammering the API until its key stops authenticating.
 
 ### 6.10 Metrics (deliverability, reputation, engagement)
 A dedicated **Metrics** page (in the main nav) aggregates sending performance across
@@ -1076,6 +1123,14 @@ per-email, come free with the existing SES event pipeline.
 > `src/services/transactional.ts`, worker job
 > `src/queue/handlers/send-transactional.ts`, sweeps in `src/queue/cron.ts`,
 > UI `app/(app)/activity/page.tsx`, docs content `src/lib/api-docs.ts`.
+
+
+**Content review.** Every message is checked before it sends (§6.7). Content the
+review refuses comes back as `422 content_blocked` with the reason, and the verdict
+is cached — retrying the same body returns the same error, so a client must change
+the email rather than back off. Per-recipient variation does not count as a change:
+the fingerprint normalises tokens, names and amounts away, so your password-reset
+template is reviewed once and never again.
 
 ### 6.16 Webhooks — Day3 tells your app what happened
 

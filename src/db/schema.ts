@@ -43,6 +43,20 @@ export const accounts = pgTable(
     riskStatus: text("risk_status").notNull().default("normal"),
     pausedReason: text("paused_reason"),
 
+    // --- new-account send ramp (services/send-ramp.ts) --------------------
+    // A rolling daily counter, reset lazily when `dailySentDate` is no longer
+    // today. It is a SEPARATE counter from monthlyEmailSentCount because the
+    // two answer different questions: the monthly one is what the customer
+    // bought, the daily one is how fast a brand new account is allowed to
+    // spend it. A day-old account that pays for 100k emails is still not
+    // allowed to put 100k emails on the shared SES identity in one night.
+    dailySentCount: integer("daily_sent_count").notNull().default(0),
+    dailySentDate: text("daily_sent_date"),
+    // Operator override: lifts the ramp for an account we have actually
+    // looked at. Nullable timestamp rather than a boolean so the admin audit
+    // trail can say when the ramp was lifted, not just that it was.
+    rampLiftedAt: tstz("ramp_lifted_at"),
+
     companyAddress: text("company_address"),
 
     // Which first-run path the user chose: "has_list" (they arrive with
@@ -884,6 +898,62 @@ export const suppressionEntries = pgTable(
   ],
 );
 
+// The pre-send safety verdict for ONE piece of transactional content, cached by
+// a fingerprint of that content (services/content-review.ts).
+//
+// WHY THIS IS A CACHE AND NOT A LOG. Campaigns get one review per submission
+// because a campaign is one send to many people. The transactional API is the
+// opposite shape: one request per recipient, tens of thousands of requests, and
+// in an abuse run every one of them carries the SAME body. Reviewing per
+// request would be unaffordable and unbearably slow; reviewing per distinct
+// content is both cheap and strictly better, because the verdict on the first
+// message is what refuses every message after it. The unique index on
+// (account_id, fingerprint) is the whole mechanism — it is what makes the
+// second through sixteen-thousandth send a single indexed lookup with no model
+// call and no latency.
+//
+// Scoped per account on purpose: one tenant's blocked content must not leak
+// into another tenant's review (the fingerprint is derived from body text, and
+// a shared verdict would let one account probe what another has sent).
+export const contentReviews = pgTable(
+  "content_reviews",
+  {
+    id: text("id").primaryKey(),
+    accountId: text("account_id").notNull(),
+    // Stable hash of the normalised content — see contentFingerprint().
+    fingerprint: text("fingerprint").notNull(),
+
+    riskLevel: text("risk_level").notNull(),
+    riskScore: integer("risk_score").notNull(),
+    categoriesJson: text("categories_json").notNull(),
+    summary: text("summary").notNull(),
+    guidanceJson: text("guidance_json"),
+    rawResponseJson: text("raw_response_json"),
+
+    // A human-readable sample of what was judged, so the admin queue can show
+    // the verdict without re-reading (and outliving) the email row itself —
+    // transactional bodies are pruned after the retention window.
+    subject: text("subject").notNull(),
+    fromEmail: text("from_email").notNull(),
+    fromName: text("from_name"),
+
+    // How many send attempts this verdict has refused. The counter is the
+    // abuse signal an operator actually wants to sort by: a blocked verdict
+    // with 16,000 refusals behind it is an attack in progress, one with 1 is a
+    // customer who made a mistake once.
+    blockedCount: integer("blocked_count").notNull().default(0),
+
+    createdAt: tstz("created_at").notNull(),
+    updatedAt: tstz("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_content_reviews_account_fingerprint").on(t.accountId, t.fingerprint),
+    index("idx_content_reviews_account_created").on(t.accountId, t.createdAt),
+    // The admin queue's "what is being refused right now" read.
+    index("idx_content_reviews_level_created").on(t.riskLevel, t.createdAt),
+  ],
+);
+
 export const riskReviews = pgTable("risk_reviews", {
   id: text("id").primaryKey(),
   accountId: text("account_id").notNull(),
@@ -1527,6 +1597,7 @@ export type EmailEvent = typeof emailEvents.$inferSelect;
 export type TransactionalEmail = typeof transactionalEmails.$inferSelect;
 export type SuppressionEntry = typeof suppressionEntries.$inferSelect;
 export type RiskReview = typeof riskReviews.$inferSelect;
+export type ContentReview = typeof contentReviews.$inferSelect;
 export type JobLog = typeof jobLogs.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type IdempotencyKey = typeof idempotencyKeys.$inferSelect;

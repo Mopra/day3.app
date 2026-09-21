@@ -23,6 +23,10 @@ export type Account = {
   riskStatus: string;
   pausedReason: string | null;
   companyAddress: string | null;
+  // New-account send ramp (services/send-ramp.ts): how much of today's ceiling
+  // is spent, and whether an operator has lifted the ceiling entirely.
+  dailySentCount: number;
+  rampLiftedAt: string | null;
   createdAt: string;
 };
 
@@ -30,8 +34,13 @@ export type AccountHealth = {
   attempted: number;
   bounced: number;
   complained: number;
+  // Addresses a mailbox provider refused as spam. Reported separately from
+  // `bounced` because it is the receivers' judgement of the CONTENT, and it
+  // moves first when a sender turns abusive (services/health.ts).
+  spamRejected: number;
   bounceRate: number;
   complaintRate: number;
+  spamRejectRate: number;
   status: "normal" | "warning" | "paused";
   reason?: string;
 };

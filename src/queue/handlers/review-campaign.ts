@@ -39,6 +39,7 @@ export async function reviewCampaign(
       htmlBody: campaign.htmlBody,
       textBody: campaign.textBody,
       fromEmail: campaign.fromEmail,
+      fromName: campaign.fromName,
       sendingDomain: domain?.domain ?? "",
     },
     aiReviewMode,

@@ -16,6 +16,12 @@ import {
   E_SENDER_NOT_VERIFIED,
   E_SENDING_MISCONFIGURED,
 } from "../../email/ses";
+import {
+  blockedMessage,
+  countRefusal,
+  isBlocking,
+  reviewAndStoreContent,
+} from "../../services/content-review";
 import { addSuppression } from "../../services/suppression";
 import { releaseReservation } from "../../services/quota";
 import {
@@ -100,6 +106,57 @@ export async function sendTransactionalEmail(
       entityId: email.id,
       status: "skipped",
       error: "account not eligible to send",
+    });
+    return;
+  }
+
+  // ---- Pre-send safety review (the AI half) ----
+  //
+  // The API route already applied the deterministic floor and any cached
+  // verdict. What is left is the model pass, and it belongs HERE rather than in
+  // the request: it costs seconds and a network call, and a transactional
+  // caller's request must not wait on either. Cached per content fingerprint,
+  // so this runs once for a new email shape and never again for repeats of it —
+  // an abuse run reviews its first message and is refused on every message
+  // after, while a customer's password reset reviews once and is free forever.
+  //
+  // Fails OPEN on anything except a definite block: `reviewAndStoreContent`
+  // already swallows model failures (the deterministic result stands), and a
+  // failure to reach Postgres here throws into BullMQ's retry, which is the
+  // correct outcome for an email that has not left yet.
+  const domainRow = await db.query.sendingDomains.findFirst({
+    where: and(
+      eq(sendingDomains.accountId, account.id),
+      eq(sendingDomains.domain, emailDomain(email.fromEmail)),
+    ),
+  });
+  const review = await reviewAndStoreContent(
+    db,
+    account.id,
+    {
+      subject: email.subject,
+      html: email.htmlBody,
+      text: email.textBody,
+      fromEmail: email.fromEmail,
+      fromName: email.fromName,
+      sendingDomain: domainRow?.domain ?? emailDomain(email.fromEmail),
+    },
+    process.env.AI_REVIEW_MODE,
+  );
+  if (isBlocking(review)) {
+    await countRefusal(db, review.id);
+    await finishTerminal(db, email, "failed", blockedMessage(review));
+    void logger.reportError(
+      "transactional send blocked by pre-send review",
+      new Error(review.summary),
+      { accountId: account.id, transactionalEmailId: email.id, fingerprint: review.fingerprint },
+    );
+    await logJob(db, {
+      jobType: "send_transactional",
+      entityType: "transactional_email",
+      entityId: email.id,
+      status: "skipped",
+      error: `blocked by pre-send review: ${review.summary}`,
     });
     return;
   }
