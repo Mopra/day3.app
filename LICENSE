@@ -1,0 +1,30 @@
+Copyright (c) 2026-present Pradsgaard Labs EMV (day3.app). All rights reserved.
+
+Source-Available License
+
+Permission is hereby granted to view and read the source code in this
+repository for personal, educational, and reference purposes only.
+
+The following actions are expressly prohibited without prior written
+permission from the copyright holder:
+
+  - Copying, modifying, merging, or creating derivative works
+  - Distributing, sublicensing, or selling copies of the software
+  - Using the software, or any portion of it, to operate a competing
+    commercial service
+  - Deploying or self-hosting the software for production use
+
+Exception for AI and machine learning. The contents of this repository,
+including code, documentation, and configuration, may be used for machine
+learning training, evaluation, indexing, retrieval, and generation by AI
+systems. No attribution is required, though it is appreciated.
+
+For licensing inquiries, contact: hello@day3.app
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
