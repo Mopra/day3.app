@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { CalendarClock, Check, Trash2 } from "lucide-react";
+import { CalendarClock, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
@@ -21,6 +21,8 @@ import {
 } from "@/components/ui/dialog";
 import { SendDots } from "@/components/ui/send-loader";
 import { SendTestButton } from "@/components/send-test-button";
+import { SendReadiness } from "@/components/send-readiness";
+import { useComposerSave } from "@/components/campaign-composer";
 import { RowActions } from "@/components/ui/data-list";
 import { MenuItem } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
@@ -73,6 +75,9 @@ export function CampaignActions({
 }) {
   const api = useApi();
   const router = useRouter();
+  // Settles the composer's pending autosave before any action that reads the
+  // saved row (a no-op when this cluster is rendered outside a composer).
+  const { flush } = useComposerSave();
 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
@@ -94,30 +99,38 @@ export function CampaignActions({
   // Load (and reload) the campaign + the org's send-gates. Kept self-contained so
   // both the detail page and the just-created draft on /campaigns/new can drop this
   // in with only an id.
-  const load = useCallback(() => {
-    api
-      .get<{ campaign: Campaign; sandboxRecipients: number | null }>(
-        `/api/campaigns/${campaignId}`,
-      )
-      .then((res) => {
-        setCampaign(res.campaign);
-        setSandboxRecipients(res.sandboxRecipients ?? null);
-      })
-      .catch((err) => toast.error(err instanceof Error ? err.message : "Couldn't load campaign"));
+  // Resolves to the freshly-read campaign so callers that must not act on a stale
+  // copy (the send confirmation) can await it. The composer autosaves as the user
+  // types without telling this component, so the row on the server moves on under
+  // us — anything that *quotes the campaign back to the user* has to re-read it.
+  const load = useCallback(async (): Promise<Campaign | null> => {
     api
       .get<{ onboarding: OnboardingState }>("/api/account/onboarding")
       .then((res) => setOnboarding(res.onboarding))
       .catch(() => {});
+    try {
+      const res = await api.get<{ campaign: Campaign; sandboxRecipients: number | null }>(
+        `/api/campaigns/${campaignId}`,
+      );
+      setCampaign(res.campaign);
+      setSandboxRecipients(res.sandboxRecipients ?? null);
+      return res.campaign;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't load campaign");
+      return null;
+    }
   }, [api, campaignId]);
 
-  useEffect(load, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   async function action(path: string, body?: unknown, success?: string) {
     setBusy(true);
     try {
       await api.post(`/api/campaigns/${campaignId}/${path}`, body);
       if (success) toast.success(success);
-      load();
+      void load();
       onChanged?.();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Action failed");
@@ -129,13 +142,21 @@ export function CampaignActions({
   // Open the send-confirmation dialog and fetch the audience name + subscribed
   // count so the user confirms exactly who they're about to email. Sending is
   // irreversible, so this gate is deliberate — never fire "submit" from a click.
-  function openSubmit() {
+  async function openSubmit() {
     setAudienceSummary(null);
     setSubmitOpen(true);
-    if (!campaign?.audienceId) return;
+    // Push any unsaved edit first, then re-read: the dialog names the From
+    // address, the subject and the audience the user is about to mail, and those
+    // are exactly the fields the composer has been autosaving underneath this
+    // component. A confirmation that quotes a stale draft is worse than none —
+    // and the send itself renders from that same saved row.
+    await flush();
+    const fresh = await load();
+    const audienceId = fresh?.audienceId;
+    if (!audienceId) return;
     api
       .get<{ audience: { name: string }; counts: Record<string, number> }>(
-        `/api/audiences/${campaign.audienceId}`,
+        `/api/audiences/${audienceId}`,
       )
       .then((res) =>
         setAudienceSummary({
@@ -154,7 +175,8 @@ export function CampaignActions({
 
   // Open the schedule dialog seeded with the existing time, or a sensible
   // default an hour out.
-  function openSchedule() {
+  async function openSchedule() {
+    await flush();
     setScheduleAt(
       campaign?.scheduledAt
         ? toLocalInput(new Date(campaign.scheduledAt))
@@ -174,7 +196,7 @@ export function CampaignActions({
       await api.post(`/api/campaigns/${campaignId}/schedule`, { scheduledAt: when.toISOString() });
       toast.success("Send scheduled");
       setScheduleOpen(false);
-      load();
+      void load();
       onChanged?.();
       onSent?.();
     } catch (err) {
@@ -213,20 +235,20 @@ export function CampaignActions({
 
   return (
     <>
-      <SendTestButton campaignId={campaignId} disabled={busy} />
+      <SendTestButton campaignId={campaignId} disabled={busy} onBeforeSend={flush} />
       {submittable && (
         <Button
           variant="outline"
           disabled={busy || !!sendBlocked}
           title={blockTitle}
-          onClick={openSchedule}
+          onClick={() => void openSchedule()}
         >
           <CalendarClock className="size-4" />
           Schedule
         </Button>
       )}
       {submittable && (
-        <Button disabled={busy || !!sendBlocked} title={blockTitle} onClick={openSubmit}>
+        <Button disabled={busy || !!sendBlocked} title={blockTitle} onClick={() => void openSubmit()}>
           {busy ? (
             <>
               <SendDots />
@@ -306,20 +328,7 @@ export function CampaignActions({
             {/* A quick green "everything's ready" reassurance at the point of no
                 return — the button is only enabled once these pass, so this is
                 confidence, not a gate. */}
-            {onboarding && (
-              <ul className="space-y-1.5 text-sm text-muted-foreground">
-                {[
-                  { ok: onboarding.hasVerifiedDomain, label: "Verified sending domain" },
-                  { ok: onboarding.hasMailingAddress, label: "Business address on file" },
-                  { ok: onboarding.hasSubscribers, label: "Audience has subscribers" },
-                ].map((c) => (
-                  <li key={c.label} className="flex items-center gap-2">
-                    <Check className="size-4 shrink-0 text-olive" />
-                    {c.label}
-                  </li>
-                ))}
-              </ul>
-            )}
+            {onboarding && <SendReadiness onboarding={onboarding} />}
             {blockFix && (
               <p className="text-sm text-muted-foreground">
                 <Link href={blockFix.href} className="font-medium underline underline-offset-4">

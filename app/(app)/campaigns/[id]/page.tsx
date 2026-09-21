@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { CalendarClock, Check, Trash2 } from "lucide-react";
+import { CalendarClock, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -44,11 +44,17 @@ import {
   statusVariant,
 } from "@/lib/format";
 import { CampaignStatusBadge } from "@/components/ui/campaign-status-badge";
-import { sanitizeHtml } from "@/services/render";
-import { CampaignComposer, type CampaignFormValues } from "@/components/campaign-composer";
+import { sanitizeHtml, wrapEmailDocument } from "@/services/render";
+import { resolveTheme } from "@/lib/theme";
+import {
+  CampaignComposer,
+  useComposerSave,
+  type CampaignFormValues,
+} from "@/components/campaign-composer";
 import { SendTestButton } from "@/components/send-test-button";
 import { BusinessAddressDialog } from "@/components/business-address-dialog";
 import { SandboxBadge, SandboxBanner } from "@/components/sandbox-notice";
+import { SendReadiness } from "@/components/send-readiness";
 import type {
   Campaign,
   CampaignStats,
@@ -215,6 +221,24 @@ function SentBanner({
   );
 }
 
+// The draft's action buttons are handed to the composer as `titleActions`, so they
+// render *inside* its save provider — but this page does not, which is why the
+// buttons receive the flush through a nested component rather than a hook call up
+// here. Flushing matters because Submit/Schedule act on the SAVED row: without it
+// an edit made in the last 800 ms would not be in the email that goes out.
+function WithComposerSave({
+  children,
+}: {
+  children: (flush: () => Promise<void>) => ReactNode;
+}) {
+  const { flush } = useComposerSave();
+  return <>{children(flush)}</>;
+}
+
+// Used where the buttons render outside the composer (every non-draft status, where
+// there is nothing to save).
+const noFlush = async () => {};
+
 export default function CampaignDetailPage() {
   const { id } = useParams<{ id: string }>();
   const api = useApi();
@@ -251,31 +275,39 @@ export default function CampaignDetailPage() {
   // Inline fix for the one send gate that doesn't need a trip to Settings.
   const [addressOpen, setAddressOpen] = useState(false);
 
-  const load = useCallback(() => {
+  // Resolves to the freshly-read campaign so callers that must not act on a stale
+  // copy (the send confirmation) can await it: the composer autosaves as the user
+  // types without re-running this, so `campaign` here is the row as it was when
+  // the page last loaded, not as it is now.
+  const load = useCallback(async (): Promise<Campaign | null> => {
     api
-      .get<{
+      .get<{ onboarding: OnboardingState }>("/api/account/onboarding")
+      .then((res) => setOnboarding(res.onboarding))
+      .catch(() => {});
+    try {
+      const res = await api.get<{
         campaign: Campaign;
         stats: CampaignStats;
         riskReview: RiskReview | null;
         personalization: PersonalizationGap[];
         sandboxRecipients: number | null;
-      }>(`/api/campaigns/${id}`)
-      .then((res) => {
-        setCampaign(res.campaign);
-        setStats(res.stats);
-        setRiskReview(res.riskReview);
-        setPersonalization(res.personalization ?? []);
-        setSandboxRecipients(res.sandboxRecipients ?? null);
-      })
-      .catch((err) => toast.error(err.message));
-    api
-      .get<{ onboarding: OnboardingState }>("/api/account/onboarding")
-      .then((res) => setOnboarding(res.onboarding))
-      .catch(() => {});
+      }>(`/api/campaigns/${id}`);
+      setCampaign(res.campaign);
+      setStats(res.stats);
+      setRiskReview(res.riskReview);
+      setPersonalization(res.personalization ?? []);
+      setSandboxRecipients(res.sandboxRecipients ?? null);
+      return res.campaign;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't load campaign");
+      return null;
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  useEffect(load, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   // Recipients are their own filterable, paginated list. The endpoint caps a
   // request at 100, so we page in 50s; per-status totals come from `stats`.
@@ -318,7 +350,7 @@ export default function CampaignDetailPage() {
   useEffect(() => {
     if (!inFlight) return;
     const t = setInterval(() => {
-      load();
+      void load();
       loadRecipients();
     }, 2500);
     return () => clearInterval(t);
@@ -329,7 +361,7 @@ export default function CampaignDetailPage() {
     try {
       await api.post(`/api/campaigns/${id}/${path}`, body);
       if (success) toast.success(success);
-      load();
+      void load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Action failed");
     } finally {
@@ -346,13 +378,21 @@ export default function CampaignDetailPage() {
   // Open the send-confirmation dialog and fetch the audience name + subscribed
   // count so the user confirms exactly who they're about to email. Sending is
   // irreversible, so this gate is deliberate — never fire "submit" from a click.
-  function openSubmit() {
+  async function openSubmit(flush: () => Promise<void>) {
     setAudienceSummary(null);
     setSubmitOpen(true);
-    if (!campaign?.audienceId) return;
+    // Push any unsaved edit first, then re-read — the dialog quotes the From
+    // address, the subject and the audience back to the user, and all three are
+    // autosaved from the composer after this page's last load. The send renders
+    // from that same saved row, so flushing is what makes "what I see is what
+    // goes out" true.
+    await flush();
+    const fresh = await load();
+    const audienceId = fresh?.audienceId;
+    if (!audienceId) return;
     api
       .get<{ audience: { name: string }; counts: Record<string, number> }>(
-        `/api/audiences/${campaign.audienceId}`,
+        `/api/audiences/${audienceId}`,
       )
       .then((res) =>
         setAudienceSummary({
@@ -370,7 +410,8 @@ export default function CampaignDetailPage() {
 
   // Open the schedule dialog seeded with the existing time, or a sensible
   // default an hour out.
-  function openSchedule() {
+  async function openSchedule(flush: () => Promise<void>) {
+    await flush();
     setScheduleAt(
       campaign?.scheduledAt
         ? toLocalInput(new Date(campaign.scheduledAt))
@@ -390,7 +431,7 @@ export default function CampaignDetailPage() {
       await api.post(`/api/campaigns/${id}/schedule`, { scheduledAt: when.toISOString() });
       toast.success("Send scheduled");
       setScheduleOpen(false);
-      load();
+      void load();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't schedule");
     } finally {
@@ -468,14 +509,14 @@ export default function CampaignDetailPage() {
     </div>
   );
 
-  const actionButtons = (
+  const actionButtons = (flush: () => Promise<void>) => (
     <>
-      <SendTestButton campaignId={id} disabled={busy} />
+      <SendTestButton campaignId={id} disabled={busy} onBeforeSend={flush} />
       {submittable && (
         <Button
           variant="outline"
           disabled={busy || !!sendBlocked}
-          onClick={openSchedule}
+          onClick={() => void openSchedule(flush)}
         >
           <CalendarClock className="size-4" />
           Schedule
@@ -484,7 +525,7 @@ export default function CampaignDetailPage() {
       {submittable && (
         <Button
           disabled={busy || !!sendBlocked}
-          onClick={openSubmit}
+          onClick={() => void openSubmit(flush)}
         >
           {busy || previewSend === "submitting" ? (
             <>
@@ -555,7 +596,7 @@ export default function CampaignDetailPage() {
             </h1>
             {statusBadge}
           </div>
-          <div className="flex flex-wrap gap-2">{actionButtons}</div>
+          <div className="flex flex-wrap gap-2">{actionButtons(noFlush)}</div>
         </div>
       )}
 
@@ -583,7 +624,12 @@ export default function CampaignDetailPage() {
             </div>
           </div>
           <div className="flex shrink-0 gap-2">
-            <Button variant="outline" size="sm" disabled={busy} onClick={openSchedule}>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => void openSchedule(noFlush)}
+            >
               Reschedule
             </Button>
             <Button
@@ -816,7 +862,7 @@ export default function CampaignDetailPage() {
           initial={campaign}
           onAutosave={onAutosave}
           titleBadge={statusBadge}
-          titleActions={actionButtons}
+          titleActions={<WithComposerSave>{actionButtons}</WithComposerSave>}
         />
       ) : (
         <Card>
@@ -832,23 +878,27 @@ export default function CampaignDetailPage() {
               <span className="text-muted-foreground">From: </span>
               {campaign.fromName} &lt;{campaign.fromEmail}&gt;
             </div>
-            <div className="max-h-96 overflow-auto rounded-lg border border-border bg-white p-4">
+            <div className="max-h-96 overflow-auto rounded-lg border border-border bg-white">
               <iframe
                 title="Email preview"
                 sandbox=""
-                // Show the sanitized HTML (unsupported tags and inline styles
-                // are stripped before sending) so the preview reflects the
-                // formatting subscribers will see. Note this preview does NOT
-                // substitute merge tags and does NOT include the auto-appended
-                // unsubscribe footer — both are applied per-recipient on send.
-                srcDoc={sanitizeHtml(campaign.htmlBody)}
+                // Run through the SAME wrapEmailDocument + sanitizeHtml the send
+                // pipeline uses, with the campaign's saved theme, so this is the
+                // email as it went out rather than its bare body markup. Without
+                // the wrapper the theme (page/content colors, typography, the
+                // 600px body column) was simply absent and a sent campaign looked
+                // nothing like what subscribers received. Merge tags still appear
+                // as-is and the unsubscribe footer is appended per recipient.
+                srcDoc={wrapEmailDocument(
+                  sanitizeHtml(campaign.htmlBody),
+                  resolveTheme(campaign.theme),
+                )}
                 className="h-80 w-full border-0"
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              Preview shows how your email will be formatted after unsupported
-              tags and styles are removed. Merge tags appear as-is, and the
-              unsubscribe footer is added automatically on send.
+              Preview shows the email as it was sent. Merge tags appear as-is, and
+              the mailing address and unsubscribe link are added per recipient.
             </p>
           </CardContent>
         </Card>
@@ -938,7 +988,7 @@ export default function CampaignDetailPage() {
       <BusinessAddressDialog
         open={addressOpen}
         onOpenChange={setAddressOpen}
-        onSaved={load}
+        onSaved={() => void load()}
       />
 
       <Dialog open={submitOpen} onOpenChange={setSubmitOpen}>
@@ -991,20 +1041,7 @@ export default function CampaignDetailPage() {
             </dl>
             {/* Same readiness reassurance as the CampaignActions dialog on the
                 new-campaign page, so both send-confirmation moments match. */}
-            {onboarding && (
-              <ul className="space-y-1.5 text-sm text-muted-foreground">
-                {[
-                  { ok: onboarding.hasVerifiedDomain, label: "Verified sending domain" },
-                  { ok: onboarding.hasMailingAddress, label: "Business address on file" },
-                  { ok: onboarding.hasSubscribers, label: "Audience has subscribers" },
-                ].map((c) => (
-                  <li key={c.label} className="flex items-center gap-2">
-                    <Check className="size-4 shrink-0 text-olive" />
-                    {c.label}
-                  </li>
-                ))}
-              </ul>
-            )}
+            {onboarding && <SendReadiness onboarding={onboarding} />}
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="ghost" disabled={busy} onClick={() => setSubmitOpen(false)}>
                 Cancel

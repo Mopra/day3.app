@@ -25,7 +25,7 @@ export default function CampaignNewPage() {
 
   async function onAutosave(values: CampaignFormValues) {
     if (!createdId.current && !creating.current) {
-      creating.current = api
+      const attempt = api
         .post<{ id: string }>("/api/campaigns", values)
         .then((res) => {
           createdId.current = res.id;
@@ -33,7 +33,15 @@ export default function CampaignNewPage() {
           setSavedId(res.id);
           return res.id;
         });
-      await creating.current;
+      // Clear the lock if the create fails, so the NEXT keystroke tries again.
+      // Leaving the rejected promise parked here wedged the page permanently:
+      // every later autosave awaited it, re-threw the original error, and the
+      // draft could never be saved even though a retry would have worked.
+      creating.current = attempt;
+      attempt.catch(() => {
+        if (creating.current === attempt) creating.current = null;
+      });
+      await attempt;
       return; // created with these values — nothing more to persist
     }
     // A create from a prior edit may still be in flight; wait for its id, then

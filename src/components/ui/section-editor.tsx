@@ -10,7 +10,15 @@
 // Controlled exactly like RichTextEditor: `value` is the section array, `onChange`
 // fires with the next array on any edit (content, columns, type, image,
 // add/duplicate/remove, reorder).
-import { useId, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+} from "react";
 import {
   DndContext,
   DragOverlay,
@@ -1855,15 +1863,32 @@ export function SectionEditor({
   const [activeId, setActiveId] = useState<string | null>(null);
 
   // Never let the builder go empty — there's always at least one section to edit.
-  const sections = value.length > 0 ? value : [emptySection()];
+  // Memoized so the fallback isn't a freshly-minted id (and therefore a remount of
+  // every child) on each render.
+  const fallback = useMemo(() => [emptySection()], []);
+  const sections = value.length > 0 ? value : fallback;
   const activeSection = activeId ? sections.find((s) => s.id === activeId) ?? null : null;
+
+  // The latest sections, read by any commit that lands AFTER an await. Uploading
+  // and cover-cropping an image are network round trips measured in seconds, and a
+  // commit built from the render-time snapshot would quietly throw away everything
+  // the user typed while it was in flight — the edit simply vanished on upload.
+  // Synced in an effect (not during render) so it is a real post-commit mirror.
+  const latest = useRef(sections);
+  useEffect(() => {
+    latest.current = sections;
+  });
 
   function commit(next: CampaignSection[]) {
     onChange(next.length > 0 ? next : [emptySection()]);
   }
 
   function patchSection(id: string, updater: (s: CampaignSection) => CampaignSection) {
-    commit(sections.map((s) => (s.id === id ? updater(s) : s)));
+    const current = latest.current;
+    // The section may have been removed while an async edit was in flight; then
+    // there is nothing to patch and re-adding it would be the surprise.
+    if (!current.some((s) => s.id === id)) return;
+    commit(current.map((s) => (s.id === id ? updater(s) : s)));
   }
 
   function handleDragStart(event: DragStartEvent) {
@@ -1956,11 +1981,36 @@ export function SectionEditor({
                 patchSection(section.id, (s) => ({ ...s, height, images: cropped }));
               }}
               onDuplicate={() => {
-                const next = [...sections];
-                next.splice(i + 1, 0, duplicateSection(section));
+                const current = latest.current;
+                const at = current.findIndex((s) => s.id === section.id);
+                const next = [...current];
+                next.splice(at < 0 ? current.length : at + 1, 0, duplicateSection(section));
                 commit(next);
               }}
-              onRemove={() => commit(sections.filter((s) => s.id !== section.id))}
+              onRemove={() => {
+                const current = latest.current;
+                const at = current.findIndex((s) => s.id === section.id);
+                if (at < 0) return;
+                const removed = current[at];
+                commit(current.filter((s) => s.id !== section.id));
+                // Undo rather than a confirm dialog: a section is one click from
+                // gone and carries writing that nothing else can recover (the
+                // editors' own undo stacks go with it). A confirm would tax the
+                // common case — clearing an empty placeholder — for a mistake that
+                // is cheap to reverse if we simply keep the section around.
+                toast("Section removed", {
+                  action: {
+                    label: "Undo",
+                    onClick: () => {
+                      const now = latest.current;
+                      if (now.some((s) => s.id === removed.id)) return;
+                      const next = [...now];
+                      next.splice(Math.min(at, next.length), 0, removed);
+                      commit(next);
+                    },
+                  },
+                });
+              }}
             />
           ))}
         </SortableContext>
@@ -1975,7 +2025,7 @@ export function SectionEditor({
       </DndContext>
 
       <AddSectionButton
-        onAdd={(kind) => commit([...sections, setSectionKind(emptySection(), kind)])}
+        onAdd={(kind) => commit([...latest.current, setSectionKind(emptySection(), kind)])}
         disabled={sections.length >= MAX_SECTIONS}
       />
       </div>

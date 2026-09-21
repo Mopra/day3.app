@@ -18,7 +18,13 @@
 // by construction, a no-op under sanitizeHtml(). That invariant ("what the builder
 // produces is exactly what ships, and it is always email-safe") is covered by a test.
 import { z } from "zod";
-import { escapeHtml, isSafeColor, BUTTON_ROUND_CLASS, QUOTE_ROUND_CLASS } from "@/services/render";
+import {
+  escapeHtml,
+  isSafeColor,
+  isSafeUrl,
+  BUTTON_ROUND_CLASS,
+  QUOTE_ROUND_CLASS,
+} from "@/services/render";
 
 export type ColumnCount = 1 | 2 | 3;
 
@@ -185,6 +191,33 @@ export function columnPixelWidth(columns: ColumnCount): number {
   return COLUMN_PIXEL_WIDTHS[columns];
 }
 
+// Turns what a user typed into a link field into a URL that actually works from an
+// inbox, or null when there is nothing safe to link to.
+//
+// This matters more in email than on the web. "example.com" is what most people
+// type, and on a page it would be a relative path that still resolves against the
+// current host; in a mail client there is no such host, so the link is simply dead
+// — and click tracking skips it too (extractTrackableLinks only rewrites absolute
+// http(s) links), so the send looks like nobody clicked. A bare address gets
+// https://, a bare email gets mailto:, a protocol-relative URL gets https:, and an
+// unsafe scheme (javascript:, data:, …) is dropped rather than shipped — the same
+// call sanitizeHtml would make later, made here so the serialized body stays a
+// fixed point of it.
+//
+// Root-relative ("/pricing") and anchor ("#top") values are left exactly as typed:
+// they are unambiguously a path, and inventing a host for them would be a guess.
+export function normalizeLinkUrl(raw: string | null | undefined): string | null {
+  const value = (raw ?? "").trim();
+  if (!value) return null;
+  if (!isSafeUrl(value)) return null;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return value;
+  if (value.startsWith("//")) return `https:${value}`;
+  if (value.startsWith("/") || value.startsWith("#")) return value;
+  // A bare email address ("hi@acme.com") — no slashes, one @, a dotted domain.
+  if (/^[^\s/@]+@[^\s/@]+\.[^\s/@]+$/.test(value)) return `mailto:${value}`;
+  return `https://${value}`;
+}
+
 export function newSectionId(): string {
   return `sec_${crypto.randomUUID()}`;
 }
@@ -296,11 +329,13 @@ function sectionHasContent(section: CampaignSection): boolean {
     case "image":
       return (section.images ?? []).some((img) => !!img?.src);
     case "button":
-      return (section.buttons ?? []).some((b) => !!b?.label.trim() && !!b?.href.trim());
+      return (section.buttons ?? []).some(
+        (b) => !!b?.label.trim() && normalizeLinkUrl(b?.href) !== null,
+      );
     case "quote":
       return !!section.content[0]?.trim();
     case "social":
-      return (section.socials ?? []).some((s) => !!s.url.trim());
+      return (section.socials ?? []).some((s) => normalizeLinkUrl(s.url) !== null);
     case "card":
       return !!section.images?.[0]?.src || !!section.content[0]?.trim();
     case "divider":
@@ -343,7 +378,8 @@ function serializeImageCell(
   }
   const dims = ` width="${width}"` + (height ? ` height="${height}"` : "");
   const img = `<img src="${escapeHtml(image.src)}" alt="${escapeHtml(image.alt ?? "")}"${dims}>`;
-  return image.href ? `<a href="${escapeHtml(image.href)}">${img}</a>` : img;
+  const href = normalizeLinkUrl(image.href);
+  return href ? `<a href="${escapeHtml(href)}">${img}</a>` : img;
 }
 
 // Serializes the section list to email-safe HTML for `htmlBody`. Each section is a
@@ -493,7 +529,7 @@ function serializeColumns(section: CampaignSection): string {
 // column. A button missing a label or href serializes to nothing.
 function serializeButtonCell(button: SectionButton | null | undefined, align: SectionAlign): string {
   const label = button?.label.trim();
-  const href = button?.href.trim();
+  const href = normalizeLinkUrl(button?.href);
   if (!button || !label || !href) return "";
   const bg = pickColor(button.bgColor, DEFAULT_BUTTON_BG);
   const text = pickColor(button.textColor, DEFAULT_BUTTON_TEXT);
@@ -549,13 +585,15 @@ function serializeQuote(section: CampaignSection): string {
 // aligned. Rendered as text links (no icon assets needed) so it works in every
 // client; each href is escaped and only configured links are emitted.
 function serializeSocial(section: CampaignSection): string {
-  const items = (section.socials ?? []).filter((s) => s.url.trim());
+  const items = (section.socials ?? [])
+    .map((s) => ({ network: s.network, url: normalizeLinkUrl(s.url) }))
+    .filter((s): s is { network: SocialNetwork; url: string } => s.url !== null);
   if (!items.length) return "";
   const align = section.align ?? "center";
   const intro = section.socialIntro?.trim();
   const introHtml = intro ? `${escapeHtml(intro)} ` : "";
   const links = items
-    .map((s) => `<a href="${escapeHtml(s.url.trim())}">${escapeHtml(SOCIAL_LABELS[s.network])}</a>`)
+    .map((s) => `<a href="${escapeHtml(s.url)}">${escapeHtml(SOCIAL_LABELS[s.network])}</a>`)
     .join(" · ");
   return (
     `<table role="presentation" width="100%"><tbody><tr>` +
@@ -649,7 +687,11 @@ const SectionImageSchema = z
     src: httpUrl,
     originalSrc: httpUrl.optional(),
     alt: z.string().max(1_000).optional(),
-    href: httpUrl.optional(),
+    // Not httpUrl: the composer autosaves on every keystroke, so a half-typed
+    // "example.c" would 400 the whole draft save and the user would only see
+    // "Couldn't save" with no idea which field caused it. The value is normalized
+    // (and unsafe schemes dropped) at serialize time instead.
+    href: z.string().max(2_000).optional(),
     width: z.number().int().positive().max(MAX_IMAGE_DIMENSION).optional(),
     height: z.number().int().positive().max(MAX_IMAGE_DIMENSION).optional(),
   })

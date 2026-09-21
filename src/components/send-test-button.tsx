@@ -28,9 +28,15 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function SendTestButton({
   campaignId,
   disabled,
+  onBeforeSend,
 }: {
   campaignId: string;
   disabled?: boolean;
+  // Settles the composer's pending autosave before the test goes out. The test is
+  // rendered server-side from the SAVED campaign row, so without this a test sent
+  // moments after an edit previews the *previous* draft — which is the one thing a
+  // test send exists to rule out.
+  onBeforeSend?: () => Promise<void>;
 }) {
   const api = useApi();
   const { user } = useUser();
@@ -62,6 +68,7 @@ export function SendTestButton({
     if (!allValid || sending) return;
     setSending(true);
     try {
+      await onBeforeSend?.();
       const res = await api.post<{
         sent: string[];
         failed: { email: string; error: string }[];

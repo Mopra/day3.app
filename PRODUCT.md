@@ -281,7 +281,8 @@ guards make that observable:
   submit/schedule time instead. A brand-new draft is created on the first autosave and
   the URL switches to the campaign in place.
 - **Section & column layout builder:** the body is a stack of **sections** that can be
-  **added, removed, and drag-reordered**. Text, image, and button sections lay out as
+  **added, removed, and drag-reordered**. Removing one is **undoable** from the toast it
+  raises, so a section full of writing is never one click from gone. Text, image, and button sections lay out as
   **1, 2, or 3 equal-width columns**, so you can mix a full-width intro with a two- or
   three-up row below it. Changing a section's column count never loses work (shrinking
   folds the extra columns into the last one). Sections serialize to email-safe layout
@@ -331,6 +332,11 @@ guards make that observable:
   - **Divider** — a horizontal **rule**, or a blank **spacer** whose height you drag.
   - **Social links** — a centered (or left/right) row of links to the org's social
     profiles, with an optional lead-in ("Follow us:"). Rendered as text links.
+  - **Link fields accept what people actually type.** A button, image, or social link
+    written as `example.com` ships as `https://example.com`, and a bare address as a
+    `mailto:`. A relative link would be dead in an inbox (there is no page to resolve it
+    against) and would also be skipped by click tracking, so the link is completed at
+    send time rather than shipped broken. An unsafe scheme is dropped, not delivered.
   - **Per-section background** — any section can be given a **background color** (from a
     palette, or "no fill") that bleeds to the **full width** of the email, with the
     section's content padded inside the band; distinct from a quote's inset callout tint.

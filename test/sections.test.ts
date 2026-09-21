@@ -7,6 +7,7 @@ import {
   duplicateSection,
   emptySection,
   htmlBodyToSections,
+  normalizeLinkUrl,
   resizeSection,
   safeParseSections,
   serializeSections,
@@ -727,5 +728,90 @@ describe("email-safe invariant", () => {
     ];
     const serialized = serializeSections(sections);
     expect(sanitizeHtml(serialized)).toBe(serialized);
+  });
+});
+
+describe("normalizeLinkUrl", () => {
+  it("adds https to a bare domain — the thing people actually type", () => {
+    expect(normalizeLinkUrl("example.com")).toBe("https://example.com");
+    expect(normalizeLinkUrl("  www.acme.co.uk/pricing  ")).toBe("https://www.acme.co.uk/pricing");
+  });
+
+  it("leaves an explicit scheme alone", () => {
+    expect(normalizeLinkUrl("https://a.test/x?y=1&z=2")).toBe("https://a.test/x?y=1&z=2");
+    expect(normalizeLinkUrl("http://a.test")).toBe("http://a.test");
+    expect(normalizeLinkUrl("mailto:hi@a.test")).toBe("mailto:hi@a.test");
+  });
+
+  it("turns a bare email address into a mailto", () => {
+    expect(normalizeLinkUrl("hi@acme.com")).toBe("mailto:hi@acme.com");
+  });
+
+  it("completes a protocol-relative URL and keeps paths/anchors as typed", () => {
+    expect(normalizeLinkUrl("//cdn.test/a")).toBe("https://cdn.test/a");
+    expect(normalizeLinkUrl("/pricing")).toBe("/pricing");
+    expect(normalizeLinkUrl("#top")).toBe("#top");
+  });
+
+  it("drops an unsafe scheme instead of shipping it", () => {
+    expect(normalizeLinkUrl("javascript:alert(1)")).toBeNull();
+    expect(normalizeLinkUrl("data:text/html,<b>x</b>")).toBeNull();
+    expect(normalizeLinkUrl("&#106;avascript:alert(1)")).toBeNull();
+  });
+
+  it("treats blank as no link", () => {
+    expect(normalizeLinkUrl("")).toBeNull();
+    expect(normalizeLinkUrl("   ")).toBeNull();
+    expect(normalizeLinkUrl(undefined)).toBeNull();
+  });
+});
+
+describe("serialized links survive the inbox", () => {
+  it("a button link typed without a scheme ships as an absolute URL", () => {
+    const html = serializeSections([
+      {
+        id: "btn",
+        kind: "button",
+        columns: 1,
+        content: [""],
+        buttons: [{ label: "Read more", href: "example.com/post" }],
+      },
+    ]);
+    expect(html).toContain('href="https://example.com/post"');
+    expect(html).not.toContain('href="example.com/post"');
+  });
+
+  it("an unsafe button link makes the section serialize to nothing, not a stripped anchor", () => {
+    const sections: CampaignSection[] = [
+      {
+        id: "btn",
+        kind: "button",
+        columns: 1,
+        content: [""],
+        buttons: [{ label: "Click", href: "javascript:alert(1)" }],
+      },
+    ];
+    const html = serializeSections(sections);
+    expect(html).toBe("");
+    // The invariant that matters: whatever we emit is a fixed point of the sanitizer.
+    expect(sanitizeHtml(html)).toBe(html);
+  });
+
+  it("a social row and an image link are normalized the same way", () => {
+    const social = serializeSections([
+      {
+        id: "soc",
+        kind: "social",
+        columns: 1,
+        content: [""],
+        socials: [{ network: "twitter", url: "twitter.com/acme" }],
+      },
+    ]);
+    expect(social).toContain('href="https://twitter.com/acme"');
+
+    const image = serializeSections([
+      imageSection(1, [{ src: "https://cdn.test/a.png", href: "acme.test/offer" }]),
+    ]);
+    expect(image).toContain('href="https://acme.test/offer"');
   });
 });

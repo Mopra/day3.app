@@ -11,7 +11,15 @@
 //     of saved senders (the account's default / sole sender auto-selects) instead
 //     of free-text — so most fields fill themselves. The campaign name is an
 //     editable title at the top; if left blank it falls back to the subject on save.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -188,6 +196,25 @@ const headerInputClass =
 // How long the draft must sit unchanged before we autosave it. Short, so saving
 // feels near-instant — there's no manual Save button.
 const AUTOSAVE_DELAY_MS = 800;
+
+// Lets the send actions the composer renders in its title row (Send test,
+// Schedule, Submit & send — all passed in as `titleActions`) push the pending
+// draft to the server before they act on it.
+//
+// They need it because every one of them operates on the SAVED row, not on what
+// is on screen: the server re-reads the campaign by id and renders from that. With
+// an 800 ms debounce between the last keystroke and the save, "edit the subject,
+// hit Submit & send" could put the previous subject in front of every subscriber,
+// and there is no unsend. Awaiting the flush makes the row the user is looking at
+// the row that ships. The default is a no-op so a caller outside a composer (or one
+// with autosave disabled) still works.
+const ComposerSaveContext = createContext<{ flush: () => Promise<void> }>({
+  flush: async () => {},
+});
+
+export function useComposerSave() {
+  return useContext(ComposerSaveContext);
+}
 
 type AutosaveStatus = "idle" | "pending" | "saving" | "saved" | "error";
 
@@ -372,9 +399,16 @@ export function CampaignComposer({
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
-  // The right-side floating styling panel. Open by default so the controls are
-  // discoverable; toggled by its own draggable grip or the "Style" toolbar button.
-  const [stylesOpen, setStylesOpen] = useState(true);
+  // The right-side floating styling panel. It floats OVER the canvas, so on a
+  // phone an open panel is ~85% of the screen width sitting on top of the email
+  // the user came to write. Start closed and reveal it (its width animates in) on
+  // a viewport wide enough to have room beside the message column. Done in an
+  // effect rather than a lazy initializer so the server and the first client
+  // render agree — matchMedia doesn't exist during SSR.
+  const [stylesOpen, setStylesOpen] = useState(false);
+  useEffect(() => {
+    if (window.matchMedia("(min-width: 1024px)").matches) setStylesOpen(true);
+  }, []);
 
   // Autosave bookkeeping. The callback is held in a ref so the debounce
   // subscription can stay mounted once without re-subscribing on every render.
@@ -384,6 +418,12 @@ export function CampaignComposer({
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // True when there are edits not yet persisted — gates the flush-on-unmount.
   const autosaveDirty = useRef(false);
+  // The save currently in flight, so a flush can await it instead of starting a
+  // second overlapping PATCH.
+  const savingRef = useRef<Promise<void> | null>(null);
+  // Filled in by the autosave effect; the context value below delegates to it.
+  const flushRef = useRef<() => Promise<void>>(async () => {});
+  const saveContext = useMemo(() => ({ flush: () => flushRef.current() }), []);
 
   // Seed the section builder from the draft: its saved sections if present, else a
   // single section wrapping the legacy/AI flat htmlBody (so old drafts open in the
@@ -668,6 +708,14 @@ export function CampaignComposer({
       !!(v.subject?.trim() || v.htmlBody?.trim() || v.name?.trim() || v.previewText?.trim());
 
     const save = async () => {
+      // One save at a time. Without this, a flush racing the debounced save could
+      // send two PATCHes whose responses land out of order, and the loser would
+      // be the newer body.
+      if (savingRef.current) {
+        await savingRef.current.catch(() => {});
+      }
+      // Read AFTER that await, so a save queued behind another one persists what
+      // the user has typed since, not the values that triggered it.
       const values = getValues();
       if (!worthSaving(values) || !onAutosaveRef.current) {
         autosaveDirty.current = false;
@@ -676,16 +724,30 @@ export function CampaignComposer({
       }
       autosaveDirty.current = false;
       setAutosaveStatus("saving");
+      const inFlight = onAutosaveRef.current({
+        ...values,
+        name: values.name?.trim() || values.subject?.trim() || "",
+      });
+      savingRef.current = inFlight;
       try {
-        await onAutosaveRef.current({
-          ...values,
-          name: values.name?.trim() || values.subject?.trim() || "",
-        });
+        await inFlight;
         setAutosaveStatus("saved");
       } catch {
         autosaveDirty.current = true;
         setAutosaveStatus("error");
+      } finally {
+        if (savingRef.current === inFlight) savingRef.current = null;
       }
+    };
+
+    // Published to the title-row actions: settle whatever is pending, right now.
+    flushRef.current = async () => {
+      if (autosaveTimer.current) {
+        clearTimeout(autosaveTimer.current);
+        autosaveTimer.current = null;
+      }
+      if (autosaveDirty.current) await save();
+      else if (savingRef.current) await savingRef.current.catch(() => {});
     };
 
     const subscription = watch(() => {
@@ -930,7 +992,9 @@ export function CampaignComposer({
             phone has, so the group wraps instead of being clipped. */}
         <div className="flex flex-wrap items-center gap-2 sm:ml-auto sm:shrink-0 sm:gap-3">
           {onAutosave && <AutosaveIndicator status={autosaveStatus} />}
-          {titleActions}
+          <ComposerSaveContext.Provider value={saveContext}>
+            {titleActions}
+          </ComposerSaveContext.Provider>
         </div>
       </div>
 
