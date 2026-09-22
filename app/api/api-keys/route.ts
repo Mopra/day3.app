@@ -43,6 +43,14 @@ export const POST = route(async (req) => {
   requireOrgAdmin(ctx);
   const { name, scopes } = await parseJson(req, CreateKeySchema);
 
+  // A paused account cannot mint keys. Pausing refuses its sends, but the
+  // operator behind a paused phishing account minted a fresh key on it the next
+  // morning and kept calling the API with it. Nothing a paused account can do
+  // with a new key is legitimate, and each one is another thing to revoke.
+  if (ctx.account.riskStatus === "paused") {
+    throw new HttpError(403, "This account is paused. API keys cannot be created until it is resumed.");
+  }
+
   const existing = await ctx.db
     .select({ revokedAt: apiKeys.revokedAt })
     .from(apiKeys)

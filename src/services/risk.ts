@@ -1,3 +1,4 @@
+import { logger } from "../lib/logger";
 import { aiReviewCampaign, type AiRiskVerdict } from "./risk-ai";
 
 export type RiskLevel = "low" | "medium" | "high" | "blocked";
@@ -532,7 +533,15 @@ export async function reviewCampaignRisk(
     return mergeReviews(deterministic, verdict);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[risk] AI review failed; using deterministic result: ${message}`);
+    // Still fails open, but it now PAGES rather than whispering. Fail-open is
+    // the right call per email; it is the wrong call per week, because a
+    // revoked or mistyped OPENROUTER_API_KEY otherwise turns the reviewer back
+    // into the keyword-only pass an attacker already beat, with nothing but a
+    // console.warn in a worker log to say so.
+    void logger.reportError("AI review failed; using deterministic result", err, {
+      fromEmail: input.fromEmail,
+      sendingDomain: input.sendingDomain,
+    });
     return { ...deterministic, aiError: message };
   }
 }

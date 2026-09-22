@@ -27,7 +27,13 @@ vi.mock("../src/api/context", async (importOriginal) => {
       const account = await currentDb.query.accounts.findFirst({
         where: (t, { eq }) => eq(t.id, currentAccountId),
       });
-      return { db: currentDb, account, userId: "user_test", userEmail: "t@example.com" };
+      return {
+        db: currentDb,
+        account,
+        auth: { userId: "user_test", orgId: "org_test", orgRole: "org:admin" },
+        userId: "user_test",
+        userEmail: "t@example.com",
+      };
     },
   };
 });
@@ -38,6 +44,7 @@ vi.mock("../src/services/ses-identity", () => ({
 }));
 
 const domainsRoute = await import("../app/api/domains/route");
+const apiKeysRoute = await import("../app/api/api-keys/route");
 const domainItemRoute = await import("../app/api/domains/[id]/route");
 
 function req(url: string, method: string, body?: unknown): Request {
@@ -174,5 +181,30 @@ describe("DELETE /api/domains/[id]", () => {
       { params: Promise.resolve({ id: domain.id }) } as never,
     );
     expect(res.status).toBe(200);
+  });
+});
+
+describe("POST /api/api-keys", () => {
+  it("refuses to mint a key on a paused account", async () => {
+    // The morning after his first two accounts were paused, the operator
+    // minted a fresh key on one of them and kept calling the API. A paused
+    // account has no legitimate use for a new credential.
+    const account = await seedAccount(currentDb, { riskStatus: "paused", sendingEnabled: false });
+    currentAccountId = account.id;
+    const res = await apiKeysRoute.POST(
+      req("http://localhost/api/api-keys", "POST", { name: "aa" }) as never,
+      {} as never,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("still mints a key on a normal account", async () => {
+    const account = await seedAccount(currentDb);
+    currentAccountId = account.id;
+    const res = await apiKeysRoute.POST(
+      req("http://localhost/api/api-keys", "POST", { name: "ci" }) as never,
+      {} as never,
+    );
+    expect(res.status).toBe(201);
   });
 });

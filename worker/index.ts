@@ -210,6 +210,19 @@ const worker = new Worker(
   },
 );
 
+// Say at boot which half of the pre-send review this process will run. The AI
+// pass fails open by design (a model outage must not stop a customer's
+// password resets), which means a missing or wrong key does not crash the
+// worker: it silently degrades to keyword-only review, the exact review a
+// phishing operator iterated past in September 2026. A clean boot is therefore
+// not evidence the model is on. This line is, and it is what an operator greps
+// for after editing .env.worker.
+logger.info("pre-send review configured", {
+  mode: process.env.AI_REVIEW_MODE === "ai" ? "deterministic + AI" : "deterministic only",
+  aiKeyPresent: Boolean(process.env.OPENROUTER_API_KEY),
+  riskModel: process.env.OPENROUTER_RISK_MODEL || "anthropic/claude-haiku-4.5 (default)",
+});
+
 worker.on("ready", () =>
   logger.info("worker ready", { queue: QUEUE_NAME, concurrency: CONCURRENCY }),
 );

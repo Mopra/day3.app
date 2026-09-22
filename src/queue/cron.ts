@@ -931,6 +931,10 @@ export async function recheckVerifiedDomains(
         // that row (testing, a manual rescue), so polling it would only produce
         // noise and a notification nobody can act on.
         eq(sendingDomains.adminOverrideVerified, false),
+        // A banned row has had its SES identity deleted on purpose. Re-reading
+        // it only yields NotFound errors in the log and a "verification lost"
+        // notification to the account we banned.
+        isNull(sendingDomains.blockedAt),
         or(isNull(sendingDomains.lastCheckedAt), lt(sendingDomains.lastCheckedAt, due)),
       ),
     )
