@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-09-21**.
+> Last verified against the codebase: **2026-09-22**.
 
 ---
 
@@ -742,7 +742,17 @@ other. Each domain still opens to its own detail page.
   - Each of those signals is harmless on its own and none of them blocks alone: real
     password resets say "verify your account", real newsletters link to the companies
     they write about, and a customer migrating from another platform often pastes in a
-    template with the old pixel still in it. It takes a **combination** to block.
+    template with the old pixel still in it. It takes a **combination** to block. Two
+    combinations do: impersonating a brand while asking for credentials (or while
+    carrying that brand's lifted template), and asking for payment or sign-in details
+    behind a link to a throwaway page-builder host (ClickFunnels, Google Forms,
+    `*.vercel.app` and the like).
+  - **New workspaces are held to a higher bar.** During the two-week ramp, `high`-risk
+    content is held as well as `blocked` content, and a workspace whose content is
+    *blocked* in that window is paused automatically. Trust is earned: an established
+    customer whose migrated password-reset template trips the reviewer gets a `422` and
+    keeps sending; a two-hour-old workspace whose first message is phishing is not a
+    customer who made a mistake.
 - **New workspaces ramp up their sending.** For the first two weeks an account's
   daily send ceiling rises with its age (500 on day one, then 2,000, 10,000 and
   50,000, lifting entirely after 14 days), capped always by the plan allowance and
@@ -752,6 +762,12 @@ other. Each domain still opens to its own detail page.
   lift the ramp for an account they have looked at. When the ramp is what stopped a
   send, the message says so and does **not** suggest upgrading — the plan was never
   the problem.
+- **A domain that was used for abuse is banned platform-wide.** Support can ban every
+  sending domain on an account; the ban is on the domain *name*, so deleting the domain
+  and re-adding it on a fresh workspace is refused, existing rows for it stop sending
+  everywhere at once, and a paused workspace cannot delete its domains to free them.
+  Banning is a separate action from pausing: a workspace paused for a stale list keeps
+  its domain.
 - **Public Privacy Policy and Terms** pages (`/privacy`, `/terms`), linked from the
   marketing footer.
 
@@ -797,7 +813,8 @@ other. Each domain still opens to its own detail page.
   — the number that separates one customer mistake from an attack in progress), the
   account's API keys with a **Revoke** button, and a **Lift send ramp** toggle.
   Revoking matters during an incident: pausing an account refuses its sends, but the
-  caller keeps hammering the API until its key stops authenticating.
+  caller keeps hammering the API until its key stops authenticating. A **Ban domains**
+  action bans every domain on the account platform-wide (§6.7).
 
 ### 6.10 Metrics (deliverability, reputation, engagement)
 A dedicated **Metrics** page (in the main nav) aggregates sending performance across

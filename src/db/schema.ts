@@ -142,6 +142,13 @@ export const sendingDomains = pgTable(
 
     adminOverrideVerified: boolean("admin_override_verified").notNull().default(false),
 
+    // Stamped when the domain is banned platform-wide for abuse
+    // (services/blocked-domains.ts). Every send door already holds this row when
+    // it asks "may this domain send?", so a stamp here is refused everywhere with
+    // no extra read; the `blocked_domains` table is what stops the domain being
+    // added AGAIN on a fresh account after this row is deleted.
+    blockedAt: tstz("blocked_at"),
+
     createdAt: tstz("created_at").notNull(),
     updatedAt: tstz("updated_at").notNull(),
   },
@@ -151,6 +158,30 @@ export const sendingDomains = pgTable(
     index("idx_sending_domains_account_status").on(t.accountId, t.verificationStatus),
   ],
 );
+
+// Domains banned from Day3 platform-wide, for abuse.
+//
+// WHY A SEPARATE TABLE AND NOT JUST A FLAG ON sending_domains. Domain ownership
+// is enforced by `isDomainClaimed`, which asks whether ANY sending_domains row
+// holds the name. In September 2026 an attacker whose accounts had been paused
+// simply deleted the domains from those accounts (a paused account can still log
+// in), which made the names unclaimed, then re-verified them on a brand new org
+// an hour later and resumed. A flag on a row the tenant can delete is not a ban.
+// This table is keyed on the bare domain name, is written only by operators, and
+// is consulted before any row is created, so a name that burned one account stays
+// burned no matter how many orgs are created after it.
+//
+// Not account-scoped, by design: the whole point is to answer "has this name
+// ever been used to abuse the platform" across tenants.
+export const blockedDomains = pgTable("blocked_domains", {
+  domain: text("domain").primaryKey(),
+  reason: text("reason").notNull(),
+  // The account whose abuse earned the ban, for the audit trail. Nullable so the
+  // ban survives that account being purged.
+  sourceAccountId: text("source_account_id"),
+  createdBy: text("created_by").notNull(),
+  createdAt: tstz("created_at").notNull(),
+});
 
 // A saved "From" identity — a from-name + from-address pair bound to a sending
 // domain. Replaces free-text From entry in the campaign composer: users pick a
@@ -1598,6 +1629,7 @@ export type TransactionalEmail = typeof transactionalEmails.$inferSelect;
 export type SuppressionEntry = typeof suppressionEntries.$inferSelect;
 export type RiskReview = typeof riskReviews.$inferSelect;
 export type ContentReview = typeof contentReviews.$inferSelect;
+export type BlockedDomain = typeof blockedDomains.$inferSelect;
 export type JobLog = typeof jobLogs.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type IdempotencyKey = typeof idempotencyKeys.$inferSelect;

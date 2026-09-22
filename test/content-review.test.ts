@@ -12,7 +12,9 @@ import type { Db } from "../src/db/client";
 import { accounts, contentReviews } from "../src/db/schema";
 import {
   contentFingerprint,
+  enforceBlockedVerdict,
   findContentReview,
+  isBlocking,
   reviewAndStoreContent,
   screenTransactionalContent,
 } from "../src/services/content-review";
@@ -69,16 +71,83 @@ describe("deterministic screen: the September 2026 phishing run", () => {
   });
 
   it("stops impersonating once the mail is actually sent by the brand", () => {
-    // Same words, same links, but now sent from hotdoc.com.au. Nothing about
-    // this is phishing, and the rule has to know the difference — otherwise
-    // every company that links to its own website is blocked.
+    // Same words, now sent from hotdoc.com.au and pointing at hotdoc.com.au.
+    // Nothing about this is phishing, and the rule has to know the difference,
+    // otherwise every company that links to its own website is blocked. (The
+    // ClickFunnels button is swapped for the brand's own site too: a sign-in
+    // ask behind a throwaway host is refused whoever sends it, by the second
+    // pair, and that is deliberate.)
     const review = screenTransactionalContent({
       ...HOTDOC_PHISH,
       fromEmail: "news@hotdoc.com.au",
       sendingDomain: "hotdoc.com.au",
+      html: HOTDOC_PHISH.html.replace(
+        "https://johnnyalfredosteamwfea48.myclickfunnels.com/hotdoc",
+        "https://www.hotdoc.com.au/account",
+      ),
     });
     expect(review.categories).not.toContain("brand_impersonation");
     expect(review.riskLevel).not.toBe("blocked");
+  });
+});
+
+describe("deterministic screen: the third account's trimmed variant", () => {
+  // What he sent after the impersonation pair blocked him: no hotdoc.com.au
+  // link, no SendGrid pixel, From name "Hot Doc", the Medicare ask kept, the
+  // button still on ClickFunnels. It scored `high` and 475 went out.
+  const trimmed = {
+    subject: "Please Confirm Your Medicare Billing and Payment Information",
+    fromEmail: "info@globalcitiys.com",
+    fromName: "Hot Doc",
+    sendingDomain: "globalcitiys.com",
+    html: `<p>Hi Customer,</p>
+           <p>To make sure your details are ready, please sign in to your account and confirm your billing and payment information.</p>
+           <a href="https://johnnyalfredosteamwfea48.myclickfunnels.com/hotdoc">Sign In</a>
+           <img src="https://pub-9c74b83077814cc6893883a70936276c.r2.dev/x.jpg" />`,
+    text: null,
+  };
+
+  it("is blocked outright by the credential-harvest + throwaway-host pair", () => {
+    const review = screenTransactionalContent(trimmed);
+    expect(review.categories).toContain("credential_harvest");
+    expect(review.categories).toContain("disposable_cta");
+    expect(review.riskLevel).toBe("blocked");
+  });
+
+  it("a payment ask on the sender's own domain is not blocked by that pair", () => {
+    const review = screenTransactionalContent({
+      ...trimmed,
+      html: trimmed.html.replace(
+        "https://johnnyalfredosteamwfea48.myclickfunnels.com/hotdoc",
+        "https://globalcitiys.com/account",
+      ),
+    });
+    expect(review.riskLevel).not.toBe("blocked");
+  });
+});
+
+describe("isBlocking: trust is earned", () => {
+  const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+  const young = { createdAt: daysAgo(0), rampLiftedAt: null };
+  const old = { createdAt: daysAgo(30), rampLiftedAt: null };
+  const lifted = { createdAt: daysAgo(0), rampLiftedAt: daysAgo(0) };
+
+  it("blocked refuses everyone", () => {
+    expect(isBlocking({ riskLevel: "blocked" }, young)).toBe(true);
+    expect(isBlocking({ riskLevel: "blocked" }, old)).toBe(true);
+    expect(isBlocking({ riskLevel: "blocked" })).toBe(true);
+  });
+
+  it("high refuses only accounts still inside the ramp", () => {
+    expect(isBlocking({ riskLevel: "high" }, young)).toBe(true);
+    expect(isBlocking({ riskLevel: "high" }, old)).toBe(false);
+    expect(isBlocking({ riskLevel: "high" }, lifted)).toBe(false);
+    expect(isBlocking({ riskLevel: "high" })).toBe(false);
+  });
+
+  it("medium and low never refuse", () => {
+    expect(isBlocking({ riskLevel: "medium" }, young)).toBe(false);
+    expect(isBlocking({ riskLevel: "low" }, young)).toBe(false);
   });
 });
 
@@ -207,6 +276,41 @@ describe("review cache", () => {
     const fingerprint = contentFingerprint(HOTDOC_PHISH);
     expect(await findContentReview(db, a.id, fingerprint)).not.toBeNull();
     expect(await findContentReview(db, b.id, fingerprint)).toBeNull();
+  });
+
+  it("pauses a new account on its first blocked verdict", async () => {
+    const account = await seedAccount(db, {
+      rampLiftedAt: null,
+      createdAt: new Date().toISOString(),
+    });
+    await reviewAndStoreContent(db, account.id, HOTDOC_PHISH, undefined);
+
+    const after = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
+    expect(after!.riskStatus).toBe("paused");
+    expect(after!.sendingEnabled).toBe(false);
+    expect(after!.pausedReason).toMatch(/pre-send review blocked/);
+  });
+
+  it("does not pause an established account on a blocked verdict", async () => {
+    // A 422 and an admin-queue row, not a pause: an established customer whose
+    // migrated template trips the reviewer must not lose their whole account.
+    const account = await seedAccount(db); // rampLiftedAt set by the helper
+    await reviewAndStoreContent(db, account.id, HOTDOC_PHISH, undefined);
+
+    const after = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
+    expect(after!.riskStatus).toBe("normal");
+    expect(after!.sendingEnabled).toBe(true);
+  });
+
+  it("enforceBlockedVerdict flips an account exactly once", async () => {
+    const account = await seedAccount(db, {
+      rampLiftedAt: null,
+      createdAt: new Date().toISOString(),
+    });
+    const verdict = { id: "cvw_x", riskLevel: "blocked", summary: "s", subject: "t" };
+    expect(await enforceBlockedVerdict(db, account, verdict)).toBe(true);
+    const paused = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
+    expect(await enforceBlockedVerdict(db, paused!, verdict)).toBe(false);
   });
 
   it("survives a concurrent first review of the same content", async () => {

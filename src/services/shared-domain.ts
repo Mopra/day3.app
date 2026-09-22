@@ -146,10 +146,22 @@ export function sharedDomainUsable(domain: {
  * Called from campaignSendGateError and the automation/transactional send paths,
  * so every front door asks the same question and gets the same answer.
  */
+// Deliberately says nothing about why. The recipient of this message is, by
+// definition, someone we have already decided not to trust with our mail.
+export const BLOCKED_DOMAIN_MESSAGE =
+  "This sending domain cannot be used on Day3. Contact support if you believe this is a mistake.";
+
 export function sharedDomainSendError(
-  domain: { shared: boolean; sharedDisabledAt: string | null },
+  domain: { shared: boolean; sharedDisabledAt: string | null; blockedAt?: string | null },
   opts: { sandbox: boolean },
 ): string | null {
+  // A platform-wide ban outranks everything below, including the shared-domain
+  // rules. This is checked HERE, in the one function every send door already
+  // calls with the domain row in hand (campaign submit, test send, automation
+  // publish, automation send, POST /v1/emails), rather than at each door, so a
+  // banned domain is refused everywhere by construction and a new send path
+  // cannot forget it. See services/blocked-domains.ts for how a ban is placed.
+  if (domain.blockedAt) return BLOCKED_DOMAIN_MESSAGE;
   if (!domain.shared) return null;
   if (domain.sharedDisabledAt !== null) {
     return "This account can no longer send from the Day3 test address. Verify your own sending domain to keep sending.";

@@ -143,7 +143,7 @@ export async function sendTransactionalEmail(
     },
     process.env.AI_REVIEW_MODE,
   );
-  if (isBlocking(review)) {
+  if (isBlocking(review, account)) {
     await countRefusal(db, review.id);
     await finishTerminal(db, email, "failed", blockedMessage(review));
     void logger.reportError(

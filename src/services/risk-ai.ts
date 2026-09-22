@@ -30,6 +30,7 @@ const RISK_CATEGORIES = [
   "brand_impersonation",
   "credential_harvest",
   "foreign_tracking",
+  "disposable_cta",
   "other_spam_signal",
 ] as const;
 

@@ -290,13 +290,13 @@ export const POST = apiRoute(async (req, ctx) => {
   };
   const fingerprint = contentFingerprint(reviewContent);
   const cachedReview = await findContentReview(db, account.id, fingerprint);
-  if (cachedReview && isBlocking(cachedReview)) {
+  if (cachedReview && isBlocking(cachedReview, account)) {
     await countRefusal(db, cachedReview.id);
     throw new ApiError(422, "content_blocked", blockedMessage(cachedReview));
   }
   if (!cachedReview) {
     const screen = screenTransactionalContent(reviewContent);
-    if (screen.riskLevel === "blocked") {
+    if (isBlocking(screen, account)) {
       // Persist the deterministic verdict (no AI call — `undefined` mode keeps
       // this on the request path's zero-I/O budget) so every repeat is the
       // cached branch above rather than a fresh screen.

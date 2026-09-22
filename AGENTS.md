@@ -98,13 +98,41 @@ serves the UI and the API routes; a separate long-running Node worker
      attacker could hide in what it erases.
 
    In `runDeterministicRiskChecks`, **no single phishing signal blocks — it takes
-   a pair, and `brand_impersonation` must be one of them.** Each signal alone has
-   an innocent reading that real mail depends on: every signup confirmation says
-   "verify your account", every newsletter links to the companies it writes about,
-   and a customer migrating off SendGrid pastes in a template with the old pixel
-   still in it. Blocking on any one of those breaks a customer's auth flow on
-   their first day. Impersonation plus an ask has no innocent reading, which is
-   what makes it safe to block outright.
+   a pair.** Two pairs block: `brand_impersonation` + (`credential_harvest` or
+   `foreign_tracking`), and `credential_harvest` + `disposable_cta`. Each signal
+   alone has an innocent reading that real mail depends on: every signup
+   confirmation says "verify your account", every newsletter links to the
+   companies it writes about, and a customer migrating off SendGrid pastes in a
+   template with the old pixel still in it. Blocking on any one of those breaks a
+   customer's auth flow on their first day. The second pair was learned the hard
+   way: blocked on impersonation, the attacker's third account dropped the brand
+   link and the pixel, kept "confirm your billing and payment information" behind
+   a ClickFunnels button, scored `high`, and sent 475 before the ramp stopped him.
+
+   **Verdicts are read against the account's age.** `isBlocking(review, account)`
+   refuses `blocked` for everyone and `high` only while the account is inside the
+   new-account ramp; an established customer's `high` sends and lands in the admin
+   queue. And `enforceBlockedVerdict` **pauses a ramped account on its first
+   `blocked` verdict**: a two-hour-old workspace whose first message is phishing is
+   not a customer who made a mistake, and pausing on the first block is what ends
+   the probe-until-it-passes loop (a paused account is refused before content is
+   read). Established accounts get a 422, never a pause.
+
+   **The AI pass only runs when the worker has `AI_REVIEW_MODE=ai` and
+   `OPENROUTER_API_KEY`.** `mock` (the example default) is deterministic-only, and
+   `content_reviews.raw_response_json` is NULL on every row when that is what
+   production is running. It was, for the whole of this incident.
+
+   **A banned domain stays banned across accounts** (`src/services/blocked-domains.ts`).
+   `isDomainClaimed` is an ownership rule, not a ban: the attacker deleted the
+   domains from his paused accounts (a paused account can still log in) and
+   re-verified them on a fresh org within the hour. `blocked_domains` is keyed on
+   the bare name and checked before any row is created; `sending_domains.blocked_at`
+   is stamped on existing rows and refused by `sharedDomainSendError`, the one
+   gate every send door already calls, so a ban needs no per-door wiring. A paused
+   account cannot delete its domains (`DELETE /api/domains/[id]`). Banning is a
+   separate admin action from pausing on purpose: an honest account paused for a
+   stale list must keep its domain.
 
 7. **Sending over the API needs the `campaigns:send` scope**
    (`src/api/v1/scopes.ts`). Everything else a key can do is the base grant.

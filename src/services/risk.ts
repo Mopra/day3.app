@@ -349,7 +349,7 @@ const SIGNALS: Signal[] = [
     test: (i) => referencedHosts(i.htmlBody).some((h) => hostMatches(h, FOREIGN_ESP_TRACKING_HOSTS)),
   },
   {
-    category: "link_mismatch",
+    category: "disposable_cta",
     score: 25,
     description: "Call to action points at a throwaway landing-page host",
     fix: "Point the main link at your own domain. Funnel and site-builder links (ClickFunnels, Google Forms, *.vercel.app, …) are heavily abused to host fake sign-in pages, so they score badly with spam filters.",
@@ -434,6 +434,24 @@ export function runDeterministicRiskChecks(input: RiskCheckInput): CampaignRiskR
     categories.has("brand_impersonation") &&
     (categories.has("credential_harvest") || categories.has("foreign_tracking"))
   ) {
+    categories.add("phishing_like");
+    riskLevel = "blocked";
+    score = 100;
+  }
+
+  // The second pair, learned from the attacker's third account. Having been
+  // blocked on the impersonation pair, he dropped the brand link and the pixel,
+  // kept "confirm your Medicare billing and payment information", and pointed the
+  // button at the same ClickFunnels page. That scored `high` and 475 emails went
+  // out before the ramp stopped him.
+  //
+  // Asking a reader for payment or sign-in details behind a link to a
+  // throwaway page-builder host is a credential harvester whatever the From name
+  // says. The innocent reading — a real business collecting card details through
+  // a Google Form — is a thing that exists, is a PCI violation when it does, and
+  // is not what a newsletter platform is for. A 422 with the fix spelled out is
+  // the right answer to it.
+  if (categories.has("credential_harvest") && categories.has("disposable_cta")) {
     categories.add("phishing_like");
     riskLevel = "blocked";
     score = 100;

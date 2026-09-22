@@ -221,6 +221,16 @@ function adminRoutes(): AdminRoute[] {
       }),
     },
     {
+      path: "accounts/[id]/block-domains",
+      importPath: "../app/api/admin/accounts/[id]/block-domains/route",
+      method: "POST",
+      build: async () => ({
+        url: "http://localhost/api/admin/accounts/" + seeded.accountId + "/block-domains",
+        params: { id: seeded.accountId },
+        body: { reason: "abuse" },
+      }),
+    },
+    {
       path: "accounts/[id]/api-keys/[keyId]",
       importPath: "../app/api/admin/accounts/[id]/api-keys/[keyId]/route",
       method: "DELETE",

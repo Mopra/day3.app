@@ -31,9 +31,12 @@
 import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import type { Db } from "../db/client";
-import { contentReviews, type ContentReview } from "../db/schema";
+import { accounts, contentReviews, type Account, type ContentReview } from "../db/schema";
 import { newId, nowIso } from "../lib/ids";
+import { logJob } from "../lib/job-log";
+import { logger } from "../lib/logger";
 import { htmlToText } from "./risk-ai";
+import { rampDailyLimit } from "./send-ramp";
 import {
   extractImageSources,
   extractLinks,
@@ -132,9 +135,98 @@ export function contentFingerprint(content: TransactionalContent): string {
   return createHash("sha256").update(material, "utf8").digest("hex");
 }
 
-/** A stored verdict that refuses the send. */
-export function isBlocking(review: Pick<ContentReview, "riskLevel">): boolean {
-  return review.riskLevel === "blocked";
+/** An account still inside the new-account ramp (services/send-ramp.ts). */
+export function isUnderRamp(
+  account: Pick<Account, "createdAt" | "rampLiftedAt">,
+  now = new Date(),
+): boolean {
+  return rampDailyLimit(account, now) !== null;
+}
+
+/**
+ * Does this verdict refuse the send?
+ *
+ * `blocked` always does. `high` does too, but only while the account is still
+ * inside the new-account ramp. Trust is earned: an established customer whose
+ * password reset trips a `high` keeps sending and shows up in the admin queue,
+ * because breaking their auth flow costs more than the false positive. A
+ * two-hour-old workspace has no such history, and `high` on it is much more
+ * often what it looks like. The attacker's third account is the case in point:
+ * having been blocked on the impersonation pair, he trimmed the content until
+ * it scored `high`, and 475 emails went out on that verdict.
+ */
+export function isBlocking(
+  review: Pick<ContentReview, "riskLevel">,
+  account?: Pick<Account, "createdAt" | "rampLiftedAt"> | null,
+): boolean {
+  if (review.riskLevel === "blocked") return true;
+  if (review.riskLevel === "high" && account && isUnderRamp(account)) return true;
+  return false;
+}
+
+/**
+ * A `blocked` verdict on an account still inside the ramp pauses the account.
+ *
+ * A brand-new workspace whose first messages the reviewer refuses as phishing
+ * is essentially never a customer who made a mistake. Every one of the three
+ * accounts in the September 2026 incident would have been stopped at message #1
+ * by this rule alone, and each went on to probe the reviewer with variants
+ * until one passed. Pausing on the first block ends the probing, because a
+ * paused account is refused before content is even looked at. Established
+ * accounts are exempt: they earn a 422 and an admin-queue entry, not a pause.
+ *
+ * Guarded on `risk_status = 'normal'` so the transition happens once and the
+ * audit row is written once. Best-effort: the refusal has already happened.
+ */
+export async function enforceBlockedVerdict(
+  db: Db,
+  account: Account,
+  review: Pick<ContentReview, "id" | "riskLevel" | "summary" | "subject">,
+): Promise<boolean> {
+  if (review.riskLevel !== "blocked") return false;
+  if (!isUnderRamp(account)) return false;
+  if (account.riskStatus !== "normal") return false;
+
+  const subject = review.subject.slice(0, 80);
+  const reason =
+    "Automated: the pre-send review blocked phishing-like content on a new workspace (\"" +
+    subject + "\"). " + review.summary;
+  try {
+    const flipped = await db
+      .update(accounts)
+      .set({
+        sendingEnabled: false,
+        riskStatus: "paused",
+        pausedReason: reason,
+        updatedAt: nowIso(),
+      })
+      .where(and(eq(accounts.id, account.id), eq(accounts.riskStatus, "normal")))
+      .returning({ id: accounts.id });
+    if (flipped.length === 0) return false;
+
+    await logJob(db, {
+      jobType: "admin_action",
+      entityType: "account",
+      entityId: account.id,
+      status: "completed",
+      payload: {
+        action: "account.pause",
+        actorEmail: "system:content-review",
+        actorUserId: "system",
+        reason,
+        contentReviewId: review.id,
+      },
+    });
+    void logger.reportError(
+      "new account auto-paused: pre-send review blocked phishing content",
+      new Error(review.summary),
+      { accountId: account.id, accountName: account.name, contentReviewId: review.id },
+    );
+    return true;
+  } catch (err) {
+    console.error("[content-review] auto-pause failed for " + account.id + ":", err);
+    return false;
+  }
 }
 
 /** Reads the cached verdict for this content, or null if it has not been reviewed. */
@@ -233,7 +325,13 @@ export async function reviewAndStoreContent(
   // Re-read rather than trusting the insert: on conflict the winner's row is
   // the one every later send must agree with.
   const stored = await findContentReview(db, accountId, fingerprint);
-  if (stored) return stored;
+  if (stored) {
+    if (stored.riskLevel === "blocked") {
+      const account = await db.query.accounts.findFirst({ where: eq(accounts.id, accountId) });
+      if (account) await enforceBlockedVerdict(db, account, stored);
+    }
+    return stored;
+  }
 
   // Unreachable in practice (we just inserted or conflicted). Falling back to a
   // synthesised row keeps the caller's contract total rather than throwing on
@@ -258,7 +356,14 @@ export async function reviewAndStoreContent(
 }
 
 /** The message shown to an API caller whose content was refused. */
-export function blockedMessage(review: Pick<ContentReview, "summary">): string {
+export function blockedMessage(review: Pick<ContentReview, "summary" | "riskLevel">): string {
+  if (review.riskLevel === "high") {
+    return (
+      "This email was held by Day3's automated safety review and was not sent. New workspaces " +
+      "cannot send high-risk content during their first two weeks. " +
+      review.summary
+    );
+  }
   return (
     "This email was blocked by Day3's automated safety review and was not sent. " +
     review.summary

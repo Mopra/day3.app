@@ -170,6 +170,22 @@ export default function AdminAccountPage() {
           >
             {account.rampLiftedAt ? "Restore send ramp" : "Lift send ramp"}
           </Button>
+          {/* Bans every non-shared domain on this account platform-wide, so a
+              paused abuser cannot release a domain and re-verify it on a fresh
+              org. Separate from Pause on purpose: an honest account paused for a
+              stale list must not lose its domain. */}
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={() => {
+              const reason = window.prompt(
+                "Ban every sending domain on this account platform-wide? Give a reason:",
+              );
+              if (reason) act("/api/admin/accounts/" + account.id + "/block-domains", { reason });
+            }}
+          >
+            Ban domains
+          </Button>
           {account.riskStatus === "paused" ? (
             <Button
               disabled={busy}

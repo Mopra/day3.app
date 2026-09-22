@@ -7,7 +7,9 @@ import { findDomain } from "@/api/finders";
 import { listDomains } from "@/api/lists";
 import { sendingDomains, senders } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
+import { isDomainBlocked } from "@/services/blocked-domains";
 import { isDomainClaimed } from "@/services/domain-ownership";
+import { BLOCKED_DOMAIN_MESSAGE } from "@/services/shared-domain";
 import { createDomainIdentity } from "@/services/ses-identity";
 
 export const GET = route(async () => {
@@ -41,6 +43,15 @@ export const POST = route(async (req: NextRequest) => {
   // as the real owner. See services/domain-ownership.ts for the full reasoning.
   // The same 409 whether the holder is this account or another one: which
   // tenants use which domains isn't ours to leak.
+  // A platform-wide ban is checked BEFORE ownership. Ownership only says who
+  // holds the name right now; a ban says the name is done on Day3 regardless
+  // of who is asking or whether anyone currently holds it. Without this, an
+  // attacker whose account was paused could release the domain and re-add it
+  // on a fresh org (services/blocked-domains.ts).
+  if (await isDomainBlocked(db, domain)) {
+    throw new HttpError(403, BLOCKED_DOMAIN_MESSAGE);
+  }
+
   if (await isDomainClaimed(db, domain)) {
     throw new HttpError(409, "That domain is already added");
   }

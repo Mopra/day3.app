@@ -22,6 +22,19 @@ export const DELETE = route<{ params: Promise<{ id: string }> }>(async (_req, { 
   const domain = await findDomain(db, account.id, id);
   if (!domain) throw new HttpError(404, "Not found");
 
+  // A paused account keeps its domains. Deleting a row is what frees the name
+  // for a NEW account (ownership is "does any row hold it"), and a paused
+  // account releasing its domain and re-claiming it on a fresh org is precisely
+  // how a September 2026 phishing run came back an hour after it was stopped.
+  // A ban (blocked_at) is the same story: the row is evidence and the anchor of
+  // the block, not the tenant's to remove.
+  if (account.riskStatus === "paused" || domain.blockedAt) {
+    throw new HttpError(
+      403,
+      "This domain cannot be removed while the account is paused. Contact support.",
+    );
+  }
+
   const blocking = await db.query.campaigns.findFirst({
     where: and(
       eq(campaigns.accountId, account.id),
