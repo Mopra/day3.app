@@ -281,6 +281,13 @@
       "when": 1790054717151,
       "tag": "0039_calm_purple_man",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1790204604169,
+      "tag": "0040_remarkable_thunderbolts",
+      "breakpoints": true
     }
   ]
 }

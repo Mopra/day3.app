@@ -968,6 +968,14 @@ export const contentReviews = pgTable(
     fromEmail: text("from_email").notNull(),
     fromName: text("from_name"),
 
+    // True when the DETERMINISTIC floor blocked this content via one of the
+    // phishing pair rules (risk.ts `phishing_pair`). It is what may refuse an
+    // established sender's transactional mail; an AI verdict or a single
+    // keyword never can (content-review.ts isBlocking). Defaults false, so
+    // verdicts cached before this existed refuse nothing for established
+    // senders, which is the point: several of them were model false positives.
+    hardBlock: boolean("hard_block").notNull().default(false),
+
     // How many send attempts this verdict has refused. The counter is the
     // abuse signal an operator actually wants to sort by: a blocked verdict
     // with 16,000 refusals behind it is an attack in progress, one with 1 is a

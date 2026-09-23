@@ -109,14 +109,25 @@ serves the UI and the API routes; a separate long-running Node worker
    link and the pixel, kept "confirm your billing and payment information" behind
    a ClickFunnels button, scored `high`, and sent 475 before the ramp stopped him.
 
-   **Verdicts are read against the account's age.** `isBlocking(review, account)`
-   refuses `blocked` for everyone and `high` only while the account is inside the
-   new-account ramp; an established customer's `high` sends and lands in the admin
-   queue. And `enforceBlockedVerdict` **pauses a ramped account on its first
-   `blocked` verdict**: a two-hour-old workspace whose first message is phishing is
-   not a customer who made a mistake, and pausing on the first block is what ends
-   the probe-until-it-passes loop (a paused account is refused before content is
-   read). Established accounts get a 422, never a pause.
+   **Day3 is a transactional email service too, and an established sender's
+   transactional mail is never refused by a guess.** `isBlocking(review, account)`
+   refuses: a **phishing pair** (`content_reviews.hard_block`, set only when the
+   deterministic floor fired a pair; category `phishing_pair`) for everyone; any
+   `blocked` verdict (keyword or AI) only while the account is inside the
+   new-account ramp; and `high` for nobody. An established sender's AI or keyword
+   `blocked` lands in the admin queue and SENDS. This rule is what stopped Day3
+   dropping Exit1.dev's SSL-expiry alerts: the model read an uptime service naming
+   its customer's website as that service impersonating itself, and a keyword list
+   matched `bitcoin` inside a monitored site called "Bitcoingo". Reputation
+   (`health.ts`) is what polices established senders, because it measures what
+   recipients did. `enforceBlockedVerdict` auto-pauses a ramped account only on a
+   hard block: a model guess may refuse a new account's message, never pause its
+   workspace. Prohibited-industry terms match whole words only (transactional mail
+   quotes names the sender does not choose), and the terms were picked to avoid
+   `favicon.ico`, "time slots" and "Order #XXX". The AI prompt is told Day3 carries
+   transactional mail, that notifications naming third parties are not
+   impersonation, and whether the From name matches the sending domain
+   (`fromNameMatchesSendingDomain`).
 
    **The AI pass only runs when the worker has `AI_REVIEW_MODE=ai` and
    `OPENROUTER_API_KEY`.** `mock` (the example default) is deterministic-only, and

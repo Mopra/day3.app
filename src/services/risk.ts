@@ -69,6 +69,35 @@ function wordsPresent(text: string, words: string[], min = 1): boolean {
   return false;
 }
 
+// Whole-word variant, for the prohibited-industry lists. Substring matching
+// there hard-blocked a real monitoring alert because the customer's site was
+// called "Bitcoingo VOBA MSW": `bitcoin` is a substring of it. Transactional
+// mail routinely quotes names the sender does not choose (a monitored site, a
+// customer's company, an order line), so a prohibited term only counts as a
+// word in its own right.
+function wholeWordsPresent(text: string, words: string[], min = 1): boolean {
+  let hits = 0;
+  for (const w of words) {
+    const escaped = w.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`).test(text)) hits++;
+    if (hits >= min) return true;
+  }
+  return false;
+}
+
+/**
+ * Does the From display name name the SENDER's own brand? "Exit1.dev" sent
+ * from updates.exit1.dev does; "HotDoc" sent from globalcitiys.com does not.
+ * Handed to the AI pass as a fact, because without it the model read a
+ * monitoring service naming its customer's website as the monitoring service
+ * impersonating itself, and dropped real SSL-expiry alerts.
+ */
+export function fromNameMatchesSendingDomain(input: RiskCheckInput): boolean {
+  const label = brandLabel(input.sendingDomain.toLowerCase());
+  if (!label) return false;
+  return nameTokens(input.fromName).some((t) => t === label || t.includes(label));
+}
+
 export function extractLinks(html: string): string[] {
   const links: string[] = [];
   const re = /href\s*=\s*["']([^"']+)["']/gi;
@@ -224,21 +253,21 @@ const SIGNALS: Signal[] = [
     description: "Crypto/investment terms",
     fix: "Remove the cryptocurrency/investment promotion — crypto and investment offers are a prohibited category Day3 can't deliver mail for.",
     test: (_i, t) =>
-      wordsPresent(t, ["crypto", "bitcoin", "ethereum", "token sale", "ico ", "airdrop", "web3 investment"], 1),
+      wholeWordsPresent(t, ["crypto", "bitcoin", "ethereum", "token sale", "initial coin offering", "airdrop", "web3 investment"], 1),
   },
   {
     category: "prohibited_industry",
     score: 60,
     description: "Gambling terms",
     fix: "Remove the gambling content — gambling promotion is a prohibited category Day3 can't deliver mail for.",
-    test: (_i, t) => wordsPresent(t, ["casino", "betting", "poker", "jackpot", "slots", "sportsbook"], 1),
+    test: (_i, t) => wholeWordsPresent(t, ["casino", "betting", "poker", "jackpot", "slot machine", "online slots", "sportsbook"], 1),
   },
   {
     category: "prohibited_industry",
     score: 80,
     description: "Adult content terms",
     fix: "Remove the adult content — it's a prohibited category Day3 can't deliver mail for.",
-    test: (_i, t) => wordsPresent(t, ["adult content", "xxx", "porn", "onlyfans", "escort"], 1),
+    test: (_i, t) => wholeWordsPresent(t, ["adult content", "porn", "onlyfans", "escort service"], 1),
   },
   {
     category: "cold_outreach",
@@ -436,6 +465,12 @@ export function runDeterministicRiskChecks(input: RiskCheckInput): CampaignRiskR
     (categories.has("credential_harvest") || categories.has("foreign_tracking"))
   ) {
     categories.add("phishing_like");
+    // `phishing_pair` marks a block that came from one of the two pair rules,
+    // as opposed to a single keyword or the AI. It is the ONLY kind of verdict
+    // allowed to refuse an established sender's transactional mail
+    // (services/content-review.ts isBlocking): the pairs are precise enough to
+    // stand behind, a keyword or a model guess is not.
+    categories.add("phishing_pair");
     riskLevel = "blocked";
     score = 100;
   }
@@ -454,6 +489,7 @@ export function runDeterministicRiskChecks(input: RiskCheckInput): CampaignRiskR
   // the right answer to it.
   if (categories.has("credential_harvest") && categories.has("disposable_cta")) {
     categories.add("phishing_like");
+    categories.add("phishing_pair");
     riskLevel = "blocked";
     score = 100;
   }

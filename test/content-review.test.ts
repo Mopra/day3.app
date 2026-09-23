@@ -132,22 +132,81 @@ describe("isBlocking: trust is earned", () => {
   const old = { createdAt: daysAgo(30), rampLiftedAt: null };
   const lifted = { createdAt: daysAgo(0), rampLiftedAt: daysAgo(0) };
 
-  it("blocked refuses everyone", () => {
-    expect(isBlocking({ riskLevel: "blocked" }, young)).toBe(true);
-    expect(isBlocking({ riskLevel: "blocked" }, old)).toBe(true);
-    expect(isBlocking({ riskLevel: "blocked" })).toBe(true);
+  it("a phishing pair refuses everyone", () => {
+    expect(isBlocking({ riskLevel: "blocked", hardBlock: true }, young)).toBe(true);
+    expect(isBlocking({ riskLevel: "blocked", hardBlock: true }, old)).toBe(true);
+    expect(isBlocking({ riskLevel: "blocked", hardBlock: true }, lifted)).toBe(true);
   });
 
-  it("high refuses only accounts still inside the ramp", () => {
-    expect(isBlocking({ riskLevel: "high" }, young)).toBe(true);
+  it("an AI or keyword block refuses only accounts inside the ramp", () => {
+    expect(isBlocking({ riskLevel: "blocked", hardBlock: false }, young)).toBe(true);
+    // The Exit1.dev case: an established sender's alert the model misread.
+    expect(isBlocking({ riskLevel: "blocked", hardBlock: false }, old)).toBe(false);
+    expect(isBlocking({ riskLevel: "blocked", hardBlock: false }, lifted)).toBe(false);
+  });
+
+  it("high refuses nobody", () => {
+    expect(isBlocking({ riskLevel: "high" }, young)).toBe(false);
     expect(isBlocking({ riskLevel: "high" }, old)).toBe(false);
-    expect(isBlocking({ riskLevel: "high" }, lifted)).toBe(false);
     expect(isBlocking({ riskLevel: "high" })).toBe(false);
   });
 
   it("medium and low never refuse", () => {
     expect(isBlocking({ riskLevel: "medium" }, young)).toBe(false);
     expect(isBlocking({ riskLevel: "low" }, young)).toBe(false);
+  });
+});
+
+describe("transactional alerts that were wrongly dropped", () => {
+  // Real Exit1.dev mail from 22 Sep 2026. Uptime and SSL alerts name the
+  // customer's own site, which is arbitrary text the sender does not choose.
+  const exit1 = {
+    fromEmail: "alerts@updates.exit1.dev",
+    fromName: "Exit1.dev",
+    sendingDomain: "updates.exit1.dev",
+    text: null,
+  };
+
+  it("an SSL alert naming a crypto-sounding site is not a prohibited industry", () => {
+    const review = screenTransactionalContent({
+      ...exit1,
+      subject: "SSL WARNING: Bitcoingo VOBA MSW certificate expires soon",
+      html: `<p>The SSL certificate for Bitcoingo VOBA MSW (bitcoingo-voba.de) expires in 7 days.</p>
+             <a href="https://bitcoingo-voba.de">bitcoingo-voba.de</a>
+             <a href="https://app.exit1.dev/monitors/1">View monitor</a>`,
+    });
+    expect(review.categories).not.toContain("prohibited_industry");
+    expect(review.riskLevel).not.toBe("blocked");
+  });
+
+  it("an SSL alert about a third-party site is not impersonation", () => {
+    const review = screenTransactionalContent({
+      ...exit1,
+      subject: "SSL WARNING: Ruth Strauss Foundation certificate expires soon",
+      html: `<p>The certificate for ruthstraussfoundation.com expires soon.</p>
+             <a href="https://ruthstraussfoundation.com">ruthstraussfoundation.com</a>`,
+    });
+    expect(review.categories).not.toContain("brand_impersonation");
+    expect(review.riskLevel).toBe("low");
+  });
+
+  it("does not trip on favicons, booking slots or template placeholders", () => {
+    const review = screenTransactionalContent({
+      ...exit1,
+      subject: "Your booking is confirmed",
+      html: `<link rel="icon" href="https://acme.example/favicon.ico" />
+             <p>Order #XXX: we held two available time slots for you.</p>`,
+    });
+    expect(review.categories).not.toContain("prohibited_industry");
+  });
+
+  it("whole-word matching still catches the real thing", () => {
+    const review = screenTransactionalContent({
+      ...exit1,
+      subject: "Buy bitcoin now",
+      html: "<p>Invest in bitcoin today.</p>",
+    });
+    expect(review.categories).toContain("prohibited_industry");
   });
 });
 
@@ -307,7 +366,10 @@ describe("review cache", () => {
       rampLiftedAt: null,
       createdAt: new Date().toISOString(),
     });
-    const verdict = { id: "cvw_x", riskLevel: "blocked", summary: "s", subject: "t" };
+    const soft = { id: "cvw_y", riskLevel: "blocked", summary: "s", subject: "t", hardBlock: false };
+    // A model or keyword verdict never pauses, even a brand new account.
+    expect(await enforceBlockedVerdict(db, account, soft)).toBe(false);
+    const verdict = { id: "cvw_x", riskLevel: "blocked", summary: "s", subject: "t", hardBlock: true };
     expect(await enforceBlockedVerdict(db, account, verdict)).toBe(true);
     const paused = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
     expect(await enforceBlockedVerdict(db, paused!, verdict)).toBe(false);

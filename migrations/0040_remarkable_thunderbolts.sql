@@ -1,0 +1,1 @@
+ALTER TABLE "content_reviews" ADD COLUMN "hard_block" boolean DEFAULT false NOT NULL;

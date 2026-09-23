@@ -17,6 +17,7 @@ import {
   countRefusal,
   findContentReview,
   isBlocking,
+  isHardBlock,
   reviewAndStoreContent,
   screenTransactionalContent,
 } from "@/services/content-review";
@@ -296,7 +297,7 @@ export const POST = apiRoute(async (req, ctx) => {
   }
   if (!cachedReview) {
     const screen = screenTransactionalContent(reviewContent);
-    if (isBlocking(screen, account)) {
+    if (isBlocking({ riskLevel: screen.riskLevel, hardBlock: isHardBlock(screen) }, account)) {
       // Persist the deterministic verdict (no AI call — `undefined` mode keeps
       // this on the request path's zero-I/O budget) so every repeat is the
       // cached branch above rather than a fresh screen.

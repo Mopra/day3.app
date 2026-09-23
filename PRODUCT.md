@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-09-22**.
+> Last verified against the codebase: **2026-09-24**.
 
 ---
 
@@ -747,12 +747,19 @@ other. Each domain still opens to its own detail page.
     carrying that brand's lifted template), and asking for payment or sign-in details
     behind a link to a throwaway page-builder host (ClickFunnels, Google Forms,
     `*.vercel.app` and the like).
-  - **New workspaces are held to a higher bar.** During the two-week ramp, `high`-risk
-    content is held as well as `blocked` content, and a workspace whose content is
-    *blocked* in that window is paused automatically. Trust is earned: an established
-    customer whose migrated password-reset template trips the reviewer gets a `422` and
-    keeps sending; a two-hour-old workspace whose first message is phishing is not a
-    customer who made a mistake.
+  - **Transactional mail from an established sender is never dropped on a guess.** Only
+    the two precise phishing combinations above refuse mail from a workspace past its
+    two-week ramp. An AI or keyword verdict on such a sender is recorded for Day3's
+    team and the email still goes out: a password reset, receipt or monitoring alert
+    that silently never arrives is worse than almost any false positive. Established
+    senders are policed by their reputation (bounces, complaints, spam rejections)
+    instead, which measures what recipients actually did.
+  - **New workspaces are held to a higher bar.** Inside the ramp, any `blocked`
+    verdict refuses the email, and one of the phishing combinations pauses the
+    workspace automatically. A model verdict alone never pauses anyone.
+  - Automated notifications that name third parties (an SSL or uptime alert about a
+    customer's site, a domain-expiry warning) are reviewed as what they are: the named
+    site is the subject of the message, not a claim about who sent it.
 - **New workspaces ramp up their sending.** For the first two weeks an account's
   daily send ceiling rises with its age (500 on day one, then 2,000, 10,000 and
   50,000, lifting entirely after 14 days), capped always by the plan allowance and

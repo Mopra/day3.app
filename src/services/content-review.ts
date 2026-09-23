@@ -143,25 +143,46 @@ export function isUnderRamp(
   return rampDailyLimit(account, now) !== null;
 }
 
+/** True when the verdict's own categories say a phishing pair rule fired. */
+export function isHardBlock(review: { categories: string[] }): boolean {
+  return review.categories.includes("phishing_pair");
+}
+
 /**
  * Does this verdict refuse the send?
  *
- * `blocked` always does. `high` does too, but only while the account is still
- * inside the new-account ramp. Trust is earned: an established customer whose
- * password reset trips a `high` keeps sending and shows up in the admin queue,
- * because breaking their auth flow costs more than the false positive. A
- * two-hour-old workspace has no such history, and `high` on it is much more
- * often what it looks like. The attacker's third account is the case in point:
- * having been blocked on the impersonation pair, he trimmed the content until
- * it scored `high`, and 475 emails went out on that verdict.
+ * DAY3 IS A TRANSACTIONAL EMAIL SERVICE AS WELL AS A NEWSLETTER TOOL, and a
+ * wrongly dropped transactional email is not a deliverability blemish, it is
+ * a customer's password reset or outage alert that never arrived. So what may
+ * refuse mail depends on whether the sender has earned trust:
+ *
+ *   - A phishing PAIR (`hardBlock`) refuses everyone. The pairs are specific
+ *     enough to stand behind: impersonating another brand while asking for
+ *     credentials, or asking for credentials behind a throwaway page host.
+ *   - Inside the new-account ramp, a `blocked` verdict of any origin (keyword
+ *     or AI) refuses too. That is where abuse actually lives: all three
+ *     accounts in the September 2026 phishing run were hours old.
+ *   - An ESTABLISHED sender is never refused by a keyword or by the model. It
+ *     was, for a day: the AI pass read Exit1.dev's SSL-expiry alerts (which
+ *     name the customer's website) as Exit1.dev impersonating itself and
+ *     dropped them, and a keyword list dropped an alert because a monitored
+ *     site was called "Bitcoingo". Those verdicts still land in the admin
+ *     queue; they just do not stop the mail. Reputation (health.ts: bounces,
+ *     complaints, spam rejections) is what polices an established sender,
+ *     because it measures what recipients did rather than guessing at content.
+ *
+ * `high` refuses nobody. It used to refuse new accounts; the credential +
+ * throwaway-host pair now catches the variant that rule existed for.
  */
 export function isBlocking(
-  review: Pick<ContentReview, "riskLevel">,
+  review: { riskLevel: string; hardBlock?: boolean | null },
   account?: Pick<Account, "createdAt" | "rampLiftedAt"> | null,
 ): boolean {
-  if (review.riskLevel === "blocked") return true;
-  if (review.riskLevel === "high" && account && isUnderRamp(account)) return true;
-  return false;
+  if (review.hardBlock) return true;
+  if (review.riskLevel !== "blocked") return false;
+  // No account in hand: fail closed on a blocked verdict (no caller does this).
+  if (!account) return true;
+  return isUnderRamp(account);
 }
 
 /**
@@ -181,9 +202,13 @@ export function isBlocking(
 export async function enforceBlockedVerdict(
   db: Db,
   account: Account,
-  review: Pick<ContentReview, "id" | "riskLevel" | "summary" | "subject">,
+  review: Pick<ContentReview, "id" | "riskLevel" | "summary" | "subject" | "hardBlock">,
 ): Promise<boolean> {
-  if (review.riskLevel !== "blocked") return false;
+  // Only a phishing pair may pause an account. A model or keyword verdict can
+  // refuse a new account's message, but it is a guess, and pausing a brand new
+  // customer's whole workspace on a guess (a monitoring service's first alert,
+  // say) is not a mistake we get to make twice.
+  if (!review.hardBlock) return false;
   if (!isUnderRamp(account)) return false;
   if (account.riskStatus !== "normal") return false;
 
@@ -316,6 +341,9 @@ export async function reviewAndStoreContent(
       subject: content.subject,
       fromEmail: content.fromEmail,
       fromName: content.fromName ?? null,
+      // The AI's categories are a closed enum without `phishing_pair`, so this
+      // is true only when the deterministic floor itself fired a pair.
+      hardBlock: isHardBlock(review),
       blockedCount: 0,
       createdAt: now,
       updatedAt: now,
@@ -326,7 +354,7 @@ export async function reviewAndStoreContent(
   // the one every later send must agree with.
   const stored = await findContentReview(db, accountId, fingerprint);
   if (stored) {
-    if (stored.riskLevel === "blocked") {
+    if (stored.hardBlock) {
       const account = await db.query.accounts.findFirst({ where: eq(accounts.id, accountId) });
       if (account) await enforceBlockedVerdict(db, account, stored);
     }
@@ -349,6 +377,7 @@ export async function reviewAndStoreContent(
     subject: content.subject,
     fromEmail: content.fromEmail,
     fromName: content.fromName ?? null,
+    hardBlock: isHardBlock(review),
     blockedCount: 0,
     createdAt: now,
     updatedAt: now,
