@@ -98,8 +98,11 @@ serves the UI and the API routes; a separate long-running Node worker
      attacker could hide in what it erases.
 
    In `runDeterministicRiskChecks`, **no single phishing signal blocks — it takes
-   a pair.** Two pairs block: `brand_impersonation` + (`credential_harvest` or
-   `foreign_tracking`), and `credential_harvest` + `disposable_cta`. Each signal
+   a pair.** Two pairs block: `brand_impersonation` + (`credential_harvest`,
+   `account_threat` or `foreign_tracking`), and (`credential_harvest` or
+   `account_threat`) + `disposable_cta`. `account_threat` ("your account will be
+   suspended", "confirm your password") was once a single-keyword hard block and
+   refused ordinary dunning mail; only prohibited industries still block alone. Each signal
    alone has an innocent reading that real mail depends on: every signup
    confirmation says "verify your account", every newsletter links to the
    companies it writes about, and a customer migrating off SendGrid pastes in a
@@ -108,6 +111,18 @@ serves the UI and the API routes; a separate long-running Node worker
    way: blocked on impersonation, the attacker's third account dropped the brand
    link and the pixel, kept "confirm your billing and payment information" behind
    a ClickFunnels button, scored `high`, and sent 475 before the ramp stopped him.
+
+   The same checks were then found refusing (and auto-pausing) honest first-week
+   users, so three exemptions exist and each is argued in `risk.ts`: no
+   impersonation on the shared sandbox domain (its recipients are the org's own
+   members); an app-hosting subdomain (`*.vercel.app`, `github.io`, …) is only
+   `disposable_cta` when its tenant label does not name the *sending domain* (never
+   the From name, or `HotDoc` on `hotdoc.vercel.app` would pass); and a sending
+   label that is the brand plus a closed list of SaaS affixes (`getacme`, `acmehq`)
+   is the brand (`isBrandVariant`; a free-form lookalike like `hotdoc-billing` is
+   not). The regressions live in `test/content-review.test.ts` under "honest
+   first-week mail". **Campaigns and automations block on `blocked` only**, like
+   transactional: `high` sends and stays flagged.
 
    **Day3 is a transactional email service too, and an established sender's
    transactional mail is never refused by a guess.** `isBlocking(review, account)`

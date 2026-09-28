@@ -78,8 +78,9 @@ export function toRiskInput(content: TransactionalContent): RiskCheckInput {
 // Erasing MORE than this would be a bypass: an attacker who can push the
 // varying part of their payload into a normalised-away position gets a free
 // pass. So this only removes things that carry no risk meaning on their own —
-// digits, hex/base64-ish blobs, email addresses, and URL query strings. The
-// words, the host names, and the structure all survive into the hash.
+// digits, hex/base64-ish blobs, email addresses, URL query strings, and the
+// single name token after a greeting. The words, the host names, and the
+// structure all survive into the hash.
 function normaliseForFingerprint(text: string): string {
   return text
     .toLowerCase()
@@ -87,6 +88,11 @@ function normaliseForFingerprint(text: string): string {
     .replace(/([?#])[^\s"'<>]*/g, "$1")
     // Email addresses.
     .replace(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g, "@")
+    // The one word after a greeting: "Hi Alice," and "Hi Bob," are one shape.
+    // Without this every name-personalised reset or receipt was a new
+    // fingerprint and paid a model call per recipient. Exactly one token, so
+    // nothing with risk meaning can be hidden in the erased position.
+    .replace(/\b(hi|hello|hey|dear|welcome)\s+[^\s,.!:;<]{1,40}/g, "$1 ~")
     // Long opaque tokens (hex, base64url, uuids).
     .replace(/[a-z0-9_-]{16,}/g, "*")
     // Any remaining run of digits.
@@ -386,13 +392,6 @@ export async function reviewAndStoreContent(
 
 /** The message shown to an API caller whose content was refused. */
 export function blockedMessage(review: Pick<ContentReview, "summary" | "riskLevel">): string {
-  if (review.riskLevel === "high") {
-    return (
-      "This email was held by Day3's automated safety review and was not sent. New workspaces " +
-      "cannot send high-risk content during their first two weeks. " +
-      review.summary
-    );
-  }
   return (
     "This email was blocked by Day3's automated safety review and was not sent. " +
     review.summary

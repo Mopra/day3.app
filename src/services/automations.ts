@@ -966,9 +966,10 @@ export async function publishAutomation(
 
   // Risk review per send node, at publish: content is fixed and sends are
   // open-ended, so this is the one moment the review can run. Same two-pass
-  // review (deterministic floor, escalate-only AI) a campaign gets. `high` or
-  // `blocked` stops the publish with the node's own fix-it guidance; anything
-  // lower is recorded on the published node rows for the canvas to show.
+  // review (deterministic floor, escalate-only AI) a campaign gets, and the same
+  // decision rule: only `blocked` stops the publish, with the node's own fix-it
+  // guidance. `high` is recorded on the published node rows for the canvas to
+  // show and flagged for admins, like medium (see review-campaign.ts).
   const risks = new Map<string, { level: string; summary: string | null; guidance: string[] | null }>();
   for (const node of draft.nodes) {
     if (node.kind !== "send") continue;
@@ -979,6 +980,9 @@ export async function publishAutomation(
         htmlBody: config.htmlBody,
         textBody: config.textBody,
         fromEmail: automation.fromEmail ?? "",
+        // Without the From name the AI is always told it does not match the
+        // sending domain, which leans every review toward impersonation.
+        fromName: automation.fromName ?? null,
         sendingDomain: domain?.domain ?? "",
       },
       process.env.AI_REVIEW_MODE,
@@ -988,7 +992,7 @@ export async function publishAutomation(
       summary: review.summary,
       guidance: review.guidance.length > 0 ? review.guidance : null,
     });
-    if (review.riskLevel === "high" || review.riskLevel === "blocked") {
+    if (review.riskLevel === "blocked") {
       const fixes = review.guidance.length > 0 ? ` ${review.guidance.join(" ")}` : "";
       errors.push({
         code: "invalid_config",

@@ -38,7 +38,7 @@ import { getAudienceFieldFallbacks } from "../../services/audience-fields";
 import { footerAddress } from "../../services/footer-address";
 import { enforceAccountHealth } from "../../services/health";
 import { notifyCampaignPaused, notifyCampaignSent } from "../../services/notifications";
-import { releaseReservation, reserveQuota } from "../../services/quota";
+import { quotaBlockReason, releaseReservation, reserveQuota } from "../../services/quota";
 import { SANDBOX_EXHAUSTED_MESSAGE, SANDBOX_MONTHLY_ALLOWANCE } from "../../services/sandbox";
 import { MAX_SEND_BATCH_SIZE, SEND_BATCH_SIZE, type JobQueue } from "../messages";
 
@@ -196,20 +196,27 @@ export async function sendCampaignBatch(
   );
 
   if (claimCount <= 0) {
+    // A young account that hit its new-account ramp has plenty of plan left.
+    // Telling it to upgrade was wrong advice (it would pay and still be stuck
+    // until midnight UTC), so say what actually stopped it. Same wording the
+    // API gives (quotaBlockReason).
+    const block = campaign.sandbox ? null : await quotaBlockReason(db, account.id);
+    const rampLimited = block?.limitedBy === "ramp";
     await pauseAndNotify(
       db,
       campaign,
       "quota",
       campaign.sandbox
         ? SANDBOX_EXHAUSTED_MESSAGE
-        : "Monthly email limit was reached. Sending resumes automatically if quota frees up, or upgrade your plan to send more.",
+        : (block?.message ??
+            "Monthly email limit was reached. Sending resumes automatically if quota frees up, or upgrade your plan to send more."),
     );
     await logJob(db, {
       jobType: "send_campaign_batch",
       entityType: "campaign",
       entityId: campaign.id,
       status: "skipped",
-      error: "monthly email limit reached",
+      error: rampLimited ? "new-account daily ramp reached" : "monthly email limit reached",
     });
     return;
   }

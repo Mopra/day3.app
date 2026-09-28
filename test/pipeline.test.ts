@@ -75,6 +75,21 @@ describe("review_campaign", () => {
     expect(queue.messages).toHaveLength(0);
   });
 
+  it("approves a high-risk campaign and leaves it flagged, rather than blocking it", async () => {
+    // "Sign in to your account" plus more than 15 links is a normal product
+    // update, and scored `high`. Only `blocked` blocks now.
+    const links = Array.from({ length: 16 }, (_, i) => `<a href="https://example.com/p/${i}">Link ${i}</a>`).join("");
+    const { db, account, campaign } = await setup(`<p>Sign in to your account to see what's new.</p>${links}`);
+    const queue = new FakeQueue();
+
+    await reviewCampaign({ campaignId: campaign.id, accountId: account.id }, db, asQueue(queue), "mock");
+
+    const fresh = await db.query.campaigns.findFirst({ where: eq(campaigns.id, campaign.id) });
+    expect(fresh?.riskLevel).toBe("high");
+    expect(fresh?.status).toBe("approved");
+    expect(queue.messages[0]?.type).toBe("generate_campaign_recipients");
+  });
+
   it("is a no-op when the campaign is not pending review (idempotent)", async () => {
     const { db, account, campaign } = await setup();
     const queue = new FakeQueue();

@@ -65,9 +65,19 @@ export async function reviewCampaign(
     createdAt: nowIso(),
   });
 
-  // MVP decision rules: low/medium approve (medium stays flagged for admin),
-  // high/blocked block.
-  const approved = review.riskLevel === "low" || review.riskLevel === "medium";
+  // Decision rule: only `blocked` blocks. low/medium/high approve, and medium
+  // and high stay flagged in the admin queue.
+  //
+  // `high` used to block too, and it is reachable by two soft signals that
+  // honest first-week mail carries all the time: "sign in to your account" in a
+  // product update with more than 15 links, or a welcome email with a bit.ly
+  // link. A blocked campaign is terminal (duplicate and edit), so every false
+  // positive cost the user their send. The shape `high` existed to catch, a
+  // credential ask behind a throwaway page, is now a phishing pair and blocks
+  // outright; the transactional path dropped `high` for the same reason
+  // (content-review.ts isBlocking). Reputation (health.ts) and the new-account
+  // ramp still bound what an approved-but-flagged campaign can do.
+  const approved = review.riskLevel !== "blocked";
 
   const transitioned = await db
     .update(campaigns)

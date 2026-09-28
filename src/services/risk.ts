@@ -1,5 +1,6 @@
 import { logger } from "../lib/logger";
 import { aiReviewCampaign, type AiRiskVerdict } from "./risk-ai";
+import { sharedSandboxDomain } from "./shared-domain";
 
 export type RiskLevel = "low" | "medium" | "high" | "blocked";
 
@@ -95,7 +96,45 @@ function wholeWordsPresent(text: string, words: string[], min = 1): boolean {
 export function fromNameMatchesSendingDomain(input: RiskCheckInput): boolean {
   const label = brandLabel(input.sendingDomain.toLowerCase());
   if (!label) return false;
-  return nameTokens(input.fromName).some((t) => t === label || t.includes(label));
+  return nameTokens(input.fromName).some(
+    (t) => t === label || t.includes(label) || isBrandVariant(t, label),
+  );
+}
+
+// Affixes a SaaS commonly wraps its name in when the bare .com was taken:
+// getacme.com, tryacme.com, acmehq.com, acme-app.com. Closed list on purpose.
+// A free-form lookalike (`hotdoc-billing.com`) must still read as someone else.
+const BRAND_PREFIXES = ["get", "try", "use", "join", "go", "my", "hey", "hello", "with"];
+const BRAND_SUFFIXES = ["hq", "app", "apps", "mail", "email", "team", "labs", "hub", "io", "inc", "co", "send"];
+
+/**
+ * Is `sendingLabel` the brand `label` wearing one of the common SaaS affixes?
+ * This is what lets `Acme <hi@getacme.com>` link to acme.io without reading as
+ * Acme being impersonated. Found by a real first-week verify email that the
+ * impersonation pair refused and whose workspace it paused.
+ */
+export function isBrandVariant(label: string, sendingLabel: string): boolean {
+  if (label === sendingLabel) return true;
+  if (label.length < 3 || !sendingLabel) return false;
+  const bare = sendingLabel.replace(/-/g, "");
+  return (
+    BRAND_PREFIXES.some((p) => bare === p + label) ||
+    BRAND_SUFFIXES.some((s) => bare === label + s)
+  );
+}
+
+/**
+ * Is this a send on the Day3-owned shared sandbox domain?
+ *
+ * There the From name is the account's own name on a domain that is not theirs,
+ * so the impersonation test reads every free-tier user linking their own site
+ * as impersonating themselves. It also cannot deceive anyone: a shared-domain
+ * send is provably a sandbox send (`sharedDomainSendError`), and sandbox
+ * recipients are the org's own members.
+ */
+function isSharedSandboxSend(input: RiskCheckInput): boolean {
+  const shared = sharedSandboxDomain();
+  return shared !== null && input.sendingDomain.trim().toLowerCase() === shared;
 }
 
 export function extractLinks(html: string): string[] {
@@ -159,13 +198,53 @@ export function brandLabel(host: string): string {
 // Landing-page hosts anyone can spin up in minutes under someone else's brand
 // name. Legitimate mail does use them, so this stays a supporting signal (low
 // score) that only becomes decisive next to credential-harvest language.
-const DISPOSABLE_CTA_HOSTS = [
+//
+// Two kinds, because they have different innocent readings:
+//   - Funnel and form builders: a sign-in or payment ask behind one of these is
+//     a harvester, whoever sends it.
+//   - App-hosting platforms: this is where many small SaaS apps actually live.
+//     `acme.vercel.app` sent from acme.com is the sender's own product, and
+//     refusing its verify email (and pausing the workspace) broke real new users.
+//     So a link there only counts when the tenant subdomain does NOT name the
+//     sending domain. That opens no bypass: a sender who controls the sending
+//     domain could host the page on it directly, and a payment ask on the
+//     sender's own domain was never refused. The From name is deliberately NOT
+//     used for this match, or `HotDoc` linking `hotdoc.vercel.app` from an
+//     unrelated domain would pass.
+const FUNNEL_CTA_HOSTS = [
   "myclickfunnels.com", "clickfunnels.com", "systeme.io", "kartra.com",
   "wixsite.com", "weebly.com", "webflow.io", "carrd.co", "glitch.me",
-  "firebaseapp.com", "web.app", "vercel.app", "netlify.app", "pages.dev",
-  "github.io", "replit.app", "onrender.com", "ngrok-free.app", "trycloudflare.com",
-  "forms.gle", "typeform.com", "jotform.com", "notion.site",
+  "ngrok-free.app", "trycloudflare.com",
+  "forms.gle", "typeform.com", "jotform.com",
 ];
+const APP_HOSTING_CTA_HOSTS = [
+  "firebaseapp.com", "web.app", "vercel.app", "netlify.app", "pages.dev",
+  "github.io", "replit.app", "onrender.com", "notion.site",
+];
+
+/** The tenant's own label on an app-hosting host: "acme" in docs.acme.github.io. */
+function tenantLabel(host: string, platform: string): string {
+  const rest = host.slice(0, -(platform.length + 1));
+  return rest.split(".").pop() ?? "";
+}
+
+function isDisposableCtaHost(host: string, input: RiskCheckInput): boolean {
+  if (hostMatches(host, FUNNEL_CTA_HOSTS)) return true;
+  const platform = APP_HOSTING_CTA_HOSTS.find((n) => host.endsWith("." + n));
+  if (!platform) return false;
+  // On the shared sandbox domain there is no sending label of the user's own to
+  // compare with, and the recipients are the user's own team: their app's
+  // preview URL is not a throwaway page to them.
+  if (isSharedSandboxSend(input)) return false;
+  const sendingLabel = brandLabel(input.sendingDomain.toLowerCase()).replace(/-/g, "");
+  const tenant = tenantLabel(host, platform).replace(/-/g, "");
+  if (sendingLabel.length < 3 || tenant.length < 3) return true;
+  const ownApp =
+    tenant.includes(sendingLabel) ||
+    (tenant.length >= 4 && sendingLabel.includes(tenant)) ||
+    isBrandVariant(tenant, sendingLabel);
+  return !ownApp;
+}
 
 // Open/click-tracking hosts belonging to OTHER email providers. Mail sent
 // through Day3 has no reason to carry a competitor's tracking pixel: its
@@ -234,13 +313,14 @@ export function nameTokens(fromName: string | null | undefined): string[] {
  * sending domain shares the matched label.
  */
 export function impersonatedBrand(input: RiskCheckInput): string | null {
+  if (isSharedSandboxSend(input)) return null;
   const tokens = nameTokens(input.fromName);
   if (tokens.length === 0) return null;
   const sendingLabel = brandLabel(input.sendingDomain.toLowerCase());
   for (const host of referencedHosts(input.htmlBody)) {
     const label = brandLabel(host);
     if (!label || label.length < 3) continue;
-    if (label === sendingLabel) continue;
+    if (label === sendingLabel || isBrandVariant(label, sendingLabel)) continue;
     if (tokens.includes(label)) return host;
   }
   return null;
@@ -252,15 +332,33 @@ const SIGNALS: Signal[] = [
     score: 60,
     description: "Crypto/investment terms",
     fix: "Remove the cryptocurrency/investment promotion — crypto and investment offers are a prohibited category Day3 can't deliver mail for.",
+    // No bare "crypto" or "airdrop": a developer newsletter about the Web Crypto
+    // API or `crypto.randomUUID`, or a note about Apple AirDrop, was blocked
+    // outright by them. Each term here names the promotion, not the word.
     test: (_i, t) =>
-      wholeWordsPresent(t, ["crypto", "bitcoin", "ethereum", "token sale", "initial coin offering", "airdrop", "web3 investment"], 1),
+      wholeWordsPresent(
+        t,
+        [
+          "bitcoin", "ethereum", "token sale", "initial coin offering", "web3 investment",
+          "crypto investment", "crypto trading", "crypto giveaway", "crypto airdrop",
+          "buy crypto", "invest in crypto", "crypto presale",
+        ],
+        1,
+      ),
   },
   {
     category: "prohibited_industry",
     score: 60,
     description: "Gambling terms",
     fix: "Remove the gambling content — gambling promotion is a prohibited category Day3 can't deliver mail for.",
-    test: (_i, t) => wholeWordsPresent(t, ["casino", "betting", "poker", "jackpot", "slot machine", "online slots", "sportsbook"], 1),
+    // No bare "betting", "poker" or "jackpot": "we're betting on edge
+    // functions" and "we hit the jackpot with this release" are product updates.
+    test: (_i, t) =>
+      wholeWordsPresent(
+        t,
+        ["casino", "sports betting", "online betting", "place your bets", "online poker", "slot machine", "online slots", "sportsbook"],
+        1,
+      ),
   },
   {
     category: "prohibited_industry",
@@ -327,10 +425,15 @@ const SIGNALS: Signal[] = [
     test: (i) => /^(re|fwd|fw):/i.test(i.subject.trim()),
   },
   {
-    category: "phishing_like",
-    score: 70,
-    description: "Phishing-like language",
-    fix: "Remove account-verification and password language (“verify your account immediately”, “confirm your password”) — it reads as phishing and can't be sent.",
+    // Threat-of-loss account language. It used to hard-block on its own as
+    // `phishing_like`, which refused ordinary dunning mail ("update your card or
+    // your account will be suspended") and "confirm your password change". It
+    // is now a pair partner: next to impersonation or a throwaway page host it
+    // still blocks outright (see the pair rules below).
+    category: "account_threat",
+    score: 45,
+    description: "Account threat or password-confirmation language",
+    fix: "Soften the account warning (“your account will be suspended”, “verify your account immediately”) and link only to your own domain — threat-of-loss language is the core of most phishing, so spam filters weigh it heavily.",
     test: (_i, t) =>
       wordsPresent(t, ["verify your account immediately", "your account will be suspended", "confirm your password"], 1),
   },
@@ -386,7 +489,7 @@ const SIGNALS: Signal[] = [
     test: (i) =>
       extractLinks(i.htmlBody).some((l) => {
         const host = urlHost(l);
-        return host !== null && hostMatches(host, DISPOSABLE_CTA_HOSTS);
+        return host !== null && isDisposableCtaHost(host, i);
       }),
   },
   {
@@ -426,8 +529,10 @@ export function runDeterministicRiskChecks(input: RiskCheckInput): CampaignRiskR
   else if (score >= 40) riskLevel = "medium";
   else riskLevel = "low";
 
-  // Hard-block categories regardless of total score.
-  if (categories.has("prohibited_industry") || categories.has("phishing_like")) {
+  // Hard-block categories regardless of total score. Only prohibited industries
+  // are left here: no single phishing phrase blocks on its own any more (the
+  // pairs below do that job without refusing a dunning email).
+  if (categories.has("prohibited_industry")) {
     riskLevel = "blocked";
     score = 100;
   }
@@ -460,9 +565,14 @@ export function runDeterministicRiskChecks(input: RiskCheckInput): CampaignRiskR
   // not deceptive to anyone, and blocking it would break a new customer's auth
   // flow on their first day. It still scores as high risk and still shows up in
   // the admin queue; it just sends.
+  //
+  // `account_threat` ("your account will be suspended") stands in for the
+  // credential ask in both pairs: it is the same lure with a stick instead of a
+  // carrot, and it has the same innocent reading on its own (dunning mail).
+  const asksOrThreatens = categories.has("credential_harvest") || categories.has("account_threat");
   if (
     categories.has("brand_impersonation") &&
-    (categories.has("credential_harvest") || categories.has("foreign_tracking"))
+    (asksOrThreatens || categories.has("foreign_tracking"))
   ) {
     categories.add("phishing_like");
     // `phishing_pair` marks a block that came from one of the two pair rules,
@@ -487,7 +597,7 @@ export function runDeterministicRiskChecks(input: RiskCheckInput): CampaignRiskR
   // a Google Form — is a thing that exists, is a PCI violation when it does, and
   // is not what a newsletter platform is for. A 422 with the fix spelled out is
   // the right answer to it.
-  if (categories.has("credential_harvest") && categories.has("disposable_cta")) {
+  if (asksOrThreatens && categories.has("disposable_cta")) {
     categories.add("phishing_like");
     categories.add("phishing_pair");
     riskLevel = "blocked";

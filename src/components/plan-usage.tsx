@@ -16,6 +16,7 @@ import {
   type PlanKey,
 } from "@/lib/plans-catalog";
 import type { Account } from "@/lib/types";
+import { rampDailyLimit } from "@/services/send-ramp";
 
 export type UsageState = "ok" | "warning" | "over";
 
@@ -206,6 +207,22 @@ export function UsageSummary({ account }: { account: Account }) {
           Sandbox sends go to your own team only.
         </p>
       )}
+      {!sandbox && <RampNote account={account} />}
     </div>
+  );
+}
+
+// The new-account ramp (services/send-ramp.ts) caps a young workspace's daily
+// sends below its plan. It used to be invisible until a campaign paused on it,
+// so a day-old account read the pause as its plan running out. Shown only while
+// a ceiling applies.
+function RampNote({ account }: { account: Account }) {
+  const limit = rampDailyLimit(account);
+  if (limit === null) return null;
+  return (
+    <p className="text-xs text-muted-foreground">
+      New workspace: up to {limit.toLocaleString()} emails a day while your sending warms up.
+      The ceiling rises on its own and lifts after two weeks.
+    </p>
   );
 }

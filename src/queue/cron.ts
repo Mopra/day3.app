@@ -19,6 +19,7 @@ import { enforceAccountHealth } from "../services/health";
 import { notifyAccount, notifyCampaignSent } from "../services/notifications";
 import { checkSendEligibility } from "../services/plans";
 import { releaseReservation } from "../services/quota";
+import { rampRemaining } from "../services/send-ramp";
 import { getDomainIdentity, type DomainIdentityState } from "../services/ses-identity";
 import { TRANSACTIONAL_BODY_RETENTION_DAYS } from "../services/transactional";
 import { WEBHOOK_STUCK_LOCK_MS } from "../services/webhooks";
@@ -573,6 +574,10 @@ export async function resumePausedCampaigns(
       // after a monthly reset or an upgrade); for the others it guards against
       // resuming into an account that got paused/past-due in the meantime.
       if (!checkSendEligibility(account).allowed) continue;
+      // A quota pause can also be the new-account ramp, which the eligibility
+      // check does not see. Resuming while today's ramp is spent re-pauses on
+      // the first batch and re-notifies, every sweep until midnight UTC.
+      if (campaign.pausedCode === "quota" && !campaign.sandbox && rampRemaining(account, now) === 0) continue;
 
       const claimed = await db
         .update(campaigns)

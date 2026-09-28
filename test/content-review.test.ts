@@ -6,7 +6,7 @@
 // every check the platform had at the time passed it, because every one of them
 // was on the campaign path and this never touched a campaign. Any change that
 // makes that payload sendable again is a regression, whatever else it fixes.
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import type { Db } from "../src/db/client";
 import { accounts, contentReviews } from "../src/db/schema";
@@ -253,6 +253,167 @@ describe("deterministic screen: legitimate transactional mail", () => {
   });
 });
 
+describe("honest first-week mail (false-positive regressions)", () => {
+  // Each case here was refused by an earlier version of the screen, found by
+  // running it over the mail a real new customer sends in their first week.
+  // Several of them also auto-paused the workspace. The incident payloads above
+  // must keep blocking; these must keep sending.
+  const acme = { fromEmail: "hi@acme.com", fromName: "Acme", sendingDomain: "acme.com", text: null };
+
+  describe("on the shared sandbox domain", () => {
+    const SHARED = "sandbox.day3mail.test";
+    beforeEach(() => {
+      process.env.SHARED_SANDBOX_DOMAIN = SHARED;
+    });
+    afterEach(() => {
+      delete process.env.SHARED_SANDBOX_DOMAIN;
+    });
+    const onShared = { fromEmail: `acme@${SHARED}`, fromName: "Acme", sendingDomain: SHARED, text: null };
+
+    it("a free-tier newsletter linking the user's own site is not impersonation", () => {
+      const review = screenTransactionalContent({
+        ...onShared,
+        subject: "Our first newsletter",
+        html: `<p>Here is what we shipped.</p><a href="https://acme.com/changelog">Changelog</a>`,
+      });
+      expect(review.categories).not.toContain("brand_impersonation");
+      expect(review.riskLevel).toBe("low");
+    });
+
+    it("a free-tier welcome email saying 'log in to your account' is not a phishing pair", () => {
+      const review = screenTransactionalContent({
+        ...onShared,
+        subject: "Welcome to Acme",
+        html: `<p>Log in to your account to get started.</p>
+               <a href="https://acme.com/login">Log in</a>
+               <a href="https://acme-preview.vercel.app">Try the preview</a>`,
+      });
+      expect(review.categories).not.toContain("phishing_pair");
+      expect(review.riskLevel).not.toBe("blocked");
+    });
+
+    it("still refuses a sign-in ask behind a funnel builder", () => {
+      const review = screenTransactionalContent({
+        ...onShared,
+        subject: "Confirm your billing",
+        html: `<p>Please confirm your billing and payment information.</p>
+               <a href="https://x.myclickfunnels.com/pay">Confirm</a>`,
+      });
+      expect(review.categories).toContain("phishing_pair");
+    });
+  });
+
+  it("a verify email pointing at the sender's own vercel.app app sends", () => {
+    const review = screenTransactionalContent({
+      ...acme,
+      subject: "Verify your email",
+      html: `<p>Please verify your account to finish signing up.</p>
+             <a href="https://acme.vercel.app/verify?token=abc">Verify</a>`,
+    });
+    expect(review.categories).not.toContain("disposable_cta");
+    expect(review.riskLevel).not.toBe("blocked");
+  });
+
+  it("docs on the sender's own github.io are not a throwaway page", () => {
+    const review = screenTransactionalContent({
+      ...acme,
+      fromEmail: "hi@getacme.com",
+      sendingDomain: "getacme.com",
+      subject: "Welcome",
+      html: `<p>Sign in to your account, then read the docs.</p>
+             <a href="https://acme.github.io/docs">Docs</a>`,
+    });
+    expect(review.riskLevel).not.toBe("blocked");
+  });
+
+  it("a vercel.app page that is not the sender's still pairs with a credential ask", () => {
+    // Someone else's app host is still a throwaway page to this sender, and the
+    // From name is deliberately not what makes it "own".
+    const review = screenTransactionalContent({
+      fromEmail: "news@globalcitiys.com",
+      fromName: "HotDoc",
+      sendingDomain: "globalcitiys.com",
+      text: null,
+      subject: "Please confirm your billing",
+      html: `<p>Please sign in to your account and confirm your billing.</p>
+             <a href="https://hotdoc.vercel.app/login">Sign in</a>`,
+    });
+    expect(review.categories).toContain("phishing_pair");
+  });
+
+  it("a branded sending domain (getacme.com) linking acme.io is not impersonation", () => {
+    const review = screenTransactionalContent({
+      ...acme,
+      fromEmail: "hi@getacme.com",
+      sendingDomain: "getacme.com",
+      subject: "Verify your account",
+      html: `<p>Please verify your account.</p><a href="https://app.acme.io/verify">Verify</a>`,
+    });
+    expect(review.categories).not.toContain("brand_impersonation");
+    expect(review.riskLevel).not.toBe("blocked");
+  });
+
+  it("a free-form lookalike sending domain is still impersonation", () => {
+    const review = screenTransactionalContent({
+      ...HOTDOC_PHISH,
+      fromEmail: "news@hotdoc-billing.com",
+      sendingDomain: "hotdoc-billing.com",
+    });
+    expect(review.categories).toContain("brand_impersonation");
+    expect(review.riskLevel).toBe("blocked");
+  });
+
+  it("a dunning email that warns of suspension sends", () => {
+    const review = screenTransactionalContent({
+      ...acme,
+      subject: "Your payment failed",
+      html: `<p>We couldn't charge your card. Please update your payment information or your account will be suspended.</p>
+             <a href="https://billing.stripe.com/p/session/abc">Update card</a>`,
+    });
+    expect(review.riskLevel).not.toBe("blocked");
+  });
+
+  it("'confirm your password change' is not blocked", () => {
+    const review = screenTransactionalContent({
+      ...acme,
+      subject: "Your password was changed",
+      html: `<p>To confirm your password change, no action is needed.</p><a href="https://acme.com/security">Security</a>`,
+    });
+    expect(review.riskLevel).not.toBe("blocked");
+  });
+
+  it("an account threat behind a throwaway page is still a phishing pair", () => {
+    const review = screenTransactionalContent({
+      ...acme,
+      subject: "Action required",
+      html: `<p>Your account will be suspended.</p><a href="https://x.myclickfunnels.com/keep">Keep my account</a>`,
+    });
+    expect(review.categories).toContain("phishing_pair");
+  });
+
+  it("developer vocabulary is not a prohibited industry", () => {
+    const review = screenTransactionalContent({
+      ...acme,
+      subject: "September product update",
+      html: `<p>We moved token signing to the Web Crypto API (crypto.subtle) and we're betting on edge functions.
+             Share files with AirDrop — we hit the jackpot with this release.</p>`,
+    });
+    expect(review.categories).not.toContain("prohibited_industry");
+    expect(review.riskLevel).not.toBe("blocked");
+  });
+
+  it("the real promotions are still prohibited", () => {
+    for (const html of [
+      "<p>Start crypto trading today.</p>",
+      "<p>Best sports betting odds.</p>",
+      "<p>Play online poker now.</p>",
+    ]) {
+      const review = screenTransactionalContent({ ...acme, subject: "Offer", html });
+      expect(review.riskLevel).toBe("blocked");
+    }
+  });
+});
+
 describe("content fingerprint", () => {
   it("is stable across per-recipient variation", () => {
     // A password reset differs on every send: different token, different
@@ -274,6 +435,19 @@ describe("content fingerprint", () => {
       html: `<p>Hi bob@example.com, your code is 913772.</p><a href="https://acme.com/r?token=bbbbbbbbbbbbbbbbbbbb">Reset</a>`,
       text: null,
     });
+    expect(a).toBe(b);
+  });
+
+  it("is stable across the name after a greeting", () => {
+    const base = {
+      subject: "Reset your password",
+      fromEmail: "noreply@acme.com",
+      fromName: "Acme",
+      sendingDomain: "acme.com",
+      text: null,
+    };
+    const a = contentFingerprint({ ...base, html: "<p>Hi Alice, reset your password below.</p>" });
+    const b = contentFingerprint({ ...base, html: "<p>Hi Bob, reset your password below.</p>" });
     expect(a).toBe(b);
   });
 

@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-09-24**.
+> Last verified against the codebase: **2026-09-28**.
 
 ---
 
@@ -422,7 +422,9 @@ guards make that observable:
   the deterministic verdict, never lower it — so content-embedded prompt injection has
   nothing to gain. The AI pass fails open (a model outage falls back to the deterministic
   result) and is platform-funded — never plan-gated, never charged to the org's AI budget.
-  Risky campaigns are routed to admin review. A **blocked campaign** shows the sender
+  Only a `blocked` verdict stops a campaign or an automation publish; `medium` and
+  `high` send and are flagged for admin review (a blocked campaign is final, and
+  `high` was reachable by ordinary product updates). A **blocked campaign** shows the sender
   exactly what was flagged, concrete fix-it steps, why it matters for sender reputation,
   and a one-click **Duplicate & fix** path (blocked campaigns themselves are immutable);
   medium-risk campaigns still send but surface the guidance as suggestions for the next
@@ -745,8 +747,16 @@ other. Each domain still opens to its own detail page.
     template with the old pixel still in it. It takes a **combination** to block. Two
     combinations do: impersonating a brand while asking for credentials (or while
     carrying that brand's lifted template), and asking for payment or sign-in details
-    behind a link to a throwaway page-builder host (ClickFunnels, Google Forms,
-    `*.vercel.app` and the like).
+    behind a link to a throwaway page-builder host (ClickFunnels, Google Forms, and
+    app-hosting subdomains such as `*.vercel.app` that are *not* the sender's own:
+    `acme.vercel.app` sent from acme.com is the sender's product, not a throwaway page).
+    Account-threat wording ("your account will be suspended") counts as the ask in
+    both combinations; on its own it is ordinary dunning mail and sends.
+  - **What does not count as impersonation:** a free-tier send on Day3's shared test
+    domain naming the user's own company (it only reaches their own team), and a
+    sending domain that is the brand plus a common SaaS affix (`getacme.com`,
+    `acmehq.com` linking to acme.io). Prohibited-industry terms name the promotion,
+    not the word: "Web Crypto API" or "we're betting on edge" is a product update.
   - **Transactional mail from an established sender is never dropped on a guess.** Only
     the two precise phishing combinations above refuse mail from a workspace past its
     two-week ramp. An AI or keyword verdict on such a sender is recorded for Day3's
@@ -768,7 +778,9 @@ other. Each domain still opens to its own detail page.
   gets filtered on reputation grounds no matter how clean the list is. Support can
   lift the ramp for an account they have looked at. When the ramp is what stopped a
   send, the message says so and does **not** suggest upgrading — the plan was never
-  the problem.
+  the problem. That holds for campaigns too: a campaign paused by the ramp says it
+  resumes at 00:00 UTC and waits for it, and the usage card shows the day's ceiling
+  while the ramp applies.
 - **A domain that was used for abuse is banned platform-wide.** Support can ban every
   sending domain on an account; the ban is on the domain *name*, so deleting the domain
   and re-adding it on a fresh workspace is refused, existing rows for it stop sending
