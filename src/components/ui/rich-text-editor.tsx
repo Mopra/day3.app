@@ -15,6 +15,7 @@
 import { createContext, useContext, useEffect, useId, useState } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import { BubbleMenu, FloatingMenu } from "@tiptap/react/menus";
+import type { EditorState } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { Placeholder } from "@tiptap/extensions";
@@ -110,7 +111,13 @@ function floatingMenuRoot(): HTMLElement {
   return root;
 }
 
-const BUBBLE_MENU_OPTIONS = { strategy: "fixed", placement: "top", offset: 8 } as const;
+// The last `n` characters of the cursor's text block, ending at the cursor.
+function textBeforeCursor(state: EditorState, n: number): string {
+  const { $from } = state.selection;
+  return $from.parent.textBetween(Math.max(0, $from.parentOffset - n), $from.parentOffset);
+}
+
+const BUBBLE_MENU_OPTIONS ={ strategy: "fixed", placement: "top", offset: 8 } as const;
 const FLOATING_MENU_OPTIONS = { strategy: "fixed", placement: "bottom-start", offset: 6 } as const;
 
 // Cross-editor focus coordination. When several RichTextEditors live side by side
@@ -553,6 +560,45 @@ export function RichTextEditor({
             </Button>
           ))}
         </FloatingMenu>
+
+        {/* Personalization mid-sentence. The insert menu above only appears on an
+            empty line, so "Thanks for joining, {{first_name}}!" meant typing the
+            token by hand and knowing its exact name. Typing "{{" anywhere opens the
+            same tag list at the cursor; picking one replaces the "{{" with the full
+            tag. Typing on past "{{" closes it, so writing a tag by hand still works. */}
+        <BubbleMenu
+          editor={editor}
+          pluginKey="mergeTagMenu"
+          shouldShow={({ editor: e, state }) =>
+            e.isFocused && state.selection.empty && textBeforeCursor(state, 2) === "{{"
+          }
+          appendTo={floatingMenuRoot}
+          options={FLOATING_MENU_OPTIONS}
+          className={floatingBarClass}
+        >
+          <span className="pl-1 text-sm font-medium text-muted-foreground">Personalize</span>
+          {mergeTags.map((t) => (
+            <Button
+              key={t.label}
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                const to = editor.state.selection.from;
+                editor
+                  .chain()
+                  .focus()
+                  .deleteRange({ from: to - 2, to })
+                  .insertContent(t.insert)
+                  .run();
+              }}
+            >
+              {t.label}
+            </Button>
+          ))}
+        </BubbleMenu>
           </>
         )}
 
