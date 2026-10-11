@@ -465,6 +465,9 @@ export function CampaignComposer({
   // Filled in by the autosave effect; the context value below delegates to it.
   const flushRef = useRef<() => Promise<void>>(async () => {});
   const saveContext = useMemo(() => ({ flush: () => flushRef.current() }), []);
+  // Whether a saved row exists behind this composer (an opened draft or automation
+  // node, or a new draft once its first save lands). See worthSaving below.
+  const draftExists = useRef(!!initial || nodeMode);
 
   // Seed the section builder from the draft: its saved sections if present, else a
   // single section wrapping the legacy/AI flat htmlBody (so old drafts open in the
@@ -767,9 +770,12 @@ export function CampaignComposer({
     if (!onAutosave) return;
 
     // Has the user actually authored something? Auto-selected defaults (a sole
-    // audience/sender) don't count — we don't want to create an empty draft just
-    // because the page was opened.
+    // audience/sender) don't count: we don't want to create an empty draft just
+    // because the page was opened. That only guards *creating* one. Once a draft
+    // exists every edit saves, emptying it included, or undoing a template back to
+    // a blank page left the template on the server, to reappear on the next visit.
     const worthSaving = (v: CampaignFormValues) =>
+      draftExists.current ||
       !!(v.subject?.trim() || v.htmlBody?.trim() || v.name?.trim() || v.previewText?.trim());
 
     const save = async () => {
@@ -796,6 +802,7 @@ export function CampaignComposer({
       savingRef.current = inFlight;
       try {
         await inFlight;
+        draftExists.current = true;
         setAutosaveStatus("saved");
       } catch {
         autosaveDirty.current = true;
