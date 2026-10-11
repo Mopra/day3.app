@@ -12,7 +12,6 @@
 // add/duplicate/remove, reorder).
 import {
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -40,10 +39,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
-  ChevronDown,
   Columns2,
   Copy,
   GripHorizontal,
@@ -52,15 +47,10 @@ import {
   Link as LinkIcon,
   Minus,
   MousePointerClick,
-  PaintBucket,
-  PanelLeft,
-  PanelRight,
-  PanelTop,
-  Pencil,
   Plus,
   Quote,
   Share2,
-  StretchHorizontal,
+  SlidersHorizontal,
   Trash2,
   Type,
   Upload,
@@ -75,25 +65,11 @@ import {
   extForEncoding,
 } from "@/lib/image-compress";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { OrbitLoader } from "@/components/ui/orbit-loader";
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
 } from "@/components/ui/dialog";
-import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import { RichTextEditor, RichTextEditorGroup } from "@/components/ui/rich-text-editor";
 import {
@@ -108,20 +84,14 @@ import {
   columnPixelWidth,
   duplicateSection,
   emptySection,
-  resizeSection,
   setSectionKind,
   type CampaignSection,
-  type CardLayout,
-  type ColumnCount,
   type SectionAlign,
   type SectionButton,
   type SectionImage,
   type SectionKind,
-  type SocialItem,
-  type SocialNetwork,
 } from "@/lib/sections";
 
-const COLUMN_CHOICES: ColumnCount[] = [1, 2, 3];
 
 // Opt every section out of dnd-kit's post-drop FLIP "layout change" animation.
 // That animation derives its transform as scaleX = oldWidth/newWidth and
@@ -136,7 +106,7 @@ const COLUMN_CHOICES: ColumnCount[] = [1, 2, 3];
 // smooth, so reordering just snaps cleanly into place on drop.
 const animateLayoutChanges = () => false;
 
-const KIND_CHOICES: { value: SectionKind; label: string; Icon: typeof Type }[] = [
+export const KIND_CHOICES: { value: SectionKind; label: string; Icon: typeof Type }[] = [
   { value: "text", label: "Text", Icon: Type },
   { value: "image", label: "Image", Icon: ImageIcon },
   { value: "button", label: "Button", Icon: MousePointerClick },
@@ -147,56 +117,13 @@ const KIND_CHOICES: { value: SectionKind; label: string; Icon: typeof Type }[] =
 ];
 
 // Kinds that use the 1/2/3 column layout (so the column picker shows). The rest are
-// single-column and hide it.
-const COLUMN_KINDS = new Set<SectionKind>(["text", "image", "button"]);
+// single-column.
+export const COLUMN_KINDS = new Set<SectionKind>(["text", "image", "button"]);
 
-// Kinds whose content can be horizontally aligned left/center/right from the section
-// toolbar. Text aligns its prose; a button row positions its button(s). (Image fills
-// its column; social/card/quote carry their own alignment affordances.)
-const ALIGNABLE_KINDS = new Set<SectionKind>(["text", "button"]);
+export const KIND_LABELS = Object.fromEntries(
+  KIND_CHOICES.map((k) => [k.value, k.label]),
+) as Record<SectionKind, string>;
 
-// The default horizontal alignment per kind when a section has none set: a button row
-// centers; text reads left.
-function defaultAlign(kind: SectionKind): SectionAlign {
-  return kind === "button" ? "center" : "left";
-}
-
-// Fill palette for buttons / callouts — the brand color first, then a spread of
-// accents and neutrals. The label color is a simpler light/dark choice (a colored
-// fill almost always wants white or near-black text).
-// The brand trio leads (espresso default, then caramel and clay), and the wider
-// spread stays: these swatches dress the *sender's* email, not day3's UI, and
-// their brand is not ours — narrowing this to warm neutrals would be us
-// choosing for them.
-const FILL_SWATCHES = [
-  DEFAULT_BUTTON_BG, "#b98145", "#a35f45", "#7c3aed", "#db2777",
-  "#dc2626", "#ea580c", "#16a34a", "#0891b2", "#6b7280", "#ffffff",
-];
-// Soft tints for a callout's background, plus "no fill".
-const QUOTE_SWATCHES = [
-  DEFAULT_QUOTE_BG, "#f5ede0", "#eff6ff", "#f0fdf4", "#fef2f2", "#fefce8", "#faf5ff", "transparent",
-];
-// Section block backgrounds: "no fill" first (the default — section sits on the
-// content background), then soft neutrals/tints and one dark for contrast blocks.
-const SECTION_BG_SWATCHES = [
-  "transparent", "#f9fafb", "#f4f4f5", "#eff6ff", "#f0fdf4",
-  "#fef2f2", "#fefce8", "#faf5ff", "#111827",
-];
-const LABEL_DARK = "#111827";
-
-const SOCIAL_NETWORKS = Object.keys(SOCIAL_LABELS) as SocialNetwork[];
-
-const ALIGN_CHOICES: { value: SectionAlign; Icon: typeof Type; label: string }[] = [
-  { value: "left", Icon: AlignLeft, label: "Left" },
-  { value: "center", Icon: AlignCenter, label: "Center" },
-  { value: "right", Icon: AlignRight, label: "Right" },
-];
-
-const CARD_LAYOUTS: { value: CardLayout; Icon: typeof Type; label: string }[] = [
-  { value: "image-left", Icon: PanelLeft, label: "Image left" },
-  { value: "image-right", Icon: PanelRight, label: "Image right" },
-  { value: "image-top", Icon: PanelTop, label: "Image on top" },
-];
 
 // Reads a chosen file's natural pixel dimensions client-side, so the serializer can
 // emit aspect-correct width/height attributes (and never upscale). Best-effort —
@@ -268,266 +195,17 @@ export type SectionEditorProps = {
   /** Placeholder for the very first column of the first section. */
   placeholder?: string;
   className?: string;
+  /** The section the panel is editing (selection lives in the composer, which
+   *  also renders the panel). */
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  /** Select a section and open the panel focused on one of its fields. */
+  onEditField: (id: string, field: string) => void;
 };
 
-// The 1 / 2 / 3 column picker for a section — a small segmented control.
-function ColumnPicker({
-  value,
-  onChange,
-}: {
-  value: ColumnCount;
-  onChange: (columns: ColumnCount) => void;
-}) {
-  return (
-    <div
-      role="group"
-      aria-label="Columns"
-      className="flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5"
-    >
-      {COLUMN_CHOICES.map((n) => (
-        <button
-          key={n}
-          type="button"
-          aria-label={`${n} ${n === 1 ? "column" : "columns"}`}
-          aria-pressed={value === n}
-          onClick={() => onChange(n)}
-          className={cn(
-            "flex h-6 w-6 items-center justify-center rounded text-xs font-medium tabular-nums transition-colors",
-            value === n
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {n}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// The section-type picker — a dropdown menu (there are now seven kinds, too many for
-// a segmented control). Switching preserves content/uploads/buttons across the change
-// (see setSectionKind), so flipping kind never loses work.
-function KindPicker({
-  value,
-  onChange,
-}: {
-  value: SectionKind;
-  onChange: (kind: SectionKind) => void;
-}) {
-  const current = KIND_CHOICES.find((k) => k.value === value) ?? KIND_CHOICES[0];
-  const CurrentIcon = current.Icon;
-  return (
-    <Menu>
-      <MenuTrigger
-        render={
-          <button
-            type="button"
-            aria-label={`Section type: ${current.label}`}
-            className="flex h-6 items-center gap-1 rounded-md bg-muted/60 px-2 text-xs font-medium text-foreground transition-colors hover:bg-muted"
-          />
-        }
-      >
-        <CurrentIcon className="size-3.5 text-muted-foreground" />
-        {current.label}
-        <ChevronDown className="size-3 text-muted-foreground" />
-      </MenuTrigger>
-      <MenuContent align="start" className="min-w-44">
-        {KIND_CHOICES.map(({ value: v, label, Icon }) => (
-          <MenuItem
-            key={v}
-            onClick={() => onChange(v)}
-            className={cn(v === value && "bg-muted/60")}
-          >
-            <Icon className="size-4" />
-            {label}
-          </MenuItem>
-        ))}
-      </MenuContent>
-    </Menu>
-  );
-}
-
-// A generic icon segmented control (used for alignment and card layout).
-function SegmentedIcons<T extends string>({
-  value,
-  onChange,
-  choices,
-  label,
-}: {
-  value: T;
-  onChange: (value: T) => void;
-  choices: { value: T; Icon: typeof Type; label: string }[];
-  label: string;
-}) {
-  return (
-    <div
-      role="group"
-      aria-label={label}
-      className="flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5"
-    >
-      {choices.map(({ value: v, Icon, label: l }) => (
-        <button
-          key={v}
-          type="button"
-          aria-label={l}
-          aria-pressed={value === v}
-          title={l}
-          onClick={() => onChange(v)}
-          className={cn(
-            "flex size-6 items-center justify-center rounded transition-colors",
-            value === v
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <Icon className="size-3.5" />
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// A row of color swatches. The active swatch gets a ring; "transparent" renders as a
-// checkered chip. Only emits validated colors (the swatch values themselves), so the
-// serializer/sanitizer round-trip always holds.
-function ColorSwatches({
-  value,
-  onChange,
-  swatches,
-  label,
-}: {
-  value: string | undefined;
-  onChange: (color: string) => void;
-  swatches: string[];
-  label: string;
-}) {
-  return (
-    <div role="group" aria-label={label} className="flex flex-wrap items-center gap-1">
-      {swatches.map((c) => {
-        const active = (value ?? swatches[0]) === c;
-        const transparent = c === "transparent";
-        return (
-          <button
-            key={c}
-            type="button"
-            aria-label={c}
-            aria-pressed={active}
-            title={c}
-            onClick={() => onChange(c)}
-            style={transparent ? undefined : { backgroundColor: c }}
-            className={cn(
-              "size-5 rounded-full border border-foreground/40 transition-transform hover:scale-110",
-              transparent &&
-                "bg-[linear-gradient(45deg,#ccc_25%,transparent_25%,transparent_75%,#ccc_75%),linear-gradient(45deg,#ccc_25%,transparent_25%,transparent_75%,#ccc_75%)] bg-[length:8px_8px] bg-[position:0_0,4px_4px]",
-              active && "ring-2 ring-foreground/40 ring-offset-1 ring-offset-background",
-            )}
-          />
-        );
-      })}
-    </div>
-  );
-}
-
-// The section background-color control in the floating toolbar: a small swatch
-// button that opens a popover of background tints. Reuses ColorSwatches so the chosen
-// value is always a validated swatch. Picking "transparent" clears the field (the
-// section returns to sitting directly on the content background).
-function SectionBgPicker({
-  value,
-  onChange,
-}: {
-  value: string | undefined;
-  onChange: (color: string | undefined) => void;
-}) {
-  const active = !!value && value !== "transparent";
-  return (
-    <Popover>
-      <PopoverTrigger
-        render={
-          <button
-            type="button"
-            aria-label="Section background color"
-            title="Background color"
-            className="flex h-6 items-center gap-1 rounded-md bg-muted/60 px-2 text-foreground transition-colors hover:bg-muted"
-          />
-        }
-      >
-        <PaintBucket className="size-3.5 text-muted-foreground" />
-        <span
-          aria-hidden
-          className="size-3 rounded-full border border-foreground/20"
-          style={active ? { backgroundColor: value } : undefined}
-        />
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-auto p-2">
-        <ColorSwatches
-          value={value ?? "transparent"}
-          onChange={(c) => onChange(c === "transparent" ? undefined : c)}
-          swatches={SECTION_BG_SWATCHES}
-          label="Section background"
-        />
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-// Alt text + optional click-through link for an image, edited in a dialog launched
-// from the image's hover toolbar — so these settings never take up space in the
-// section body. Changes apply live (the builder autosaves), so "Done" just closes.
-function ImageDetailsDialog({
-  open,
-  onOpenChange,
-  value,
-  onChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  value: SectionImage;
-  onChange: (image: SectionImage) => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Image details</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="img-alt">Alt text</Label>
-            <Input
-              id="img-alt"
-              value={value.alt ?? ""}
-              onChange={(e) => onChange({ ...value, alt: e.target.value })}
-              placeholder="Describe this image"
-              autoFocus
-            />
-            <p className="text-xs text-muted-foreground">
-              Shown if the image can&apos;t load, and read aloud by screen readers.
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="img-link">Link URL</Label>
-            <Input
-              id="img-link"
-              value={value.href ?? ""}
-              onChange={(e) => onChange({ ...value, href: e.target.value || undefined })}
-              placeholder="https://example.com"
-            />
-            <p className="text-xs text-muted-foreground">Optional — makes the image clickable.</p>
-          </div>
-        </div>
-        <DialogFooter>
-          <DialogClose render={<Button />}>Done</DialogClose>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 // One column of an image section: an upload dropzone when empty, or the image
-// preview when filled. The hover toolbar (top-right) holds the alt/link details
-// dialog, replace, and remove. When the section has a fixed height the image fills
+// preview when filled. The hover toolbar (top-right) replaces or removes it; its alt
+// text and link are set in the section panel. When the section has a fixed height the image fills
 // the column box (object-cover); otherwise it shows at its natural aspect. The
 // preview always renders the *original* upload so live height drags reframe
 // smoothly, while the email embeds the cover-cropped `src`.
@@ -557,7 +235,6 @@ function ImageColumn({
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
 
   async function handleFile(file: File | undefined | null) {
     if (!file) return;
@@ -638,19 +315,7 @@ function ImageColumn({
                   : "max-h-64 object-contain",
             )}
           />
-          <div className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover/img:opacity-100 [@media(pointer:coarse)]:opacity-100">
-            <button
-              type="button"
-              onClick={() => setDetailsOpen(true)}
-              aria-label="Edit alt text and link"
-              title={value.href ? "Alt text & link (linked)" : "Alt text & link"}
-              className={cn(
-                "flex size-7 items-center justify-center rounded-md bg-background/90 shadow-sm transition-colors hover:text-foreground",
-                value.href ? "text-primary" : "text-muted-foreground",
-              )}
-            >
-              <Pencil className="size-3.5" />
-            </button>
+          <div className="absolute right-1.5 top-1.5 z-20 flex gap-1 opacity-0 transition-opacity group-hover/img:opacity-100 [@media(pointer:coarse)]:opacity-100">
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
@@ -704,15 +369,6 @@ function ImageColumn({
             </span>
           )}
         </button>
-      )}
-
-      {value?.src && (
-        <ImageDetailsDialog
-          open={detailsOpen}
-          onOpenChange={setDetailsOpen}
-          value={value}
-          onChange={onChange}
-        />
       )}
     </div>
   );
@@ -955,72 +611,23 @@ function SectionPreview({ section }: { section: CampaignSection }) {
   );
 }
 
-// The fill + label color popover for a button, opened from its hover toolbar. Groups
-// the fill swatches and the simple light/dark label choice into one compact panel so
-// the resting button card stays clean.
-function ButtonColorPopover({
-  bg,
-  text,
-  onChange,
-}: {
-  bg: string;
-  text: string;
-  onChange: (patch: Partial<SectionButton>) => void;
-}) {
-  return (
-    <Popover>
-      <PopoverTrigger
-        render={
-          <button
-            type="button"
-            aria-label="Button colors"
-            title="Colors"
-            className="flex size-7 items-center justify-center rounded-md bg-background/90 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
-          />
-        }
-      >
-        <PaintBucket className="size-3.5" />
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-auto space-y-3 p-3">
-        <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Fill</Label>
-          <ColorSwatches
-            value={bg}
-            onChange={(c) => onChange({ bgColor: c })}
-            swatches={FILL_SWATCHES}
-            label="Button fill color"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs text-muted-foreground">Label</Label>
-          <ColorSwatches
-            value={text}
-            onChange={(c) => onChange({ textColor: c })}
-            swatches={[DEFAULT_BUTTON_TEXT, LABEL_DARK]}
-            label="Label color"
-          />
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-// One call-to-action button's editor, modeled on the image column: the button itself
-// is the hero (a live, real-looking preview), its label is edited inline by clicking
-// the text beneath it, and a hover toolbar (top-right) holds the link + color
-// controls so the resting card stays uncluttered. Always emits a button object (never
-// null) once touched; an empty label/href simply doesn't serialize.
+// One call-to-action button on the canvas: the button itself, its label edited
+// inline by clicking the text. Its link, colors and width live in the section panel
+// (see section-inspector.tsx). Always emits a button object (never null) once
+// touched; an empty label/href simply doesn't serialize.
 function ButtonColumn({
   value,
   onChange,
   align,
+  onEditLink,
 }: {
   value: SectionButton | null;
   onChange: (button: SectionButton) => void;
-  /** The section's horizontal alignment — positions the button in its column. */
+  /** The section's horizontal alignment: positions the button in its column. */
   align: SectionAlign;
+  /** Opens the section panel on this button's link field. */
+  onEditLink: () => void;
 }) {
-  const hrefId = useId();
   const button: SectionButton = value ?? { label: "", href: "" };
   const bg = button.bgColor ?? DEFAULT_BUTTON_BG;
   const text = button.textColor ?? DEFAULT_BUTTON_TEXT;
@@ -1029,86 +636,39 @@ function ButtonColumn({
   const hasLabel = !!button.label.trim();
   // Mirror the serializer exactly: a button ships only with BOTH a label and a link
   // (serializeButtonCell drops it otherwise). Surface that here so a half-built button
-  // never silently vanishes from the preview/email — the builder stays WYSIWYG.
+  // never silently vanishes from the preview/email: the builder stays WYSIWYG.
   const willSend = hasLabel && linked;
   // Show the button's real fill/label colors as soon as EITHER it's live, or the user
-  // has explicitly picked a color — so choosing a fill gives immediate feedback. A
-  // brand-new button that's neither (no chosen color, not yet live) shows a neutral
-  // "draft" chip instead of a loud default fill, so it reads as a placeholder.
+  // has explicitly picked a color, so choosing a fill gives immediate feedback. A
+  // brand-new button that's neither shows a neutral "draft" chip instead of a loud
+  // default fill, so it reads as a placeholder.
   const showFill =
     willSend || button.bgColor !== undefined || button.textColor !== undefined;
   const fullWidth = !!button.fullWidth;
   const alignClass =
     align === "left" ? "justify-start" : align === "right" ? "justify-end" : "justify-center";
   return (
-    <div className="group/btn relative p-3">
-      {/* Hover toolbar — width, colors + link, mirroring the image column's top-right
-          tools. focus-within keeps it visible while a control inside is in use. */}
-      <div className="absolute right-1.5 top-1.5 z-10 flex gap-1 opacity-0 transition-opacity group-hover/btn:opacity-100 focus-within:opacity-100 [@media(pointer:coarse)]:opacity-100">
-        <button
-          type="button"
-          aria-label="Full-width button"
-          aria-pressed={fullWidth}
-          title={fullWidth ? "Full width" : "Fit to label"}
-          onClick={() => update({ fullWidth: !fullWidth })}
-          className={cn(
-            "flex size-7 items-center justify-center rounded-md bg-background/90 shadow-sm transition-colors hover:text-foreground",
-            // Neutral like the color/link controls and the image toolbar — an active
-            // toggle reads as the (darker) foreground, never a brand-primary fill.
-            fullWidth ? "text-foreground" : "text-muted-foreground",
-          )}
-        >
-          <StretchHorizontal className="size-3.5" />
-        </button>
-        <ButtonColorPopover bg={bg} text={text} onChange={update} />
-        <Popover>
-          <PopoverTrigger
-            render={
-              <button
-                type="button"
-                aria-label="Edit button link"
-                title={linked ? `Linked to ${button.href.trim()}` : "Add a link"}
-                className={cn(
-                  "flex size-7 items-center justify-center rounded-md bg-background/90 shadow-sm transition-colors hover:text-foreground",
-                  linked ? "text-foreground" : "text-muted-foreground",
-                )}
-              />
-            }
-          >
-            <LinkIcon className="size-3.5" />
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-72 space-y-1.5 p-3">
-            <Label htmlFor={hrefId}>Link URL</Label>
-            <Input
-              id={hrefId}
-              value={button.href}
-              onChange={(e) => update({ href: e.target.value })}
-              placeholder="https://…"
-              aria-label="Button link"
-              autoFocus
-            />
-            <p className="text-xs text-muted-foreground">Where the button goes when clicked.</p>
-          </PopoverContent>
-        </Popover>
-      </div>
-
-      {/* The button — the label is edited directly on it. The chip is a <label>, so a
-          click anywhere on the button focuses the input; an invisible sizer span keeps
-          the input exactly as wide as its text so the chip grows/shrinks as you type
-          (an input can't size to content on its own). The row honors the section's
-          alignment (moot when the button is full-width). */}
+    <div className="p-3">
+      {/* The button. The label is edited directly on it: the chip is a <label>, so a
+          click anywhere on the button focuses the input, and an invisible sizer span
+          keeps the input exactly as wide as its text so the chip grows and shrinks as
+          you type. Rounded like the email's button (the campaign's section radius). */}
       <div className={cn("flex py-1", alignClass)}>
         <label
-          style={showFill ? { backgroundColor: bg === "transparent" ? undefined : bg, color: text } : undefined}
+          style={{
+            borderRadius: "var(--d3-section-radius, 12px)",
+            ...(showFill
+              ? { backgroundColor: bg === "transparent" ? undefined : bg, color: text }
+              : {}),
+          }}
           className={cn(
-            "relative cursor-text rounded-md px-4 py-2 text-sm font-semibold transition-colors",
+            "relative cursor-text px-4 py-2 text-sm font-semibold transition-colors",
             fullWidth ? "grid w-full" : "inline-grid",
-            // No chosen color and not yet live → a quiet neutral draft chip, so it reads
-            // as a placeholder rather than a loud finished CTA competing with the app's
-            // own buttons.
+            // No chosen color and not yet live: a quiet neutral draft chip, so it reads
+            // as a placeholder rather than a finished CTA.
             !showFill && "border border-dashed border-border bg-transparent text-muted-foreground",
-            // Showing its real color but not yet shippable (no link) → keep the color
-            // visible for feedback, just slightly dimmed to still read as not-live.
+            // Showing its real color but not yet shippable (no link): keep the color
+            // visible for feedback, slightly dimmed to still read as not live.
             showFill && !willSend && "opacity-70",
           )}
         >
@@ -1121,114 +681,71 @@ function ButtonColumn({
             placeholder="Button"
             aria-label="Button label"
             // Only force the button's own label color when the chip shows its real
-            // fill; while it's a neutral draft chip the label inherits the muted color
-            // (a white `text` would be invisible on the transparent placeholder).
+            // fill; while it's a neutral draft chip the label inherits the muted color.
             style={showFill ? { color: text } : undefined}
             className="col-start-1 row-start-1 w-full bg-transparent px-px text-center outline-none placeholder:text-current placeholder:opacity-60"
           />
         </label>
       </div>
 
-      {/* Honesty hint — the serializer drops a button that lacks a label or a link, so
-          warn here rather than let it silently disappear from the preview/email. */}
-      {!willSend && (
-        <p className="mt-1 flex items-center justify-center gap-1 text-center text-xs text-amber-600 dark:text-amber-500">
-          <LinkIcon className="size-3 shrink-0" />
-          {!hasLabel && !linked
-            ? "Add a label and a link so this button appears in the email"
-            : !linked
+      {/* Honesty hint: the serializer drops a button that lacks a label or a link, so
+          say so here rather than let it silently disappear. A missing link is one
+          click away: the hint opens the panel on the link field. */}
+      {!willSend &&
+        (linked ? (
+          <p className="mt-1 text-center text-xs text-amber-600 dark:text-amber-500">
+            Add a label so this button appears in the email
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={onEditLink}
+            className="mx-auto mt-1 flex items-center gap-1 rounded text-xs text-amber-600 underline-offset-2 hover:underline dark:text-amber-500"
+          >
+            <LinkIcon className="size-3 shrink-0" />
+            {hasLabel
               ? "Add a link so this button appears in the email"
-              : "Add a label so this button appears in the email"}
-        </p>
-      )}
+              : "Add a label and a link so this button appears in the email"}
+          </button>
+        ))}
     </div>
   );
 }
 
-// A two-option text segmented control (Line / Spacer).
-function SegmentedText<T extends string>({
-  value,
-  onChange,
-  choices,
-  label,
-}: {
-  value: T;
-  onChange: (value: T) => void;
-  choices: { value: T; label: string }[];
-  label: string;
-}) {
-  return (
-    <div role="group" aria-label={label} className="flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5">
-      {choices.map(({ value: v, label: l }) => (
-        <button
-          key={v}
-          type="button"
-          aria-pressed={value === v}
-          onClick={() => onChange(v)}
-          className={cn(
-            "rounded px-2.5 py-1 text-xs font-medium transition-colors",
-            value === v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {l}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// A divider's editor: choose a rule or a blank spacer, and (for a spacer) drag the
-// gap. The preview mirrors what the email renders.
-function DividerControls({
-  line,
-  height,
-  onUpdate,
-}: {
-  line: boolean | undefined;
-  height: number | undefined;
-  onUpdate: (patch: Partial<CampaignSection>) => void;
-}) {
-  const isLine = line !== false;
-  const h = Math.round(Math.max(MIN_SPACER_HEIGHT, Math.min(MAX_SPACER_HEIGHT, height ?? DEFAULT_SPACER_HEIGHT)));
-  return (
-    <div className="space-y-3 rounded-lg border border-dashed border-border p-3">
-      <div className="flex justify-center">
-        <SegmentedText
-          value={isLine ? "line" : "spacer"}
-          onChange={(v) => onUpdate({ line: v === "line" })}
-          choices={[
-            { value: "line", label: "Line" },
-            { value: "spacer", label: "Spacer" },
-          ]}
-          label="Divider style"
+// A divider on the canvas, drawn the way the email draws it: a rule in the theme's
+// border color with the email's 24px of air, or a blank spacer of the chosen height
+// (faintly outlined here so an empty gap can still be seen and clicked). Line vs
+// spacer and the height are set in the section panel.
+function DividerPreview({ line, height }: { line: boolean | undefined; height: number | undefined }) {
+  if (line !== false) {
+    return (
+      <div className="py-6">
+        <hr
+          className="border-0 border-t"
+          style={{ borderTopColor: "var(--d3-border-color, var(--border))" }}
         />
       </div>
-      {isLine ? (
-        <hr className="border-t border-border" />
-      ) : (
-        <div className="space-y-2">
-          <div className="rounded bg-muted/50" style={{ height: `${h}px` }} aria-hidden />
-          <div className="flex items-center gap-2">
-            <input
-              type="range"
-              min={MIN_SPACER_HEIGHT}
-              max={MAX_SPACER_HEIGHT}
-              value={h}
-              onChange={(e) => onUpdate({ height: Number(e.target.value) })}
-              aria-label="Spacer height"
-              className="w-full accent-primary"
-            />
-            <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">{h}px</span>
-          </div>
-        </div>
-      )}
+    );
+  }
+  const h = Math.round(
+    Math.max(MIN_SPACER_HEIGHT, Math.min(MAX_SPACER_HEIGHT, height ?? DEFAULT_SPACER_HEIGHT)),
+  );
+  return (
+    <div
+      aria-label={`Spacer, ${h}px`}
+      className="flex items-center justify-center rounded border border-dashed border-current/15 text-[11px] text-current/40"
+      style={{ height: `${h}px` }}
+    >
+      {h >= 24 && `Spacer · ${h}px`}
     </div>
   );
 }
 
-// A quote / callout editor: rich text in a shaded box with an optional attribution
-// line. Its settings (corner roundness + fill tint) live in a hover toolbar at the
-// top-right, exactly like the image and button editors — not stacked beneath the box.
+// A quote / callout on the canvas: rich text in a shaded box with an optional
+// attribution line, both edited in place. The fill and corner style are set in the
+// section panel. Mirrors serializeQuote: a flat box with the same 16px inset, rounded
+// (by the campaign's section radius) only when the quote opts in, and the
+// attribution set as an italic "— name" line.
 function QuoteEditor({
   section,
   onContentChange,
@@ -1241,185 +758,92 @@ function QuoteEditor({
   onRewrite?: (text: string, instruction: string) => Promise<string>;
 }) {
   const bg = section.bgColor ?? DEFAULT_QUOTE_BG;
-  // Mirror serializeQuote: rounded only when explicitly set. The radius tracks the
-  // campaign's section roundness (the same `--d3-section-radius` the email's <style>
-  // resolves to t.sectionRadius), so the canvas matches what ships.
   const rounded = section.rounded === true;
   return (
-    <div className="group/quote relative">
-      {/* Hover toolbar — roundness + fill, mirroring the image/button top-right tools.
-          focus-within keeps it visible while the color popover is open. */}
-      <div className="absolute right-1.5 top-1.5 z-10 flex gap-1 opacity-0 transition-opacity group-hover/quote:opacity-100 focus-within:opacity-100 [@media(pointer:coarse)]:opacity-100">
-        <button
-          type="button"
-          aria-label="Rounded corners"
-          aria-pressed={rounded}
-          title={rounded ? "Square corners" : "Rounded corners"}
-          onClick={() => onUpdate({ rounded: !rounded })}
-          className={cn(
-            "flex size-7 items-center justify-center rounded-md bg-background/90 shadow-sm transition-colors hover:text-foreground",
-            rounded ? "text-primary" : "text-muted-foreground",
-          )}
-        >
-          {/* A box glyph that is rounded/square to match the toggle's state. */}
-          <span
-            aria-hidden
-            className={cn("size-3.5 border-2 border-current", rounded ? "rounded-[5px]" : "rounded-[1px]")}
-          />
-        </button>
-        <Popover>
-          <PopoverTrigger
-            render={
-              <button
-                type="button"
-                aria-label="Callout color"
-                title="Callout color"
-                className="flex size-7 items-center justify-center rounded-md bg-background/90 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
-              />
-            }
-          >
-            <PaintBucket className="size-3.5" />
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-auto p-3">
-            <ColorSwatches
-              value={bg}
-              onChange={(c) => onUpdate({ bgColor: c })}
-              swatches={QUOTE_SWATCHES}
-              label="Callout color"
-            />
-          </PopoverContent>
-        </Popover>
-      </div>
-
-      {/* A flat shaded box, matching serializeQuote (cellpadding 16 → p-4). Roundness
-          comes from the campaign theme so the builder shows exactly the box that ships. */}
-      <div
-        className={cn("p-4", rounded && "overflow-hidden")}
-        style={{
-          backgroundColor: bg === "transparent" ? undefined : bg,
-          borderRadius: rounded ? "var(--d3-section-radius, 12px)" : undefined,
-        }}
-      >
-        <RichTextEditor
-          value={section.content[0] ?? ""}
-          onChange={(html) => onContentChange(0, html)}
-          onRewrite={onRewrite}
-          placeholder="A quote or a highlight worth pulling out…"
-          className="border-0 bg-transparent [&_.d3-prose]:min-h-0"
-        />
-        <Input
+    <div
+      className={cn("p-4", rounded && "overflow-hidden")}
+      style={{
+        backgroundColor: bg === "transparent" ? undefined : bg,
+        borderRadius: rounded ? "var(--d3-section-radius, 12px)" : undefined,
+      }}
+    >
+      <RichTextEditor
+        value={section.content[0] ?? ""}
+        onChange={(html) => onContentChange(0, html)}
+        onRewrite={onRewrite}
+        placeholder="A quote or a highlight worth pulling out…"
+        className="border-0 bg-transparent [&_.d3-prose]:min-h-0"
+      />
+      <div className="mt-1 flex items-center gap-1 text-sm italic">
+        <span aria-hidden>—</span>
+        <input
           value={section.attribution ?? ""}
           onChange={(e) => onUpdate({ attribution: e.target.value })}
-          placeholder="— Attribution (optional)"
+          placeholder="Attribution (optional)"
           aria-label="Quote attribution"
-          className="mt-1 h-8 border-0 bg-transparent px-0 text-sm text-muted-foreground shadow-none focus-visible:ring-0 dark:bg-transparent"
+          className="h-7 min-w-0 flex-1 bg-transparent outline-none placeholder:text-current placeholder:opacity-40"
         />
       </div>
     </div>
   );
 }
 
-// A social-links editor: an optional lead-in, a list of network + url rows, an add
-// button, and the row alignment.
-function SocialEditor({
+// A social row on the canvas, drawn the way serializeSocial sends it: the lead-in,
+// then each configured profile as a text link, dot-separated and aligned. The links
+// themselves are managed in the section panel; with none yet, the row says so and
+// clicking it opens the panel.
+function SocialPreview({
   section,
-  onUpdate,
+  onEdit,
 }: {
   section: CampaignSection;
-  onUpdate: (patch: Partial<CampaignSection>) => void;
+  onEdit: () => void;
 }) {
-  const socials = section.socials ?? [];
-  const networkItems = Object.fromEntries(SOCIAL_NETWORKS.map((n) => [n, SOCIAL_LABELS[n]]));
-  const setItem = (i: number, patch: Partial<SocialItem>) => {
-    const next = socials.map((s, j) => (j === i ? { ...s, ...patch } : s));
-    onUpdate({ socials: next });
-  };
-  const add = () => {
-    const used = new Set(socials.map((s) => s.network));
-    const next = SOCIAL_NETWORKS.find((n) => !used.has(n)) ?? "website";
-    onUpdate({ socials: [...socials, { network: next, url: "" }] });
-  };
+  const items = (section.socials ?? []).filter((s) => s.url.trim());
+  const align = section.align ?? "center";
+  const intro = section.socialIntro?.trim();
+  if (items.length === 0) {
+    return (
+      <button
+        type="button"
+        onClick={onEdit}
+        className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-current/20 py-4 text-sm text-current/50 transition-colors hover:text-current/80"
+      >
+        <Share2 className="size-4" />
+        Add your social links
+      </button>
+    );
+  }
   return (
-    <div className="space-y-2 rounded-lg border border-border p-3">
-      <Input
-        value={section.socialIntro ?? ""}
-        onChange={(e) => onUpdate({ socialIntro: e.target.value })}
-        placeholder="Lead-in text, e.g. “Follow us:” (optional)"
-        aria-label="Social lead-in text"
-        className="h-8 text-sm"
-      />
-      {socials.map((s, i) => (
-        <div key={i} className="flex items-center gap-1.5">
-          <Select
-            items={networkItems}
-            value={s.network}
-            onValueChange={(v) => v && setItem(i, { network: v as SocialNetwork })}
-          >
-            <SelectTrigger aria-label="Network" className="h-8 w-32 shrink-0">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {SOCIAL_NETWORKS.map((n) => (
-                <SelectItem key={n} value={n}>
-                  {SOCIAL_LABELS[n]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Input
-            value={s.url}
-            onChange={(e) => setItem(i, { url: e.target.value })}
-            placeholder={s.network === "email" ? "mailto:hi@…" : "https://…"}
-            aria-label={`${SOCIAL_LABELS[s.network]} URL`}
-            className="h-8 text-sm"
-          />
-          <button
-            type="button"
-            aria-label="Remove link"
-            onClick={() => onUpdate({ socials: socials.filter((_, j) => j !== i) })}
-            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-destructive"
-          >
-            <X className="size-3.5" />
-          </button>
-        </div>
+    <p
+      className="py-1 text-[0.95rem]"
+      style={{ textAlign: align }}
+    >
+      {intro ? `${intro} ` : ""}
+      {items.map((s, i) => (
+        <span key={i}>
+          {i > 0 && " · "}
+          <span className="underline" style={{ color: "var(--d3-link, inherit)" }}>
+            {SOCIAL_LABELS[s.network]}
+          </span>
+        </span>
       ))}
-      <div className="flex items-center justify-between gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={add}
-          disabled={socials.length >= 12}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <Plus className="size-4" />
-          Add link
-        </Button>
-        <SegmentedIcons
-          value={section.align ?? "center"}
-          onChange={(a) => onUpdate({ align: a })}
-          choices={ALIGN_CHOICES}
-          label="Row alignment"
-        />
-      </div>
-    </div>
+    </p>
   );
 }
 
-// A card editor (one image + rich text): a layout toggle and the image/text arranged
-// to mirror the chosen layout.
+// A card on the canvas (one image + rich text) arranged to mirror its layout, which
+// is chosen in the section panel.
 function CardEditor({
   section,
   onContentChange,
   onImageChange,
-  onUpdate,
   onUploadImage,
   onRewrite,
 }: {
   section: CampaignSection;
   onContentChange: (col: number, html: string) => void;
   onImageChange: (col: number, image: SectionImage | null) => void;
-  onUpdate: (patch: Partial<CampaignSection>) => void;
   onUploadImage: (file: File) => Promise<string>;
   onRewrite?: (text: string, instruction: string) => Promise<string>;
 }) {
@@ -1446,14 +870,6 @@ function CardEditor({
   );
   return (
     <div className="space-y-2">
-      <div className="flex justify-center">
-        <SegmentedIcons
-          value={layout}
-          onChange={(l) => onUpdate({ layout: l })}
-          choices={CARD_LAYOUTS}
-          label="Card layout"
-        />
-      </div>
       {layout === "image-top" ? (
         <div className="space-y-3">
           {imageEl}
@@ -1493,8 +909,9 @@ function SortableSection({
   placeholder,
   onRewrite,
   onUploadImage,
-  onColumnsChange,
-  onKindChange,
+  selected,
+  onSelect,
+  onEditField,
   onContentChange,
   onImageChange,
   onButtonChange,
@@ -1510,8 +927,11 @@ function SortableSection({
   placeholder?: string;
   onRewrite?: (text: string, instruction: string) => Promise<string>;
   onUploadImage: (file: File) => Promise<string>;
-  onColumnsChange: (columns: ColumnCount) => void;
-  onKindChange: (kind: SectionKind) => void;
+  /** This section is the one the section panel is editing. */
+  selected: boolean;
+  onSelect: () => void;
+  /** Select this section and open the panel focused on one of its fields. */
+  onEditField: (field: string) => void;
   onContentChange: (columnIndex: number, html: string) => void;
   onImageChange: (columnIndex: number, image: SectionImage | null) => void;
   onButtonChange: (columnIndex: number, button: SectionButton) => void;
@@ -1586,14 +1006,49 @@ function SortableSection({
     <div
       ref={setNodeRef}
       style={style}
+      data-section=""
+      // Any press or focus inside a section selects it, so writing in a section and
+      // editing its settings are never two separate modes: the panel always shows
+      // whatever you are working on. Capture phase, so it runs before the editor,
+      // input or button inside takes the event (and even when one stops it).
+      onPointerDownCapture={onSelect}
+      onFocusCapture={onSelect}
       className={cn(
         "group/section relative rounded-xl bg-transparent",
         // While dragging, this node stays put as a dimmed placeholder reserving its
-        // slot — the moving visual is the fixed-size clone in the DragOverlay, so the
+        // slot; the moving visual is the fixed-size clone in the DragOverlay, so the
         // section can't distort or smear over its neighbors as it travels.
         isDragging && "opacity-40",
       )}
     >
+      {/* Selection outline. A fixed blue rather than the theme or app accent: it
+          sits on the customer's own email colors, light or dark, and has to read on
+          all of them. Hovering any other section shows a faint dashed version, so
+          the canvas says "these are clickable blocks" before anyone clicks. The tab
+          names the block, so the panel's subject is never in doubt. */}
+      <div
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute -inset-x-2 inset-y-0 z-10 rounded-lg transition-[box-shadow,opacity]",
+          selected
+            ? "shadow-[0_0_0_2px_#3b82f6]"
+            : "opacity-0 shadow-[0_0_0_1px_rgba(59,130,246,0.55)] group-hover/section:opacity-100",
+        )}
+      >
+        {selected && (
+          // The tag is also the way to the panel when it is closed (always, on a
+          // phone, where an open panel would cover the email).
+          <button
+            type="button"
+            onClick={() => onEditField("")}
+            title="Section settings"
+            className="pointer-events-auto absolute -top-2.5 left-2 flex items-center gap-1 rounded bg-[#3b82f6] px-1.5 py-px text-[10px] font-semibold leading-4 text-white transition-colors hover:bg-[#2563eb]"
+          >
+            {KIND_LABELS[section.kind]}
+            <SlidersHorizontal className="size-2.5" />
+          </button>
+        )}
+      </div>
       {/* Drag handle — pushed out past the content card's edge so it sits on the page
           background, not inside the email body. The offset clears the card's
           horizontal padding (p-4 → sm:p-10), so it lands in the page gutter at both
@@ -1620,7 +1075,12 @@ function SortableSection({
           Revealed on hover/focus with a mouse: three stacked controls are taller than
           a one-line section, so neighbouring groups would otherwise overlap. A touch
           screen has no hover, so there they stay visible as before. */}
-      <div className="absolute left-full top-1/2 z-10 ml-1 flex -translate-y-1/2 flex-col gap-0.5 opacity-0 transition-opacity group-hover/section:opacity-100 group-focus-within/section:opacity-100 has-[[data-popup-open]]:opacity-100 sm:ml-11 [@media(pointer:coarse)]:opacity-100">
+      <div
+        className={cn(
+          "absolute left-full top-1/2 z-10 ml-1 flex -translate-y-1/2 flex-col gap-0.5 opacity-0 transition-opacity group-hover/section:opacity-100 group-focus-within/section:opacity-100 has-[[data-popup-open]]:opacity-100 sm:ml-11 [@media(pointer:coarse)]:opacity-100",
+          selected && "opacity-100",
+        )}
+      >
         <SectionKindPopover
           onAdd={onInsertBelow}
           side="right"
@@ -1667,43 +1127,6 @@ function SortableSection({
         </button>
       </div>
 
-      {/* Type + column pickers — float in just above the section on hover, so the
-          resting body has no header. The spacing above the section is padding, not
-          margin, so the pickers' hit area stays *contiguous* with the section: the
-          container's box reaches all the way down to the section's top edge
-          (bottom-full, no margin). Moving the cursor up to a picker therefore never
-          crosses a dead gap onto the section above — which would otherwise steal the
-          hover and make these disappear mid-reach. z-20 keeps them above a neighbor's
-          content where the two overlap.
-
-          focus-within is what makes these reachable on a touch screen, where
-          there is no hover at all: tapping into the section (its text field,
-          its button, any control) brings the pickers up. Without it the section
-          type, column count, alignment and background would be desktop-only. */}
-      <div className="pointer-events-none absolute bottom-full left-1/2 z-20 flex w-max max-w-[92vw] -translate-x-1/2 justify-center pb-1 opacity-0 transition-opacity group-hover/section:pointer-events-auto group-hover/section:opacity-100 group-focus-within/section:pointer-events-auto group-focus-within/section:opacity-100">
-        {/* Wraps rather than overflows: four picker groups are wider than a
-            phone, and this bar is centred on the section, so any overhang would
-            spill past both edges of the page. */}
-        <div className="flex flex-wrap items-center justify-center gap-1.5 rounded-lg border border-border bg-popover p-1 shadow-lg">
-          <KindPicker value={section.kind} onChange={onKindChange} />
-          {COLUMN_KINDS.has(section.kind) && (
-            <ColumnPicker value={section.columns} onChange={onColumnsChange} />
-          )}
-          {ALIGNABLE_KINDS.has(section.kind) && (
-            <SegmentedIcons
-              value={section.align ?? defaultAlign(section.kind)}
-              onChange={(a) => onUpdate({ align: a })}
-              choices={ALIGN_CHOICES}
-              label="Alignment"
-            />
-          )}
-          <SectionBgPicker
-            value={section.sectionBg}
-            onChange={(c) => onUpdate({ sectionBg: c })}
-          />
-        </div>
-      </div>
-
       {/* Body — column kinds (text/image/button) lay out as equal-width columns
           mirroring the email; the single-column kinds render their own editor. */}
       {COLUMN_KINDS.has(section.kind) ? (
@@ -1731,6 +1154,7 @@ function SortableSection({
                   value={section.buttons?.[col] ?? null}
                   onChange={(button) => onButtonChange(col, button)}
                   align={section.align ?? "center"}
+                  onEditLink={() => onEditField(`button-${col}-href`)}
                 />
               ) : (
                 <RichTextEditor
@@ -1762,7 +1186,7 @@ function SortableSection({
         <div className="py-1">
           <div style={sectionBgStyle} className={sectionBgClass}>
           {section.kind === "divider" && (
-            <DividerControls line={section.line} height={section.height} onUpdate={onUpdate} />
+            <DividerPreview line={section.line} height={section.height} />
           )}
           {section.kind === "quote" && (
             <QuoteEditor
@@ -1772,13 +1196,14 @@ function SortableSection({
               onRewrite={onRewrite}
             />
           )}
-          {section.kind === "social" && <SocialEditor section={section} onUpdate={onUpdate} />}
+          {section.kind === "social" && (
+            <SocialPreview section={section} onEdit={() => onEditField("social")} />
+          )}
           {section.kind === "card" && (
             <CardEditor
               section={section}
               onContentChange={onContentChange}
               onImageChange={onImageChange}
-              onUpdate={onUpdate}
               onUploadImage={onUploadImage}
               onRewrite={onRewrite}
             />
@@ -1894,6 +1319,83 @@ function SectionKindPopover({
   );
 }
 
+// Every structural edit to the section list, shared by the canvas (SectionEditor)
+// and the section panel (SectionInspector) so the two can never disagree about what
+// "remove" or "move" means. Commits read `latest` rather than the render-time list:
+// uploading and cover-cropping an image are network round trips measured in seconds,
+// and a commit built from a stale snapshot would quietly throw away everything typed
+// while it was in flight.
+export function useSectionList(
+  value: CampaignSection[],
+  onChange: (sections: CampaignSection[]) => void,
+) {
+  // Never let the builder go empty: there's always at least one section to edit.
+  // Memoized so the fallback isn't a freshly minted id (and a remount) every render.
+  const fallback = useMemo(() => [emptySection()], []);
+  const sections = value.length > 0 ? value : fallback;
+  // Synced in an effect (not during render) so it is a real post-commit mirror.
+  const latest = useRef(sections);
+  useEffect(() => {
+    latest.current = sections;
+  });
+
+  function commit(next: CampaignSection[]) {
+    onChange(next.length > 0 ? next : [emptySection()]);
+  }
+
+  function patch(id: string, updater: (s: CampaignSection) => CampaignSection) {
+    const current = latest.current;
+    // The section may have been removed while an async edit was in flight; then
+    // there is nothing to patch and re-adding it would be the surprise.
+    if (!current.some((s) => s.id === id)) return;
+    commit(current.map((s) => (s.id === id ? updater(s) : s)));
+  }
+
+  // Inserts `section` right after `afterId` (or at the end) and returns its id.
+  function insertAfter(afterId: string, section: CampaignSection): string {
+    const current = latest.current;
+    const at = current.findIndex((s) => s.id === afterId);
+    const next = [...current];
+    next.splice(at < 0 ? current.length : at + 1, 0, section);
+    commit(next);
+    return section.id;
+  }
+
+  function move(id: string, delta: -1 | 1) {
+    const current = latest.current;
+    const from = current.findIndex((s) => s.id === id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= current.length) return;
+    commit(arrayMove(current, from, to));
+  }
+
+  // Undo rather than a confirm dialog: a section is one click from gone and carries
+  // writing that nothing else can recover (the editors' own undo stacks go with it).
+  // A confirm would tax the common case, clearing an empty placeholder, for a mistake
+  // that is cheap to reverse if we simply keep the section around.
+  function remove(id: string) {
+    const current = latest.current;
+    const at = current.findIndex((s) => s.id === id);
+    if (at < 0) return;
+    const removed = current[at];
+    commit(current.filter((s) => s.id !== id));
+    toast("Section removed", {
+      action: {
+        label: "Undo",
+        onClick: () => {
+          const now = latest.current;
+          if (now.some((s) => s.id === removed.id)) return;
+          const next = [...now];
+          next.splice(Math.min(at, next.length), 0, removed);
+          commit(next);
+        },
+      },
+    });
+  }
+
+  return { sections, latest, commit, patch, insertAfter, move, remove };
+}
+
 export function SectionEditor({
   value,
   onChange,
@@ -1901,6 +1403,9 @@ export function SectionEditor({
   onUploadImage,
   placeholder,
   className,
+  selectedId,
+  onSelect,
+  onEditField,
 }: SectionEditorProps) {
   const sensors = useSensors(
     // A small drag threshold so clicks/taps inside a section (e.g. selecting text in
@@ -1913,34 +1418,9 @@ export function SectionEditor({
   // DragOverlay as a fixed-size floating clone (null when nothing is dragging).
   const [activeId, setActiveId] = useState<string | null>(null);
 
-  // Never let the builder go empty — there's always at least one section to edit.
-  // Memoized so the fallback isn't a freshly-minted id (and therefore a remount of
-  // every child) on each render.
-  const fallback = useMemo(() => [emptySection()], []);
-  const sections = value.length > 0 ? value : fallback;
+  const { sections, latest, commit, patch: patchSection, insertAfter, remove } =
+    useSectionList(value, onChange);
   const activeSection = activeId ? sections.find((s) => s.id === activeId) ?? null : null;
-
-  // The latest sections, read by any commit that lands AFTER an await. Uploading
-  // and cover-cropping an image are network round trips measured in seconds, and a
-  // commit built from the render-time snapshot would quietly throw away everything
-  // the user typed while it was in flight — the edit simply vanished on upload.
-  // Synced in an effect (not during render) so it is a real post-commit mirror.
-  const latest = useRef(sections);
-  useEffect(() => {
-    latest.current = sections;
-  });
-
-  function commit(next: CampaignSection[]) {
-    onChange(next.length > 0 ? next : [emptySection()]);
-  }
-
-  function patchSection(id: string, updater: (s: CampaignSection) => CampaignSection) {
-    const current = latest.current;
-    // The section may have been removed while an async edit was in flight; then
-    // there is nothing to patch and re-adding it would be the surprise.
-    if (!current.some((s) => s.id === id)) return;
-    commit(current.map((s) => (s.id === id ? updater(s) : s)));
-  }
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id));
@@ -1979,10 +1459,11 @@ export function SectionEditor({
               placeholder={i === 0 ? placeholder : undefined}
               onRewrite={onRewrite}
               onUploadImage={onUploadImage}
-              onColumnsChange={(columns) =>
-                patchSection(section.id, (s) => resizeSection(s, columns))
-              }
-              onKindChange={(kind) => patchSection(section.id, (s) => setSectionKind(s, kind))}
+              selected={section.id === selectedId}
+              onSelect={() => {
+                if (section.id !== selectedId) onSelect(section.id);
+              }}
+              onEditField={(field) => onEditField(section.id, field)}
               onContentChange={(col, html) =>
                 patchSection(section.id, (s) => {
                   const content = [...s.content];
@@ -2031,43 +1512,17 @@ export function SectionEditor({
                 );
                 patchSection(section.id, (s) => ({ ...s, height, images: cropped }));
               }}
-              onInsertBelow={(kind) => {
-                const current = latest.current;
-                const at = current.findIndex((s) => s.id === section.id);
-                const next = [...current];
-                next.splice(at < 0 ? current.length : at + 1, 0, setSectionKind(emptySection(), kind));
-                commit(next);
-              }}
-              onDuplicate={() => {
-                const current = latest.current;
-                const at = current.findIndex((s) => s.id === section.id);
-                const next = [...current];
-                next.splice(at < 0 ? current.length : at + 1, 0, duplicateSection(section));
-                commit(next);
-              }}
+              onInsertBelow={(kind) =>
+                onSelect(insertAfter(section.id, setSectionKind(emptySection(), kind)))
+              }
+              onDuplicate={() => onSelect(insertAfter(section.id, duplicateSection(section)))}
               onRemove={() => {
-                const current = latest.current;
-                const at = current.findIndex((s) => s.id === section.id);
-                if (at < 0) return;
-                const removed = current[at];
-                commit(current.filter((s) => s.id !== section.id));
-                // Undo rather than a confirm dialog: a section is one click from
-                // gone and carries writing that nothing else can recover (the
-                // editors' own undo stacks go with it). A confirm would tax the
-                // common case — clearing an empty placeholder — for a mistake that
-                // is cheap to reverse if we simply keep the section around.
-                toast("Section removed", {
-                  action: {
-                    label: "Undo",
-                    onClick: () => {
-                      const now = latest.current;
-                      if (now.some((s) => s.id === removed.id)) return;
-                      const next = [...now];
-                      next.splice(Math.min(at, next.length), 0, removed);
-                      commit(next);
-                    },
-                  },
-                });
+                // Removing the selected block hands the selection to a neighbor, so
+                // the panel keeps a subject.
+                if (section.id === selectedId) {
+                  onSelect((sections[i + 1] ?? sections[i - 1])?.id ?? null);
+                }
+                remove(section.id);
               }}
             />
           ))}
@@ -2083,7 +1538,11 @@ export function SectionEditor({
       </DndContext>
 
       <AddSectionButton
-        onAdd={(kind) => commit([...latest.current, setSectionKind(emptySection(), kind)])}
+        onAdd={(kind) => {
+          const added = setSectionKind(emptySection(), kind);
+          commit([...latest.current, added]);
+          onSelect(added.id);
+        }}
         disabled={sections.length >= MAX_SECTIONS}
       />
       </div>

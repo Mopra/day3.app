@@ -295,6 +295,17 @@ guards make that observable:
   reads cleanly on mobile without a separate layout. Desktop clients keep the side-by-side
   layout. A **brand-new campaign opens on a starter layout** (a text block plus a ready-made
   call-to-action button) rather than a blank canvas.
+- **Select a section, edit it in one place:** clicking (or tabbing) into any section
+  selects it: a blue outline and a tag naming the block. The canvas holds only content
+  (writing, button labels, image uploads, dragging); everything else about the selected
+  block lives in the **Section** tab of the settings panel on the right: its **type**,
+  **columns**, **alignment**, **background**, its kind's own options (a button's link,
+  fill, label color and width; an image's alt text and link; a callout's fill and
+  corners; a divider's line/spacer style and height; a card's layout; the social links
+  and lead-in) and **move up / move down / duplicate / remove**. A canvas hint such as
+  "Add a link so this button appears" opens the panel on that exact field. Escape or a
+  click outside the sections clears the selection. The panel opens on selection on a
+  wide screen; on a phone (where it would cover the email) the block's tag opens it.
 - **Templates — ready-made starting points:** a gallery of five hand-built layouts
   (**Product update**, **Launch announcement**, **Founder note**, **Weekly digest**,
   **Event invite**), each shipping both a **section layout** and a matching **global
@@ -351,7 +362,7 @@ guards make that observable:
     guarantees hold.
   - All section types are available on **every plan** — like all drafting, only
     *sending* is gated.
-- **Global styling panel:** a dockable panel beside the message lets you style the
+- **Global styling (the panel's Email style tab):** lets you style the
   whole email at once — **page background**, **content/section background**, **body,
   heading, and link colors**, a **border** (color + width), **image roundness**, and
   **section roundness**. The editing canvas re-themes live as you tune it (true

@@ -11,7 +11,7 @@
 // gate the server re-applies — so the panel can never produce a value the email
 // document would reject or that could break out of an inline style.
 import { useRef } from "react";
-import { GripVertical, Palette, RotateCcw } from "lucide-react";
+import { GripVertical, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ColorField, SliderField } from "@/components/ui/color-field";
 import {
@@ -21,8 +21,9 @@ import {
   type CampaignTheme,
 } from "@/lib/theme";
 
-// A small titled group of controls inside the panel.
-function Group({ title, children }: { title: string; children: React.ReactNode }) {
+// A small titled group of controls inside the panel (also used by the section
+// panel, so both tabs read as one panel).
+export function PanelGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="space-y-2.5">
       <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/70">
@@ -47,10 +48,7 @@ export function StylingPanel({
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
-        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-          <Palette className="size-4 text-muted-foreground" />
-          Styling
-        </h3>
+        <p className="text-xs text-muted-foreground">Applies to the whole email.</p>
         <button
           type="button"
           onClick={() => onChange({ ...DEFAULT_THEME })}
@@ -62,7 +60,7 @@ export function StylingPanel({
         </button>
       </div>
 
-      <Group title="Background">
+      <PanelGroup title="Background">
         <ColorField label="Page" value={value.pageBg} onChange={(c) => set({ pageBg: c })} />
         <ColorField
           label="Sections"
@@ -75,9 +73,9 @@ export function StylingPanel({
           onChange={(v) => set({ sectionRadius: v })}
           max={MAX_RADIUS}
         />
-      </Group>
+      </PanelGroup>
 
-      <Group title="Text">
+      <PanelGroup title="Text">
         <ColorField label="Body" value={value.textColor} onChange={(c) => set({ textColor: c })} />
         <ColorField
           label="Headings"
@@ -85,9 +83,9 @@ export function StylingPanel({
           onChange={(c) => set({ headingColor: c })}
         />
         <ColorField label="Links" value={value.linkColor} onChange={(c) => set({ linkColor: c })} />
-      </Group>
+      </PanelGroup>
 
-      <Group title="Border">
+      <PanelGroup title="Border">
         <ColorField
           label="Color"
           value={value.borderColor}
@@ -99,40 +97,38 @@ export function StylingPanel({
           onChange={(v) => set({ borderWidth: v })}
           max={MAX_BORDER_WIDTH}
         />
-      </Group>
+      </PanelGroup>
 
-      <Group title="Images">
+      <PanelGroup title="Images">
         <SliderField
           label="Roundness"
           value={value.imageRadius}
           onChange={(v) => set({ imageRadius: v })}
           max={MAX_RADIUS}
         />
-      </Group>
+      </PanelGroup>
     </div>
   );
 }
 
-// The styling panel as a floating card near the right edge of the screen and
-// vertically centered in the viewport, so it stays put as the composer scrolls.
+// The composer's settings panel as a floating card near the right edge of the screen
+// and vertically centered in the viewport, so it stays put as the composer scrolls.
 // It floats with a small gap from the edge (rather than flush to it) so it clears
 // the window's vertical scrollbar instead of sitting on top of it.
 // A slim vertical grip is the handle: tap to toggle, or drag it left to
-// open / right to collapse. The panel expands *inward* over the content — its width
-// animates from 0 to its full size — so it never pushes past the content's right edge
-// into a horizontal scrollbar.
-export function FloatingStylingPanel({
-  value,
-  onChange,
+// open / right to collapse. The panel expands *inward* over the content: its width
+// animates from 0 to its full size, so it never pushes past the content's right edge
+// into a horizontal scrollbar. What it holds (the section panel and the email-wide
+// styling, as tabs) is up to the composer.
+export function FloatingSidePanel({
   open,
   onOpenChange,
+  children,
 }: {
-  value: CampaignTheme;
-  onChange: (theme: CampaignTheme) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-}) {
-  // Pointer drag bookkeeping: where the press started and whether it moved enough to
+  children: React.ReactNode;
+}) {  // Pointer drag bookkeeping: where the press started and whether it moved enough to
   // count as a drag (so a stationary press falls through to a click-toggle on release).
   const drag = useRef<{ x: number; moved: boolean } | null>(null);
 
@@ -167,7 +163,7 @@ export function FloatingStylingPanel({
             the only thing showing, a small tab flush to the content edge. */}
         <button
           type="button"
-          aria-label={open ? "Collapse styling panel" : "Expand styling panel"}
+          aria-label={open ? "Collapse settings panel" : "Expand settings panel"}
           aria-expanded={open}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -188,15 +184,15 @@ export function FloatingStylingPanel({
             // so a collapsed (w-0) panel doesn't leave a shadow sliver by the grip.
             "overflow-hidden rounded-xl transition-[width] duration-300 ease-out",
             open
-              ? "w-[min(18rem,calc(100vw-4rem))] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.65),0_8px_24px_-8px_rgba(0,0,0,0.5)]"
+              ? "w-[min(19rem,calc(100vw-4rem))] shadow-[0_24px_60px_-12px_rgba(0,0,0,0.65),0_8px_24px_-8px_rgba(0,0,0,0.5)]"
               : "w-0",
           )}
         >
           {/* The inner body keeps a fixed width so its layout never reflows as
               the clip animates — but that width is capped to the viewport on a
               phone, where a flat 18rem card plus the grip runs off the screen. */}
-          <div className="max-h-[80dvh] w-[min(18rem,calc(100vw-4rem))] overflow-y-auto rounded-xl border border-border bg-card p-4 sm:p-5">
-            <StylingPanel value={value} onChange={onChange} />
+          <div className="max-h-[80dvh] w-[min(19rem,calc(100vw-4rem))] overflow-y-auto rounded-xl border border-border bg-card">
+            {children}
           </div>
         </div>
       </div>

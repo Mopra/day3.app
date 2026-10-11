@@ -13,6 +13,7 @@
 //     editable title at the top; if left blank it falls back to the subject on save.
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -59,7 +60,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { SectionEditor } from "@/components/ui/section-editor";
-import { FloatingStylingPanel } from "@/components/ui/styling-panel";
+import { FloatingSidePanel, StylingPanel } from "@/components/ui/styling-panel";
+import { SectionInspector } from "@/components/ui/section-inspector";
 import { MergeTagsProvider, type MergeTag } from "@/components/ui/rich-text-editor";
 import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -405,15 +407,48 @@ export function CampaignComposer({
   // own @media rules (columns stacking under 600px) fire inside the narrow frame.
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
 
-  // The right-side floating styling panel. It floats OVER the canvas, so on a
-  // phone an open panel is ~85% of the screen width sitting on top of the email
-  // the user came to write. Start closed and reveal it (its width animates in) on
-  // a viewport wide enough to have room beside the message column. Done in an
-  // effect rather than a lazy initializer so the server and the first client
-  // render agree — matchMedia doesn't exist during SSR.
-  const [stylesOpen, setStylesOpen] = useState(false);
+  // The right-hand settings panel, with two tabs: the selected section's settings
+  // and the email-wide style. It floats OVER the canvas, so it starts closed (a
+  // brand-new draft opens on the template gallery, and an open panel beside it only
+  // crowded the page) and opens when there is something to show: a section gets
+  // selected, or the Style button is pressed. Selecting only opens it on a screen
+  // wide enough to have room beside the message column; on a phone it would cover
+  // the email, so there the selected block's tag opens it instead. And once someone
+  // closes it by hand, selecting stops reopening it until they open it again.
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelTab, setPanelTab] = useState<"section" | "style">("section");
+  const panelClosedByHand = useRef(false);
+  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
+  // A panel field to focus once it renders (e.g. a button's link, from the canvas's
+  // "Add a link" hint).
+  const [panelFocusField, setPanelFocusField] = useState<string | null>(null);
+  const clearPanelFocusField = useCallback(() => setPanelFocusField(null), []);
+
+  function openPanel(tab: "section" | "style") {
+    setPanelTab(tab);
+    setPanelOpen(true);
+    panelClosedByHand.current = false;
+  }
+
+  function selectSection(id: string | null) {
+    setSelectedSectionId(id);
+    if (!id) return;
+    setPanelTab("section");
+    if (!panelClosedByHand.current && window.matchMedia("(min-width: 1024px)").matches) {
+      setPanelOpen(true);
+    }
+  }
+
+  // Escape lets go of the selection, unless a dialog or menu is what Escape is for.
   useEffect(() => {
-    if (window.matchMedia("(min-width: 1024px)").matches) setStylesOpen(true);
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const active = document.activeElement;
+      if (active?.closest("[role=dialog], [role=menu], [role=listbox]")) return;
+      setSelectedSectionId(null);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, []);
 
   // Autosave bookkeeping. The callback is held in a ref so the debounce
@@ -1035,7 +1070,7 @@ export function CampaignComposer({
 
       {/* Body row — the message column, constrained to a typical email body width and
           centered. The styling panel no longer sits here; it floats over the right edge
-          (see FloatingStylingPanel below). */}
+          (see FloatingSidePanel below). */}
       <div className="flex flex-col items-center gap-6">
       {/* Message column — sized so the themed content card inside lands at the real
           ~600px email body width *after* the surrounding page padding (sm:p-10 → 80px
@@ -1130,10 +1165,17 @@ export function CampaignComposer({
         </Button>
         <Button
           type="button"
-          variant={stylesOpen ? "secondary" : "ghost"}
+          variant={panelOpen && panelTab === "style" ? "secondary" : "ghost"}
           size="sm"
-          onClick={() => setStylesOpen((o) => !o)}
-          aria-pressed={stylesOpen}
+          onClick={() => {
+            if (panelOpen && panelTab === "style") {
+              setPanelOpen(false);
+              panelClosedByHand.current = true;
+            } else {
+              openPanel("style");
+            }
+          }}
+          aria-pressed={panelOpen && panelTab === "style"}
         >
           <Palette />
           Style
@@ -1195,6 +1237,14 @@ export function CampaignComposer({
       >
       <div
         className="p-5 transition-colors sm:p-10"
+        // A press on the canvas outside every section (the header rows, the footer,
+        // the margins) lets go of the selection, as clicking empty canvas does in
+        // any design tool. The settings panel and popovers live outside this box.
+        onPointerDown={(e) => {
+          if (!(e.target as HTMLElement).closest("[data-section]")) {
+            setSelectedSectionId(null);
+          }
+        }}
         style={{
           ...themeCanvasVars(theme),
           color: theme.textColor,
@@ -1491,6 +1541,13 @@ export function CampaignComposer({
                 : "Write your email…"
             }
             className="mt-8 py-2"
+            selectedId={selectedSectionId}
+            onSelect={selectSection}
+            onEditField={(id, field) => {
+              setSelectedSectionId(id);
+              openPanel("section");
+              if (field) setPanelFocusField(field);
+            }}
           />
         </MergeTagsProvider>
 
@@ -1608,15 +1665,58 @@ export function CampaignComposer({
 
       </div>
 
-      {/* Styling panel — a floating overlay docked to the right edge, toggled by its
-          own draggable grip (or the toolbar "Style" button). The live canvas + preview
-          re-theme as these change; the next autosave persists the theme. */}
-      <FloatingStylingPanel
-        value={resolveTheme(theme)}
-        onChange={applyTheme}
-        open={stylesOpen}
-        onOpenChange={(o) => setStylesOpen(o)}
-      />
+      {/* Settings panel: a floating overlay docked to the right edge, toggled by its
+          own draggable grip (or the toolbar "Style" button, or a selected section's
+          tag). Two tabs: the selected section, and the email-wide style. The canvas
+          and preview update live; the next autosave persists the change. */}
+      <FloatingSidePanel
+        open={panelOpen}
+        onOpenChange={(o) => {
+          setPanelOpen(o);
+          panelClosedByHand.current = !o;
+        }}
+      >
+        <div className="sticky top-0 z-10 border-b border-border bg-card p-2">
+          <div role="tablist" aria-label="Settings" className="grid grid-cols-2 gap-0.5 rounded-lg bg-muted/60 p-0.5">
+            {(
+              [
+                { value: "section", label: "Section" },
+                { value: "style", label: "Email style" },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.value}
+                type="button"
+                role="tab"
+                aria-selected={panelTab === t.value}
+                onClick={() => setPanelTab(t.value)}
+                className={cn(
+                  "h-7 rounded-md text-xs font-medium transition-colors",
+                  panelTab === t.value
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="p-4 sm:p-5">
+          {panelTab === "section" ? (
+            <SectionInspector
+              sections={sections ?? []}
+              onChange={applySections}
+              selectedId={selectedSectionId}
+              onSelect={selectSection}
+              focusField={panelFocusField}
+              onFieldFocused={clearPanelFocusField}
+            />
+          ) : (
+            <StylingPanel value={resolveTheme(theme)} onChange={applyTheme} />
+          )}
+        </div>
+      </FloatingSidePanel>
 
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
         <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-2xl">
