@@ -35,6 +35,8 @@ import {
   AlertTriangle,
   Palette,
   LayoutTemplate,
+  Monitor,
+  Smartphone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OrbitLoader } from "@/components/ui/orbit-loader";
@@ -398,6 +400,10 @@ export function CampaignComposer({
   const [loadingIdeas, setLoadingIdeas] = useState(false);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  // Most email is opened on a phone, so the preview can show the message at a
+  // phone's width too. That is a real render, not a scaled screenshot: the email's
+  // own @media rules (columns stacking under 600px) fire inside the narrow frame.
+  const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
 
   // The right-side floating styling panel. It floats OVER the canvas, so on a
   // phone an open panel is ~85% of the screen width sitting on top of the email
@@ -960,7 +966,12 @@ export function CampaignComposer({
       {/* Full-width content header — the (editable) page title and any page-level
           action buttons. Spans the full width; the message column below is the
           narrower email-width column. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border pb-4">
+      {/* Sticky: the save indicator and the send actions are the two things a
+          writer checks most, and a long email used to scroll both out of reach.
+          The negative margins pull the bar's fill out to the edges of the app's
+          <main> panel (it pads px-4 / sm:px-6 / md:px-8, py-5 / md:py-6), so
+          content scrolling underneath never shows past its sides or above it. */}
+      <div className="sticky -top-5 z-30 -mx-4 -mt-5 flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-card px-4 pb-4 pt-5 sm:-mx-6 sm:px-6 md:-top-6 md:-mx-8 md:-mt-6 md:px-8 md:pt-6">
         {/* Title + badge group. The input auto-sizes to its content (a hidden
             sizer span mirrors the text) so the status badge hugs the title
             instead of being pushed to the far edge by a flex-1 field. */}
@@ -1371,7 +1382,7 @@ export function CampaignComposer({
           <Input
             id="subject"
             className={headerInputClass}
-            placeholder="What's new in June"
+            placeholder="What we shipped this month"
             {...register("subject")}
           />
         </HeaderRow>
@@ -1591,6 +1602,35 @@ export function CampaignComposer({
               <Eye className="size-4 text-muted-foreground" />
               Inbox preview
             </DialogTitle>
+            {/* right-12 keeps clear of the dialog's own close button. */}
+            <div
+              role="group"
+              aria-label="Preview width"
+              className="absolute right-12 top-1.5 flex items-center gap-0.5 rounded-md bg-muted/60 p-0.5"
+            >
+              {(
+                [
+                  { value: "desktop", label: "Desktop", Icon: Monitor },
+                  { value: "mobile", label: "Mobile", Icon: Smartphone },
+                ] as const
+              ).map(({ value, label, Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={previewDevice === value}
+                  onClick={() => setPreviewDevice(value)}
+                  className={cn(
+                    "flex h-6 items-center gap-1.5 rounded px-2 text-xs font-medium transition-colors",
+                    previewDevice === value
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <Icon className="size-3.5" />
+                  {label}
+                </button>
+              ))}
+            </div>
           </DialogHeader>
 
           <div className="max-h-[80vh] overflow-y-auto">
@@ -1654,7 +1694,12 @@ export function CampaignComposer({
               </div>
             </div>
 
-            <div className="mt-4 border-t border-border bg-white">
+            <div
+              className={cn(
+                "mt-4 border-t border-border",
+                previewDevice === "mobile" ? "bg-muted/40 py-4" : "bg-white",
+              )}
+            >
               <iframe
                 title="Email preview"
                 sandbox=""
@@ -1665,13 +1710,18 @@ export function CampaignComposer({
                   companyAddress,
                   resolveTheme(theme),
                 )}
-                className="h-[50vh] w-full border-0"
+                className={cn(
+                  "border-0",
+                  previewDevice === "mobile"
+                    ? "mx-auto block h-[60vh] w-[375px] max-w-full rounded-2xl bg-white shadow-lg ring-1 ring-border"
+                    : "h-[50vh] w-full",
+                )}
               />
             </div>
           </div>
 
           <p className="border-t border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
-            Sample personalization shown. The unsubscribe footer is added automatically on send.
+            Sample personalization shown. Each recipient gets their own unsubscribe link.
           </p>
         </DialogContent>
       </Dialog>
