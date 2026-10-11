@@ -13,7 +13,7 @@
 //     lists, quote, image, divider, and personalization merge tags). This is how
 //     you add new blocks, the way people now expect from Notion/Linear/etc.
 import { createContext, useContext, useEffect, useId, useState } from "react";
-import { useEditor, EditorContent, type Editor } from "@tiptap/react";
+import { useEditor, useEditorState, EditorContent, type Editor } from "@tiptap/react";
 import { BubbleMenu, FloatingMenu } from "@tiptap/react/menus";
 import type { EditorState } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
@@ -22,6 +22,7 @@ import { Placeholder } from "@tiptap/extensions";
 import { MergeTagNode, scanMergeTags, unwrapMergeTags } from "@/components/ui/merge-tag-node";
 import {
   Bold,
+  Braces,
   Italic,
   Underline,
   Heading1,
@@ -117,6 +118,29 @@ function textBeforeCursor(state: EditorState, n: number): string {
   const { $from } = state.selection;
   return $from.parent.textBetween(Math.max(0, $from.parentOffset - n), $from.parentOffset);
 }
+
+// What the user has typed after an open "{{" at the cursor ("" right after the
+// braces), or null when the cursor isn't inside one. A "}" or a newline ends it,
+// so finishing a tag by hand closes the menu.
+function mergeTagQuery(state: EditorState): string | null {
+  const m = /\{\{([^{}]{0,24})$/.exec(textBeforeCursor(state, 26));
+  return m ? m[1] : null;
+}
+
+// Tags whose label or token contains the query, so "{{plan" narrows a long list of
+// custom fields to "Plan tier".
+function matchMergeTags(tags: MergeTag[], query: string): MergeTag[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return tags;
+  return tags.filter(
+    (t) => t.label.toLowerCase().includes(q) || t.insert.toLowerCase().includes(q),
+  );
+}
+
+// The tag picker is a list, not a bar: an audience can carry dozens of custom
+// fields, and laid out as a row of buttons they filled the screen.
+const tagMenuClass =
+  "z-50 flex max-h-64 w-60 max-w-[calc(100vw-1rem)] flex-col overflow-y-auto rounded-xl border border-border bg-background p-1 shadow-lg";
 
 const BUBBLE_MENU_OPTIONS ={ strategy: "fixed", placement: "top", offset: 8 } as const;
 const FLOATING_MENU_OPTIONS = { strategy: "fixed", placement: "bottom-start", offset: 6 } as const;
@@ -328,6 +352,13 @@ export function RichTextEditor({
     onUpdate: ({ editor }) => {
       onChange(editor.isEmpty ? "" : unwrapMergeTags(editor.getHTML()));
     },
+  });
+
+  // The menus render outside React's update cycle, so subscribe to the typed
+  // "{{" query explicitly; the tag list re-filters on every keystroke.
+  const tagQuery = useEditorState({
+    editor,
+    selector: ({ editor: e }) => (e ? mergeTagQuery(e.state) : null),
   });
 
   // Sync external value changes (e.g. an AI draft) into the editor without
@@ -552,58 +583,59 @@ export function RichTextEditor({
             <Quote />
           </ToolbarButton>
           <Divider />
-          <span className="pl-1 text-sm font-medium text-muted-foreground">Personalize</span>
-          {mergeTags.map((t) => (
-            <Button
-              key={t.label}
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => editor.chain().focus().insertContent(t.insert).run()}
-            >
-              {t.label}
-            </Button>
-          ))}
+          {/* One button, not one per tag: it types "{{", which opens the tag list
+              below, so there is a single place to pick a tag from. */}
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="gap-1 text-muted-foreground"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => editor.chain().focus().insertContent("{{").run()}
+          >
+            <Braces className="size-3.5" />
+            Personalize
+          </Button>
         </FloatingMenu>
 
-        {/* Personalization mid-sentence. The insert menu above only appears on an
-            empty line, so "Thanks for joining, {{first_name}}!" meant typing the
-            token by hand and knowing its exact name. Typing "{{" anywhere opens the
-            same tag list at the cursor; picking one replaces the "{{" with the full
-            tag. Typing on past "{{" closes it, so writing a tag by hand still works. */}
+        {/* Personalization mid-sentence. Typing "{{" anywhere opens the tag list at
+            the cursor; typing on filters it, and picking one replaces the "{{" and
+            whatever followed with the full tag. A "}" closes it, so writing a tag by
+            hand still works. */}
         <BubbleMenu
           editor={editor}
           pluginKey="mergeTagMenu"
-          shouldShow={({ editor: e, state }) =>
-            e.isFocused && state.selection.empty && textBeforeCursor(state, 2) === "{{"
-          }
+          shouldShow={({ editor: e, state }) => {
+            if (!e.isFocused || !state.selection.empty) return false;
+            const q = mergeTagQuery(state);
+            return q !== null && matchMergeTags(mergeTags, q).length > 0;
+          }}
           appendTo={floatingMenuRoot}
           options={FLOATING_MENU_OPTIONS}
-          className={floatingBarClass}
+          className={tagMenuClass}
         >
-          <span className="pl-1 text-sm font-medium text-muted-foreground">Personalize</span>
-          {mergeTags.map((t) => (
-            <Button
-              key={t.label}
+          <span className="px-2 pt-1 pb-1.5 text-xs font-medium text-muted-foreground">
+            Personalize
+          </span>
+          {matchMergeTags(mergeTags, tagQuery ?? "").map((t) => (
+            <button
+              key={t.insert}
               type="button"
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
+              className="shrink-0 truncate rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => {
                 const to = editor.state.selection.from;
+                const typed = mergeTagQuery(editor.state) ?? "";
                 editor
                   .chain()
                   .focus()
-                  .deleteRange({ from: to - 2, to })
+                  .deleteRange({ from: to - typed.length - 2, to })
                   .insertContent(t.insert)
                   .run();
               }}
             >
               {t.label}
-            </Button>
+            </button>
           ))}
         </BubbleMenu>
           </>
