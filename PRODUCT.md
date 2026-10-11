@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-09-28**.
+> Last verified against the codebase: **2026-10-11**.
 
 ---
 
@@ -276,12 +276,14 @@ guards make that observable:
 - **Reply-To (optional):** set a separate address for replies (e.g. `support@…`);
   defaults to the From address when left blank.
 - **Autosave only (no Save button):** drafts save automatically a beat (~1s) after each
-  edit, with a live "Saving… / Saved" indicator. Partial drafts are persisted from the
+  edit, with a live "Saving… / Saved" indicator. The title bar carrying it and the
+  send actions (Send test, Schedule, Submit & send) stays pinned while you scroll. Partial drafts are persisted from the
   first keystroke, so nothing is ever lost; everything a send needs is enforced at
   submit/schedule time instead. A brand-new draft is created on the first autosave and
   the URL switches to the campaign in place.
 - **Section & column layout builder:** the body is a stack of **sections** that can be
-  **added, removed, and drag-reordered**. Removing one is **undoable** from the toast it
+  **added, removed, and drag-reordered**. A new section can go at the end or **directly
+  below any section** (the "+" beside it). Removing one is **undoable** from the toast it
   raises, so a section full of writing is never one click from gone. Text, image, and button sections lay out as
   **1, 2, or 3 equal-width columns**, so you can mix a full-width intro with a two- or
   three-up row below it. Changing a section's column count never loses work (shrinking
@@ -350,7 +352,9 @@ guards make that observable:
   whole email at once — **page background**, **content/section background**, **body,
   heading, and link colors**, a **border** (color + width), **image roundness**, and
   **section roundness**. The editing canvas re-themes live as you tune it (true
-  WYSIWYG) and the inbox preview is byte-faithful to what ships. The theme is stored
+  WYSIWYG) and the inbox preview is byte-faithful to what ships, at **desktop or phone
+  width** (the phone view runs the email's own mobile CSS: the card narrows and
+  multi-column rows stack). The theme is stored
   as structured, validated data (plain colors only; bounded sizes) and applied at
   **send time** in an email-safe document wrapper — it never touches the body
   allowlist, so the shared-reputation guarantees and "what you build is what ships"
@@ -359,7 +363,8 @@ guards make that observable:
 - **Rich-text WYSIWYG editor** (TipTap) — each text column is the same editor, constrained
   to an email-safe HTML allowlist, so what you see is exactly what recipients get.
   Formatting floats in on selection and a "+" insert menu appears on empty lines (no
-  fixed toolbar). Insert options: headings, lists, and quotes.
+  fixed toolbar). Insert options: headings, lists, and quotes. Typing `{{` anywhere in
+  the text opens the merge-tag list at the cursor.
 - **Merge tags:** `{{first_name}}`, `{{last_name}}`, `{{email}}`, plus **any custom
   field** the audience collects (`{{company}}`, `{{phone}}`, …) — the insert menu lists
   the audience's own fields alongside the built-ins. Tags can carry a **fallback** for
