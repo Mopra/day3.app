@@ -305,6 +305,9 @@ guards make that observable:
   uses — so it can never misrepresent the template. Applying one replaces the body and
   theme (confirmed first if you've already written something) but **keeps your subject
   line and preview text**; the suggested copy only fills fields you left empty.
+  Applying one is **undoable** from the toast it raises. The gallery's last card,
+  **Start blank**, swaps the body for one empty text section in the default look,
+  through the same confirm and undo.
   Templates ship **placeholders, never borrowed content**: image slots start empty and
   buttons start unlinked, so an unfinished template can't send someone else's picture or
   a dead link, and every merge tag carries a fallback (`{{first_name|there}}`).
@@ -364,7 +367,9 @@ guards make that observable:
   to an email-safe HTML allowlist, so what you see is exactly what recipients get.
   Formatting floats in on selection and a "+" insert menu appears on empty lines (no
   fixed toolbar). Insert options: headings, lists, and quotes. Typing `{{` anywhere in
-  the text opens the merge-tag list at the cursor.
+  the text opens the merge-tag list at the cursor. In the editor a tag shows as a
+  readable chip ("First name · there") that deletes as one piece; the email itself
+  still carries the plain `{{first_name|there}}` token.
 - **Merge tags:** `{{first_name}}`, `{{last_name}}`, `{{email}}`, plus **any custom
   field** the audience collects (`{{company}}`, `{{phone}}`, …) — the insert menu lists
   the audience's own fields alongside the built-ins. Tags can carry a **fallback** for

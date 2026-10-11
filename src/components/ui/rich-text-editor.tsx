@@ -19,6 +19,7 @@ import type { EditorState } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { Placeholder } from "@tiptap/extensions";
+import { MergeTagNode, scanMergeTags, unwrapMergeTags } from "@/components/ui/merge-tag-node";
 import {
   Bold,
   Italic,
@@ -311,15 +312,21 @@ export function RichTextEditor({
       Placeholder.configure({
         placeholder: placeholder ?? "Write your email…",
       }),
+      MergeTagNode,
     ],
     content: value || "",
+    // Initial content arrives without a transaction, so the merge-tag plugin has
+    // nothing to react to: ask it to chip the tags the draft opened with.
+    onCreate: ({ editor }) => {
+      editor.view.dispatch(scanMergeTags(editor.state));
+    },
     editorProps: {
       attributes: {
         class: "d3-prose focus:outline-none",
       },
     },
     onUpdate: ({ editor }) => {
-      onChange(editor.isEmpty ? "" : editor.getHTML());
+      onChange(editor.isEmpty ? "" : unwrapMergeTags(editor.getHTML()));
     },
   });
 
@@ -330,7 +337,7 @@ export function RichTextEditor({
   useEffect(() => {
     if (!editor) return;
     const incoming = value && value.trim() ? value : "<p></p>";
-    if (incoming !== editor.getHTML()) {
+    if (incoming !== unwrapMergeTags(editor.getHTML())) {
       editor.commands.setContent(incoming, { emitUpdate: false });
     }
   }, [value, editor]);
