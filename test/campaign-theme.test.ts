@@ -127,6 +127,16 @@ describe("themed email document", () => {
     expect(doc).toContain(".d3-col img{width:100%!important;height:auto!important;}");
   });
 
+  it("lets the 600px card narrow to a phone's width", () => {
+    const doc = wrapEmailDocument("<p>x</p>", resolveTheme({}));
+    // The card is pinned at 600px for Outlook; without the override a phone showed
+    // only the left 375px of it behind a sideways scroll.
+    expect(doc).toContain('<table class="d3-card" role="presentation" width="600"');
+    expect(doc).toContain(".d3-card{width:100%!important;}");
+    expect(doc).toContain('<td class="d3-page" align="center"');
+    expect(doc).toContain('.d3-body td[width="40"]{width:20px!important;}');
+  });
+
   it("omits the card border when width is 0", () => {
     const doc = wrapEmailDocument(
       "<p>x</p>",

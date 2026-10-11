@@ -528,8 +528,20 @@ export function wrapEmailDocument(inner: string, theme: CampaignTheme): string {
     // blocks, so 2/3-column sections, button rows, and side-by-side cards collapse
     // into a single column on phones. Stacked column images fill the new full width.
     // Clients that ignore @media (notably Outlook on desktop) keep the side-by-side
-    // layout — correct, since they render at the full card width anyway.
+    // layout, which is correct, since they render at the full card width anyway.
+    //
+    // The card itself has to give way too. It is pinned at 600px (inline, and the
+    // width attribute Outlook reads), so without the d3-card rule a phone showed the
+    // left 375px of a 600px email and hid the rest behind a sideways scroll: stacking
+    // the columns inside a card that never narrowed fixed nothing. On the same small
+    // screen the page margin and the 40px section gutters (the spacer cells and the
+    // colored-band cellpadding emitted by lib/sections.ts, plus the footer's) shrink,
+    // or a third of a 375px screen went to whitespace.
     `@media only screen and (max-width:600px){` +
+    `.d3-page{padding:12px!important;}` +
+    `.d3-card{width:100%!important;}` +
+    `.d3-body td[width="40"]{width:20px!important;}` +
+    `.d3-body table[cellpadding="40"]>tbody>tr>td{padding:24px 20px!important;}` +
     `.d3-col{display:block!important;width:100%!important;box-sizing:border-box;}` +
     `.d3-col img{width:100%!important;height:auto!important;}` +
     `}`;
@@ -541,8 +553,8 @@ export function wrapEmailDocument(inner: string, theme: CampaignTheme): string {
     `<style>${css}</style></head>` +
     `<body bgcolor="${t.pageBg}">` +
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${t.pageBg}" style="background:${t.pageBg};">` +
-    `<tbody><tr><td align="center" style="padding:24px;">` +
-    `<table role="presentation" width="600" cellpadding="0" cellspacing="0" bgcolor="${t.contentBg}" ` +
+    `<tbody><tr><td class="d3-page" align="center" style="padding:24px;">` +
+    `<table class="d3-card" role="presentation" width="600" cellpadding="0" cellspacing="0" bgcolor="${t.contentBg}" ` +
     `style="width:600px;max-width:600px;background:${t.contentBg};${border}border-radius:${t.sectionRadius}px;overflow:hidden;">` +
     // Vertical-only padding here: the horizontal inset lives per-section (see
     // lib/sections.ts) so a section with a background fill can bleed to the card's
