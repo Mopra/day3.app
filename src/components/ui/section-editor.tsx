@@ -17,6 +17,7 @@ import {
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import {
@@ -1499,6 +1500,7 @@ function SortableSection({
   onButtonChange,
   onUpdate,
   onResize,
+  onInsertBelow,
   onDuplicate,
   onRemove,
 }: {
@@ -1515,6 +1517,7 @@ function SortableSection({
   onButtonChange: (columnIndex: number, button: SectionButton) => void;
   onUpdate: (patch: Partial<CampaignSection>) => void;
   onResize: (height: number) => Promise<void>;
+  onInsertBelow: (kind: SectionKind) => void;
   onDuplicate: () => void;
   onRemove: () => void;
 }) {
@@ -1609,10 +1612,35 @@ function SortableSection({
         <GripVertical className="size-4" />
       </button>
 
-      {/* Section actions — pushed out past the content card's edge so they sit on the
+      {/* Section actions, pushed out past the content card's edge so they sit on the
           page background (mirrors the drag handle's offset). Vertically centered as a
-          group: duplicate sits just above remove. */}
-      <div className="absolute left-full top-1/2 ml-1 flex -translate-y-1/2 flex-col gap-0.5 sm:ml-11">
+          group: add below, then duplicate, then remove. "Add below" exists because
+          the button under the last section can only append: in a long email the new
+          section otherwise lands at the bottom and has to be dragged all the way up.
+          Revealed on hover/focus with a mouse: three stacked controls are taller than
+          a one-line section, so neighbouring groups would otherwise overlap. A touch
+          screen has no hover, so there they stay visible as before. */}
+      <div className="absolute left-full top-1/2 z-10 ml-1 flex -translate-y-1/2 flex-col gap-0.5 opacity-0 transition-opacity group-hover/section:opacity-100 group-focus-within/section:opacity-100 has-[[data-popup-open]]:opacity-100 sm:ml-11 [@media(pointer:coarse)]:opacity-100">
+        <SectionKindPopover
+          onAdd={onInsertBelow}
+          side="right"
+          align="center"
+          trigger={
+            <button
+              type="button"
+              aria-label="Add section below"
+              disabled={!canDuplicate}
+              title={
+                canDuplicate
+                  ? "Add section below"
+                  : `A campaign can have at most ${MAX_SECTIONS} sections`
+              }
+              className="flex size-7 items-center justify-center rounded-md text-muted-foreground/50 transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+            />
+          }
+        >
+          <Plus className="size-4" />
+        </SectionKindPopover>
         <button
           type="button"
           aria-label="Duplicate section"
@@ -1804,24 +1832,47 @@ function AddSectionButton({
   onAdd: (kind: SectionKind) => void;
   disabled: boolean;
 }) {
+  return (
+    <SectionKindPopover
+      onAdd={onAdd}
+      side="top"
+      align="center"
+      trigger={
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={disabled}
+          title={disabled ? `A campaign can have at most ${MAX_SECTIONS} sections` : undefined}
+          className="w-full text-muted-foreground hover:text-foreground"
+        />
+      }
+    >
+      <Plus className="size-4" />
+      Add section
+    </SectionKindPopover>
+  );
+}
+
+// The grid of section kinds behind every "add a section" control: the full-width
+// button under the last section, and the per-section "add below" in the gutter.
+function SectionKindPopover({
+  onAdd,
+  trigger,
+  side,
+  align,
+  children,
+}: {
+  onAdd: (kind: SectionKind) => void;
+  trigger: ReactElement;
+  side: "top" | "left" | "right" | "bottom";
+  align: "start" | "center" | "end";
+  children: ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={disabled}
-            title={disabled ? `A campaign can have at most ${MAX_SECTIONS} sections` : undefined}
-            className="w-full text-muted-foreground hover:text-foreground"
-          />
-        }
-      >
-        <Plus className="size-4" />
-        Add section
-      </PopoverTrigger>
-      <PopoverContent side="top" align="center" className="w-auto p-2">
+      <PopoverTrigger render={trigger}>{children}</PopoverTrigger>
+      <PopoverContent side={side} align={align} className="w-auto p-2">
         <div className="grid grid-cols-3 gap-1">
           {KIND_CHOICES.map(({ value, label, Icon }) => (
             <button
@@ -1979,6 +2030,13 @@ export function SectionEditor({
                   }),
                 );
                 patchSection(section.id, (s) => ({ ...s, height, images: cropped }));
+              }}
+              onInsertBelow={(kind) => {
+                const current = latest.current;
+                const at = current.findIndex((s) => s.id === section.id);
+                const next = [...current];
+                next.splice(at < 0 ? current.length : at + 1, 0, setSectionKind(emptySection(), kind));
+                commit(next);
               }}
               onDuplicate={() => {
                 const current = latest.current;
