@@ -371,6 +371,23 @@ export const CAMPAIGN_TEMPLATES: CampaignTemplate[] = [
   },
 ];
 
+// "Start blank": the last card in the gallery, for someone who wants none of the
+// layouts. Shaped like a template so it goes through the same apply path (and the
+// same confirm and undo), but kept out of CAMPAIGN_TEMPLATES: it is not a layout to
+// advertise, it has no subject or preview text to suggest, and the composer must not
+// name the campaign "Blank" after it.
+export const BLANK_TEMPLATE_KEY = "blank";
+export const BLANK_TEMPLATE: CampaignTemplate = {
+  key: BLANK_TEMPLATE_KEY,
+  name: "Blank",
+  description: "An empty email in the default look. Build it section by section.",
+  structure: "One empty text section",
+  subject: "",
+  previewText: "",
+  theme: {},
+  build: () => [{ id: newSectionId(), kind: "text", columns: 1, content: [""] }],
+};
+
 // Lookup by key, for applying a template chosen in the gallery. Returns undefined
 // for an unknown key (a stale link or a removed template) so callers can no-op.
 export function campaignTemplate(key: string): CampaignTemplate | undefined {

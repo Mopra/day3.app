@@ -9,12 +9,16 @@
 // uses, in an inert iframe scaled down to card size. So a thumbnail cannot drift from
 // the template it advertises: change the template and the picture changes with it.
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { serializeSections } from "@/lib/sections";
 import { resolveTheme } from "@/lib/theme";
 import { sanitizeHtml, wrapEmailDocument } from "@/services/render";
-import { CAMPAIGN_TEMPLATES, type CampaignTemplate } from "@/lib/campaign-templates";
+import {
+  BLANK_TEMPLATE,
+  CAMPAIGN_TEMPLATES,
+  type CampaignTemplate,
+} from "@/lib/campaign-templates";
 
 // The width wrapEmailDocument's page occupies: the 600px content card plus its 24px
 // page padding on each side (see services/render.ts). Thumbnails render at this width
@@ -69,7 +73,7 @@ export function CampaignTemplatePicker({
         <div className="space-y-1">
           <CardTitle className="text-base">Start from a template</CardTitle>
           <p className="text-sm text-muted-foreground">
-            A layout and a look to fill in — you can change anything afterwards.
+            A layout and a look to fill in. You can change anything afterwards.
           </p>
         </div>
         <button
@@ -126,6 +130,23 @@ export function CampaignTemplatePicker({
               </div>
             </button>
           ))}
+          {/* Start blank. No miniature to derive (an empty email renders as an empty
+              card), so its thumbnail is a plain sheet with the same frame. */}
+          <button
+            type="button"
+            onClick={() => onPick(BLANK_TEMPLATE)}
+            className="group flex flex-col gap-2 rounded-lg border border-dashed border-border p-2 text-left transition-colors hover:border-primary/50 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <div className="flex aspect-[5/6] items-center justify-center rounded-md border border-border bg-white">
+              <Plus className="size-6 text-neutral-400 transition-colors group-hover:text-neutral-600" />
+            </div>
+            <div className="space-y-0.5">
+              <div className="text-sm font-medium leading-tight">Start blank</div>
+              <p className="text-xs leading-snug text-muted-foreground">
+                {BLANK_TEMPLATE.description}
+              </p>
+            </div>
+          </button>
         </div>
       </CardContent>
     </Card>

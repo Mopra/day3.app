@@ -84,7 +84,7 @@ import {
   type AccountUpdatedDetail,
 } from "@/components/business-address-dialog";
 import { CampaignTemplatePicker } from "@/components/campaign-template-picker";
-import type { CampaignTemplate } from "@/lib/campaign-templates";
+import { BLANK_TEMPLATE_KEY, type CampaignTemplate } from "@/lib/campaign-templates";
 import type {
   Account,
   Audience,
@@ -592,28 +592,52 @@ export function CampaignComposer({
   // what picking a template means — but the suggested subject, preview text, and name
   // only fill fields the user hasn't written in, so choosing a layout never overwrites
   // their words. Everything lands as a normal edit, so autosave persists it like any other.
+  //
+  // It can be undone from the toast it raises: everything it may touch is snapshotted
+  // first, so trying a template on to see how it looks costs nothing.
   function applyTemplate(template: CampaignTemplate) {
+    const blank = template.key === BLANK_TEMPLATE_KEY;
+    const before = {
+      sections: getValues("sections"),
+      theme: getValues("theme"),
+      subject: getValues("subject"),
+      previewText: getValues("previewText"),
+      name: getValues("name"),
+    };
     applySections(template.build());
     applyTheme(resolveTheme(template.theme));
-    if (!getValues("subject")?.trim()) {
+    if (!getValues("subject")?.trim() && template.subject) {
       setValue("subject", template.subject, { shouldDirty: true });
     }
-    if (!getValues("previewText")?.trim()) {
+    if (!getValues("previewText")?.trim() && template.previewText) {
       setValue("previewText", template.previewText, { shouldDirty: true });
     }
     // Same convention as the AI draft path: an unnamed campaign takes its title from
-    // the subject line rather than staying "Untitled campaign".
-    if (!getValues("name")?.trim()) {
+    // the subject line rather than staying "Untitled campaign". Not for a blank start,
+    // which has no subject to offer and must not name the campaign "Blank".
+    if (!blank && !getValues("name")?.trim()) {
       setValue("name", getValues("subject") || template.name, { shouldDirty: true });
     }
     setTemplatesOpen(false);
     setPendingTemplate(null);
-    toast.success(`${template.name} applied — now make it yours`);
+    toast.success(blank ? "Started from a blank email" : `${template.name} applied. Now make it yours.`, {
+      duration: 10_000,
+      action: {
+        label: "Undo",
+        onClick: () => {
+          applySections(before.sections);
+          applyTheme(before.theme);
+          setValue("subject", before.subject, { shouldDirty: true });
+          setValue("previewText", before.previewText, { shouldDirty: true });
+          setValue("name", before.name, { shouldDirty: true });
+        },
+      },
+    });
   }
 
-  // Picking from the gallery. Replacing a body the user has already written is
-  // destructive and there's no undo, so that case confirms first; an untouched draft
-  // (the common one) applies immediately.
+  // Picking from the gallery. Replacing a body the user has already written confirms
+  // first (the undo lives in a toast that fades, and this can wipe a whole email); an
+  // untouched draft (the common one) applies immediately.
   function pickTemplate(template: CampaignTemplate) {
     if (getValues("htmlBody")?.trim()) {
       setPendingTemplate(template);
@@ -1800,8 +1824,9 @@ export function CampaignComposer({
         </DialogContent>
       </Dialog>
 
-      {/* Applying a template replaces the body and the theme, and there's no undo — so
-          when the user has already written something, they get to say yes first. */}
+      {/* Applying a template replaces the body and the theme, and its undo only lives
+          in a fading toast, so when the user has already written something, they get
+          to say yes first. */}
       <Dialog
         open={!!pendingTemplate}
         onOpenChange={(open) => !open && setPendingTemplate(null)}
@@ -1812,9 +1837,16 @@ export function CampaignComposer({
           </DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              The <span className="font-medium text-foreground">{pendingTemplate?.name}</span>{" "}
-              template replaces this email&apos;s content and styling. Your subject line and
-              preview text are kept.
+              {pendingTemplate?.key === BLANK_TEMPLATE_KEY ? (
+                "Starting blank clears this email's content and styling."
+              ) : (
+                <>
+                  The{" "}
+                  <span className="font-medium text-foreground">{pendingTemplate?.name}</span>{" "}
+                  template replaces this email&apos;s content and styling.
+                </>
+              )}{" "}
+              Your subject line and preview text are kept, and you can undo it right after.
             </p>
             <div className="flex justify-end gap-2 pt-1">
               <Button type="button" variant="ghost" onClick={() => setPendingTemplate(null)}>
@@ -1824,7 +1856,7 @@ export function CampaignComposer({
                 type="button"
                 onClick={() => pendingTemplate && applyTemplate(pendingTemplate)}
               >
-                Use the template
+                {pendingTemplate?.key === BLANK_TEMPLATE_KEY ? "Start blank" : "Use the template"}
               </Button>
             </div>
           </div>
