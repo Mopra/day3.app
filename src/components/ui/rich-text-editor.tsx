@@ -87,10 +87,31 @@ export function MergeTagsProvider({
 // Shared look for both floating surfaces: a frosted, elevated pill that reads as
 // "floating above" the canvas rather than docked chrome.
 // max-w + wrap: the bar carries nine controls (~300px), which is wider than an
-// iPhone SE. It's portaled to <body> with a fixed strategy, so nothing clips it —
-// it would simply run off the screen edge instead of wrapping to a second row.
+// iPhone SE. It's portaled out of the editor (see floatingMenuRoot) with a fixed
+// strategy, so nothing clips it: it would simply run off the screen edge instead of
+// wrapping to a second row.
 const floatingBarClass =
   "z-50 flex max-w-[calc(100vw-1rem)] flex-wrap items-center justify-center gap-1 rounded-xl border border-border bg-background p-1.5 shadow-lg";
+
+// Where the floating bars mount: a container of their own, never <body> itself.
+// Tiptap's menus decide whether a blur should hide them by asking whether the
+// element that took focus sits inside the bar's parent node. With <body> as the
+// parent that is true of every field on the page, so tabbing or clicking from the
+// body text into the subject line left the insert bar floating over the next
+// section. Module-level (a stable reference) so the menus don't re-push their
+// options into the editor on every render.
+function floatingMenuRoot(): HTMLElement {
+  let root = document.getElementById("d3-editor-menus");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "d3-editor-menus";
+    document.body.appendChild(root);
+  }
+  return root;
+}
+
+const BUBBLE_MENU_OPTIONS = { strategy: "fixed", placement: "top", offset: 8 } as const;
+const FLOATING_MENU_OPTIONS = { strategy: "fixed", placement: "bottom-start", offset: 6 } as const;
 
 // Cross-editor focus coordination. When several RichTextEditors live side by side
 // (every section column is its own editor), only the one the user is actually in
@@ -385,7 +406,7 @@ export function RichTextEditor({
           <>
         {/* Floating selection bar — appears whenever text is selected. Holds inline
             formatting, block "turn into" actions, links, and AI rewrite. Appended
-            to <body> so the editor's overflow-hidden wrapper never clips it. */}
+            outside the editor so the editor's overflow-hidden wrapper never clips it. */}
         <BubbleMenu
           editor={editor}
           // Gate on focus, not just a non-empty selection. Each section column is
@@ -394,8 +415,8 @@ export function RichTextEditor({
           // leave the first column's bar still showing alongside the second's. Only
           // one editor can hold DOM focus, so requiring focus keeps a single bar.
           shouldShow={({ editor: e }) => e.isFocused && !e.state.selection.empty}
-          appendTo={() => document.body}
-          options={{ strategy: "fixed", placement: "top", offset: 8 }}
+          appendTo={floatingMenuRoot}
+          options={BUBBLE_MENU_OPTIONS}
           className={floatingBarClass}
         >
           <ToolbarButton
@@ -475,8 +496,8 @@ export function RichTextEditor({
             adds new blocks and personalization without a docked toolbar. */}
         <FloatingMenu
           editor={editor}
-          appendTo={() => document.body}
-          options={{ strategy: "fixed", placement: "bottom-start", offset: 6 }}
+          appendTo={floatingMenuRoot}
+          options={FLOATING_MENU_OPTIONS}
           className={floatingBarClass}
         >
           <ToolbarButton
