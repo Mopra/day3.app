@@ -1289,10 +1289,13 @@ Day3 workspace, ready to open, edit by hand, and send. It is the same product
 from the other side: not a second editor, a second *front door* onto the one in
 the app.
 
-- **Setup is one line.** A single HTTP endpoint, authenticated with the same
-  bearer key as the REST API — no package to install, no OAuth dance, one
-  credential and one revocation path. The API keys page carries the exact
-  install snippet for each editor.
+- **Setup is one line, two ways to authenticate.** A single HTTP endpoint, no
+  package to install. **OAuth** (Clerk as the authorization server): the
+  editor discovers it from the endpoint's 401, the user signs in and approves
+  in a browser, and picks which workspace the connection belongs to on the
+  consent screen. Nothing is pasted. **API key**: the same bearer key as the
+  REST API, for scripts and editors without OAuth support. The API keys page
+  carries the exact install snippet for each editor.
 - **Day3 Markdown is what makes it work.** The composer's body is a structured
   list of blocks, which is not what a language model writes well. So the API
   takes a **small Markdown dialect** — ordinary Markdown plus block constructs
@@ -1308,10 +1311,13 @@ the app.
   scope permitting — send or schedule to the audience.
 - **The safety line runs at "who receives it".** Writing, previewing and test
   sending are unrestricted: a test reaches only addresses the user names, and
-  iterating on an email is the point. Sending to a real audience needs a key
-  minted with `campaigns:send` (§6.14), so an assistant with an ordinary key can
-  draft all day and still cannot mail anyone. Both send tools are marked
-  destructive so editors prompt before running them.
+  iterating on an email is the point. Sending to a real audience needs the
+  `campaigns:send` scope: on a key it is chosen at minting (§6.14); on an OAuth
+  connection it is never part of the initial grant, and the first send attempt
+  answers with a step-up challenge that sends the human back to the consent
+  screen to approve sending specifically. An assistant without it can draft all
+  day and still cannot mail anyone. Both send tools are marked destructive so
+  editors prompt before running them.
 - **Same gates as the app.** MCP calls the same service layer as the composer's
   own buttons — plan eligibility, mailing address, verified domain, recipient
   checks, risk review, sandbox mode. There is no path through MCP that skips a
@@ -1322,7 +1328,8 @@ the app.
   exactly where it should — at mailing real subscribers.
 
 > Source of truth in code: transport `src/mcp/protocol.ts`, tools
-> `src/mcp/tools.ts`, endpoint `app/api/mcp/route.ts`, the dialect
+> `src/mcp/tools.ts`, endpoint `app/api/mcp/route.ts`, credentials
+> `src/mcp/auth.ts` + OAuth discovery `src/mcp/oauth-metadata.ts`, the dialect
 > `src/lib/campaign-markdown.ts` (+ its reference text in
 > `src/lib/campaign-markdown-docs.ts`), campaign endpoints
 > `app/api/v1/campaigns/**`, shared send gates `src/services/campaign-send.ts`.

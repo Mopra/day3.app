@@ -1,7 +1,6 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
-import type { ApiContext } from "../api/v1/auth";
 import { ApiError } from "../api/v1/errors";
-import { keyHasScope, parseScopes, requireScope } from "../api/v1/scopes";
+import { keyHasScope, parseScopes, requireScope, type ApiScope } from "../api/v1/scopes";
 import {
   CampaignInputSchema,
   campaignMarkdown,
@@ -27,13 +26,21 @@ import {
   submitCampaign,
 } from "../services/campaign-send";
 import { MARKDOWN_DIALECT_REFERENCE } from "../lib/campaign-markdown-docs";
+import { scopeFix, type McpContext, type McpCredential } from "./auth";
 import type { Tool } from "./protocol";
 
 // The tool surface an AI editor sees. Each tool is a thin adapter over the same
 // functions the REST API calls — the MCP server is a second front door onto v1,
 // never a second implementation of it.
 
-type Ctx = ApiContext;
+type Ctx = McpContext;
+
+// requireScope, with the fix worded for the credential the caller holds.
+function requireGrant(credential: McpCredential, scope: ApiScope): void {
+  const fix = scopeFix(credential, scope);
+  if (!fix || keyHasScope(credential, scope)) return requireScope(credential, scope);
+  throw new ApiError(403, "insufficient_scope", `This connection is missing the \`${scope}\` scope. ${fix}`);
+}
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
 
@@ -95,11 +102,11 @@ export const TOOLS: Tool<Ctx>[] = [
     title: "Get Day3 workspace context",
     description:
       "Everything needed before writing an email: the workspace's audiences, senders, verified " +
-      "sending domains, plan and sending status, and what this API key is allowed to do. " +
+      "sending domains, plan and sending status, and what this connection is allowed to do. " +
       "Call this first — the ids it returns are the ones the other tools take.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: true },
-    handler: async (_args, { db, account, apiKey }) => {
+    handler: async (_args, { db, account, credential }) => {
       const [audienceRows, senderRows, domainRows] = await Promise.all([
         db
           .select({
@@ -129,11 +136,14 @@ export const TOOLS: Tool<Ctx>[] = [
           sandbox: accountSandboxMode(account),
           has_mailing_address: Boolean(account.companyAddress?.trim()),
         },
+        // Named `api_key` for the clients already reading it; `auth` says
+        // whether it is a pasted key or an OAuth connection.
         api_key: {
-          name: apiKey.name,
-          scopes: parseScopes(apiKey.scopes),
-          can_send_campaigns: keyHasScope(apiKey, "campaigns:send"),
-          can_enroll_in_automations: keyHasScope(apiKey, "automations:enroll"),
+          auth: credential.kind,
+          name: credential.name,
+          scopes: parseScopes(credential.scopes),
+          can_send_campaigns: keyHasScope(credential, "campaigns:send"),
+          can_enroll_in_automations: keyHasScope(credential, "automations:enroll"),
         },
         audiences: audienceRows.map((a) => ({
           id: a.id,
@@ -312,7 +322,7 @@ export const TOOLS: Tool<Ctx>[] = [
     description:
       "Send the campaign to its whole audience, now. This is irreversible: it starts the " +
       "automated risk review and, if that passes, delivery begins immediately — there is no " +
-      "further confirmation step. Requires an API key with the `campaigns:send` scope. " +
+      "further confirmation step. Requires the `campaigns:send` scope. " +
       "Confirm with the user before calling this.",
     inputSchema: {
       type: "object",
@@ -321,8 +331,8 @@ export const TOOLS: Tool<Ctx>[] = [
       additionalProperties: false,
     },
     annotations: { destructiveHint: true, idempotentHint: false },
-    handler: async (args, { db, account, apiKey }) => {
-      requireScope(apiKey, "campaigns:send");
+    handler: async (args, { db, account, credential }) => {
+      requireGrant(credential, "campaigns:send");
       const campaign = await findCampaignOr404(db, account.id, requireId(args));
       await submitCampaign(db, account, campaign);
       const updated = await findCampaignOr404(db, account.id, campaign.id);
@@ -346,8 +356,8 @@ export const TOOLS: Tool<Ctx>[] = [
       additionalProperties: false,
     },
     annotations: { destructiveHint: true },
-    handler: async (args, { db, account, apiKey }) => {
-      requireScope(apiKey, "campaigns:send");
+    handler: async (args, { db, account, credential }) => {
+      requireGrant(credential, "campaigns:send");
       const campaign = await findCampaignOr404(db, account.id, requireId(args));
       const sendAt = str(args.send_at);
       if (!sendAt) throw new ApiError(400, "invalid_request", "`send_at` is required");
@@ -393,7 +403,7 @@ export const TOOLS: Tool<Ctx>[] = [
       "Enroll one email address in an active automation, so they receive every email in the flow " +
       "on its schedule. Pass `attributes` to create the contact in the automation's audience if " +
       "they are not in it yet (otherwise a missing contact is reported as `not_subscribed` and " +
-      "nothing is sent). Requires an API key with the `automations:enroll` scope. Confirm with the " +
+      "nothing is sent). Requires the `automations:enroll` scope. Confirm with the " +
       "user before calling this.",
     inputSchema: {
       type: "object",
@@ -412,8 +422,8 @@ export const TOOLS: Tool<Ctx>[] = [
       additionalProperties: false,
     },
     annotations: { destructiveHint: true, idempotentHint: true },
-    handler: async (args, { db, account, apiKey }) => {
-      requireScope(apiKey, "automations:enroll");
+    handler: async (args, { db, account, credential }) => {
+      requireGrant(credential, "automations:enroll");
       const automation = await findAutomationOr404(db, account.id, requireId(args, "automation_id"));
       const email = str(args.email);
       if (!email) throw new ApiError(400, "invalid_request", "`email` is required");
@@ -452,7 +462,8 @@ SENDING. day3_create_campaign and day3_update_campaign are safe — they only ev
 produce a draft in the workspace. day3_send_test mails addresses the user names,
 and is the right way to check an email. day3_send_campaign and
 day3_schedule_campaign mail the entire audience and cannot be undone; they need
-an API key that was explicitly created with the campaigns:send scope. Always
+the campaigns:send scope, which is off unless the user turned it on (on the API
+key, or on the consent screen when connecting). Always
 confirm with the user before either, and report back the URL of the draft so
 they can look at it in Day3 themselves.
 

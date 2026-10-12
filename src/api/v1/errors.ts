@@ -14,6 +14,11 @@ export type ApiErrorCode =
   | "plan_limit_reached"
   | "test_keys_not_supported"
   | "insufficient_scope"
+  // MCP over OAuth (src/mcp/auth.ts): a bad token, a user we cannot place in
+  // exactly one workspace, and a membership removed since the token was issued.
+  | "invalid_token"
+  | "workspace_required"
+  | "not_a_member"
   | "forbidden"
   | "not_found"
   | "contact_already_exists"

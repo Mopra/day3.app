@@ -1,16 +1,24 @@
 import type { NextRequest } from "next/server";
-import { requireApiKey, type ApiContext } from "@/api/v1/auth";
 import { ApiError } from "@/api/v1/errors";
+import { keyHasScope, parseScopes } from "@/api/v1/scopes";
 import { HttpError } from "@/api/http";
 import { handleMessage, PROTOCOL_VERSION, RPC_INTERNAL_ERROR, RPC_PARSE_ERROR } from "@/mcp/protocol";
 import { SERVER_INSTRUCTIONS, TOOLS } from "@/mcp/tools";
+import { resolveMcpContext, type McpContext } from "@/mcp/auth";
+import { insufficientScopeChallenge, STEP_UP_SCOPES, unauthorizedChallenge } from "@/mcp/oauth-metadata";
 import { checkRateLimit } from "@/lib/rate-limit";
 import { logger, newCorrelationId } from "@/lib/logger";
 
 // Day3's MCP endpoint: https://<app>/api/mcp
 //
-// Authentication is the same bearer key the REST API uses, so there is one
-// credential and one revocation path. Editors attach it as a header:
+// Two credentials, resolved in src/mcp/auth.ts. The default is OAuth: a client
+// with no credential gets a 401 naming our protected-resource metadata, follows
+// it to Clerk, and the user signs in and approves in a browser:
+//
+//   claude mcp add --transport http day3 https://<app>/api/mcp
+//
+// The other is the same bearer key the REST API uses, for scripts and for
+// clients without OAuth support:
 //
 //   claude mcp add --transport http day3 https://<app>/api/mcp --header "Authorization: Bearer day3_live_..."
 //
@@ -58,17 +66,49 @@ export async function POST(req: NextRequest): Promise<Response> {
   // they are NOT public: an unauthenticated caller must not be able to enumerate
   // the tool surface. So the key is checked up front for every method, and the
   // authenticated context is then reused by tools/call rather than re-resolved.
-  let ctx: ApiContext;
+  const origin = new URL(req.url).origin;
+  let ctx: McpContext;
   try {
-    ctx = await requireApiKey(req);
+    ctx = await resolveMcpContext(req);
   } catch (err) {
-    const message = err instanceof ApiError ? err.message : "Invalid API key.";
+    const message = err instanceof ApiError ? err.message : "Invalid credentials.";
+    // A 403 here is an authenticated caller we cannot place in a workspace
+    // (no membership, ambiguous org). Re-running OAuth would not fix it, so it
+    // is not a 401 challenge.
+    const status = err instanceof ApiError && err.status === 403 ? 403 : 401;
+    if (status === 401 && !(err instanceof ApiError)) void log.reportError("mcp auth failed", err);
     return Response.json(
       { jsonrpc: "2.0", id: null, error: { code: -32001, message } },
       {
-        status: 401,
+        status,
         headers: {
-          "WWW-Authenticate": 'Bearer realm="day3", error="invalid_token"',
+          ...(status === 401 ? { "WWW-Authenticate": unauthorizedChallenge(origin) } : {}),
+          "MCP-Protocol-Version": PROTOCOL_VERSION,
+        },
+      },
+    );
+  }
+
+  // Step-up: an OAuth connection calling a tool it has no scope for is
+  // challenged at the HTTP layer, so the client can send the human back to the
+  // consent screen for exactly that grant. An API key cannot be stepped up (the
+  // fix is a new key), so it falls through to the tool's own readable refusal.
+  const neededScope = ctx.credential.kind === "oauth" ? stepUpScopeFor(body) : null;
+  if (neededScope && !keyHasScope(ctx.credential, neededScope)) {
+    const id = (body as { id?: string | number }).id ?? null;
+    return Response.json(
+      {
+        jsonrpc: "2.0",
+        id,
+        error: {
+          code: -32001,
+          message: `This connection is missing the \`${neededScope}\` scope. Approve it on the Day3 consent screen to continue.`,
+        },
+      },
+      {
+        status: 403,
+        headers: {
+          "WWW-Authenticate": insufficientScopeChallenge(origin, parseScopes(ctx.credential.scopes), neededScope),
           "MCP-Protocol-Version": PROTOCOL_VERSION,
         },
       },
@@ -118,6 +158,13 @@ export async function POST(req: NextRequest): Promise<Response> {
     void log.reportError("unhandled error in mcp route", err);
     return rpcError(RPC_INTERNAL_ERROR, "Internal error");
   }
+}
+
+function stepUpScopeFor(body: unknown) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null;
+  const msg = body as { method?: unknown; params?: { name?: unknown } };
+  if (msg.method !== "tools/call" || typeof msg.params?.name !== "string") return null;
+  return STEP_UP_SCOPES[msg.params.name] ?? null;
 }
 
 // The transport lets a client open an SSE stream here for server-initiated

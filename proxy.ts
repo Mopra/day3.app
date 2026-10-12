@@ -35,6 +35,10 @@ const isPublicRoute = createRouteMatcher([
   // that has no Clerk session at all. Left off this list, auth.protect() answers
   // every call with a 404 and the server looks like it was never deployed.
   "/api/mcp",
+  // OAuth discovery for the MCP endpoint (src/mcp/oauth-metadata.ts). A client
+  // reads these before it has any credential at all.
+  "/.well-known/oauth-protected-resource(.*)",
+  "/.well-known/oauth-authorization-server(.*)",
   "/api/webhooks(.*)",
   // Open-tracking pixel — loaded by the recipient's mail client with no session.
   "/api/track(.*)",
