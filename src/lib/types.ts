@@ -57,6 +57,8 @@ export type OnboardingState = {
   hasOwnSubscribers: boolean;
   hasCampaign: boolean;
   hasSentCampaign: boolean;
+  // A campaign has reached people outside the team: setup is over.
+  hasSentRealCampaign: boolean;
   // Day-one state. canSendFirstEmail is "there is a working path to a real email
   // right now, with nothing set up". See services/onboarding.ts.
   hasSharedDomain: boolean;

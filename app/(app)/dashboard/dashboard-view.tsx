@@ -82,11 +82,13 @@ export function DashboardView({
   const { organization } = useOrganization();
 
   // Day zero is a different page, not a thinner one: until the account has sent
-  // something, the tiles below describe an account nobody has a question about
-  // yet, and the recent-campaigns table is an empty state where the product's
-  // whole pitch should be. See <FirstSendView> and
+  // to real subscribers, the tiles below describe an account nobody has a
+  // question about yet, and the recent-campaigns table is an empty state where
+  // the product's whole pitch should be. The first (sandbox) email does not end
+  // it: that is when the user is most invested and most needs to hear "your
+  // domain, your list, a plan". See <FirstSendView> and
   // docs/dashboard-day-zero-plan.md §A5.
-  if (!onboarding.hasSentCampaign) {
+  if (!onboarding.hasSentRealCampaign) {
     return <FirstSendView account={account} onboarding={onboarding} />;
   }
 

@@ -13,9 +13,14 @@ import type { OnboardingState } from "@/lib/types";
 // a new user spends their first session, and the checklist was only on the
 // dashboard: someone part-way through DNS on /sending had no idea what came next
 // or how much was left. Now the thread follows them. It renders nothing once the
-// account has sent its first campaign, and nothing on the page that would fix
-// the step it is pointing at (including the dashboard, which shows the full
-// checklist and does not need a one-line echo of it).
+// account has sent a campaign to real subscribers, and nothing on the page that
+// would fix the step it is pointing at (including the dashboard, which shows the
+// full checklist and does not need a one-line echo of it).
+//
+// It deliberately outlives the first (sandbox) send. That email proves the
+// pipeline works and is the moment the user is most invested, so it is exactly
+// when "your domain, your list, a plan" needs saying, not when the guidance
+// should vanish.
 //
 // Order matches <FirstSendView>: see an email work, then your own domain, then a
 // real audience. DNS is not step one any more.
@@ -30,7 +35,7 @@ export function NextSteps({
   className?: string;
 }) {
   const pathname = usePathname();
-  if (onboarding.hasSentCampaign) return null;
+  if (onboarding.hasSentRealCampaign) return null;
 
   const steps: Step[] = [
     ...(onboarding.canSendFirstEmail
@@ -67,11 +72,21 @@ export function NextSteps({
       label: "Add your business address",
       hint: "It's required by law in every email to your subscribers.",
     },
+    ...(onboarding.sandbox
+      ? [
+          {
+            key: "plan",
+            href: "/billing",
+            label: "Pick a plan",
+            hint: "Free sends to your team only. A plan unlocks your real subscribers.",
+          },
+        ]
+      : []),
     {
-      key: "campaign",
+      key: "real-send",
       href: "/campaigns/new",
-      label: "Create your first campaign",
-      hint: "Draft a product update and send it.",
+      label: "Send to your subscribers",
+      hint: "Write your first campaign for the people on your list.",
     },
   ];
 
@@ -80,14 +95,18 @@ export function NextSteps({
     domain: onboarding.hasVerifiedDomain,
     audience: onboarding.hasOwnSubscribers,
     address: onboarding.hasMailingAddress,
-    campaign: onboarding.hasCampaign,
+    plan: !onboarding.sandbox,
+    "real-send": onboarding.hasSentRealCampaign,
   };
 
   const next = steps.find((s) => !done[s.key]);
   if (!next) return null;
   // Don't point someone at the page they are already on, and don't compete with
-  // the dashboard's own checklist.
+  // the dashboard's own checklist. Inside a campaign, "send yourself your first
+  // email" is the thing already on screen, so the strip would only push the
+  // email further down the page.
   if (pathname === "/dashboard" || pathname.startsWith(next.href)) return null;
+  if (next.key === "first-send" && pathname.startsWith("/campaigns")) return null;
 
   const remaining = steps.filter((s) => !done[s.key]).length;
 

@@ -1320,23 +1320,30 @@ the app.
 **The Dashboard** is the landing screen — a sending overview for the current
 organization, built to answer "what state am I in, and what should I do next?"
 
-**Before the first send it is a different page.** An account that has never sent
-gets a first-run screen built around one action: *Write my first email*, which
-opens a ready draft (a real template, addressed to the provisioned team audience,
-from the Day3 test address) so a new user watches a real email arrive before being
-asked to set anything up. Under it, three steps in the order that now matters
-(see it work, send from your own address, bring your subscribers in) and a
+**Until the account reaches real subscribers it is a different page.** An account
+that has never sent gets a first-run screen built around one action: *Write my
+first email*, which opens a ready draft (a real template, addressed to the
+provisioned team audience, from the Day3 test address) so a new user watches a
+real email arrive before being asked to set anything up. Under it, the steps in the
+order that now matters (see it work, send from your own address, bring your
+subscribers in, add the business address, and pick a plan while on Free) and a
 labelled, number-free preview of what the page becomes once there is data to show
-(never mock figures a user could mistake for their own). After that first send,
-one question, asked once: *do you already have a list?* The answer points the
-audience step at a CSV import or a signup form, because "import an audience" is a
-dead end for a team with nobody to import yet.
+(never mock figures a user could mistake for their own).
+
+The first (sandbox) send does not end it. The test email is when the user is most
+invested, so the page stays and asks one question, once: *do you already have a
+list?* The answer points the audience step at a CSV import or a signup form,
+because "import an audience" is a dead end for a team with nobody to import yet.
+Then the next unfinished step becomes the hero, and once nothing is left it offers
+the first real campaign. The sent screen of a sandbox campaign says the email went
+to the team and links to that next step rather than offering only opens and clicks.
 
 A one-line **setup strip** carries the same next step onto the other pages, so
-someone part-way through DNS still sees what is left; it hides itself on the
-dashboard and on whichever page fixes the step it names.
+someone part-way through DNS still sees what is left, until a campaign has reached
+real subscribers; it hides itself on the dashboard and on whichever page fixes the
+step it names.
 
-Once the account has sent, the dashboard is the overview below:
+Once a campaign has reached real subscribers, the dashboard is the overview below:
 - **Onboarding checklist**: what remains of the first-run path, with a completed
   count and a CTA on the first unfinished step. It disappears as it's satisfied.
 - **Three KPI tiles:** **Plan** (tier + subscription status, or a *Sandbox* badge on

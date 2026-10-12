@@ -141,5 +141,28 @@ describe("computeOnboardingState", () => {
 
     expect(state.hasCampaign).toBe(true);
     expect(state.hasSentCampaign).toBe(true);
+    expect(state.hasSentRealCampaign).toBe(true);
+  });
+
+  // The day-zero dashboard and the setup strip stay up until real subscribers
+  // have been reached; the team-only test email must not end them.
+  it("does not count a sandbox send as reaching real subscribers", async () => {
+    const db = await testDb();
+    const account = await seedAccount(db);
+    const domain = await seedDomain(db, account.id);
+    const audience = await seedAudience(db, account.id);
+    await seedSubscribers(db, account.id, audience.id, TEST_EMAILS);
+    await seedCampaign(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      sendingDomainId: domain.id,
+      status: "sent",
+      sandbox: true,
+    });
+
+    const state = await computeOnboardingState(db, account);
+
+    expect(state.hasSentCampaign).toBe(true);
+    expect(state.hasSentRealCampaign).toBe(false);
   });
 });

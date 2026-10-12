@@ -20,6 +20,10 @@ export type OnboardingState = {
   hasOwnSubscribers: boolean;
   hasCampaign: boolean;
   hasSentCampaign: boolean;
+  // True once a campaign has gone out to people outside the team (a non-sandbox
+  // send). The first sandbox email proves the pipeline works; this is the moment
+  // setup is actually over, so the guided day-one surfaces stay up until then.
+  hasSentRealCampaign: boolean;
   // Day-one state (docs/dashboard-day-zero-plan.md). `canSendFirstEmail` is the
   // question the first-run dashboard actually asks: is there a working path to a
   // real email right now, without the user setting anything up? That is true
@@ -96,6 +100,9 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
       .select({
         total: sql<number>`count(*)`.as("total"),
         sent: sql<number>`count(*) FILTER (WHERE ${campaigns.status} = 'sent')`.as("sent"),
+        sentReal: sql<number>`count(*) FILTER (WHERE ${campaigns.status} = 'sent' AND ${campaigns.sandbox} = false)`.as(
+          "sentReal",
+        ),
       })
       .from(campaigns)
       .where(eq(campaigns.accountId, account.id)),
@@ -150,6 +157,7 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
     hasOwnSubscribers,
     hasCampaign: Number(campaignCounts?.total ?? 0) > 0,
     hasSentCampaign: Number(campaignCounts?.sent ?? 0) > 0,
+    hasSentRealCampaign: Number(campaignCounts?.sentReal ?? 0) > 0,
     hasSharedDomain,
     teamAudienceId,
     teamAudienceSize: teamSize,

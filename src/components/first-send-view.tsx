@@ -4,8 +4,11 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  ArrowRight,
   BarChart3,
+  Building2,
   Check,
+  CreditCard,
   Globe,
   Lock,
   Mail,
@@ -38,6 +41,11 @@ import type { Account, OnboardingState } from "@/lib/types";
 // The checklist underneath is reordered around that reality: see it work, then
 // make it yours, then reach real people. DNS is no longer step one; it is what
 // you do once you have a reason to.
+//
+// The page stays up after that first email, until a campaign reaches real
+// subscribers. The moment the test lands is the moment the user is most
+// invested, so it is when the rest of the road (domain, list, address, plan)
+// gets said, with the one next step promoted to the hero.
 
 type ChecklistStep = {
   key: string;
@@ -47,6 +55,8 @@ type ChecklistStep = {
   href: string;
   cta: string;
   icon: LucideIcon;
+  // Steps that are an action rather than a page (creating the first draft).
+  onClick?: () => void;
 };
 
 export function FirstSendView({
@@ -120,6 +130,9 @@ export function FirstSendView({
       href: "/campaigns",
       cta: "Start",
       icon: Send,
+      // The same one-click draft as the hero, not the campaigns list: the list
+      // is an empty page that makes the user find "New campaign" themselves.
+      onClick: onboarding.canSendFirstEmail ? startFirstCampaign : undefined,
     },
     {
       key: "domain",
@@ -131,9 +144,36 @@ export function FirstSendView({
       icon: Globe,
     },
     audienceStep,
+    {
+      key: "address",
+      title: "Add your business address",
+      description: "The law requires a postal address in every email to your subscribers. We add it to the footer.",
+      done: onboarding.hasMailingAddress,
+      href: "/settings",
+      cta: "Add address",
+      icon: Building2,
+    },
+    // Only while the plan is what stands between the user and their list.
+    ...(onboarding.sandbox
+      ? [
+          {
+            key: "plan",
+            title: "Pick a plan",
+            description: "Free sends to your team only. Any paid plan unlocks your real subscribers.",
+            done: false,
+            href: "/billing",
+            cta: "See plans",
+            icon: CreditCard,
+          },
+        ]
+      : []),
   ];
 
   const firstSendDone = onboarding.hasSentCampaign;
+  // After the test email, the hero becomes the next unfinished step, or the
+  // first real campaign once nothing is left.
+  const nextStep = firstSendDone ? steps.find((s) => !s.done) : undefined;
+  const readyForRealSend = firstSendDone && !nextStep;
 
   return (
     <div className="space-y-6">
@@ -254,11 +294,52 @@ export function FirstSendView({
         </Reveal>
       )}
 
+      {/* After the test email: one next thing, big. The list below has the rest. */}
+      {/* Waits for the list question above, whose answer changes the audience step. */}
+      {firstSendDone && onboarding.onboardingPath !== null && (nextStep || readyForRealSend) && (
+        <Reveal>
+          <Card className="border-primary/30 bg-primary/[0.04]">
+            <CardContent className="flex flex-col gap-5 py-2 sm:flex-row sm:items-center">
+              <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/10">
+                {nextStep ? (
+                  <nextStep.icon className="size-6 text-primary" aria-hidden />
+                ) : (
+                  <Send className="size-6 text-primary" aria-hidden />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium tracking-wide text-primary uppercase">
+                  {nextStep ? "Next step" : "You're ready"}
+                </p>
+                <h2 className="mt-0.5 font-display text-xl">
+                  {nextStep ? nextStep.title : "Send your first campaign to your subscribers"}
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {nextStep
+                    ? nextStep.description
+                    : "Your domain, your list and your plan are all set. Write the email and it goes to real people."}
+                </p>
+              </div>
+              <Button
+                size="lg"
+                className="shrink-0"
+                render={<Link href={nextStep ? nextStep.href : "/campaigns/new"} />}
+              >
+                {nextStep ? nextStep.cta : "Write a campaign"}
+                <ArrowRight className="size-4" />
+              </Button>
+            </CardContent>
+          </Card>
+        </Reveal>
+      )}
+
       <Reveal delay={60}>
         <Card>
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="font-medium">Your first three steps</h2>
+              <h2 className="font-medium">
+                {firstSendDone ? "Before you reach your subscribers" : "Getting set up"}
+              </h2>
               <span className="text-sm text-muted-foreground">
                 {steps.filter((s) => s.done).length} of {steps.length} done
               </span>
@@ -289,14 +370,24 @@ export function FirstSendView({
                       <p className="mt-0.5 text-xs text-muted-foreground">{step.description}</p>
                     )}
                   </div>
-                  {!step.done && (
-                    <Link
-                      href={step.href}
-                      className="shrink-0 text-sm font-medium text-primary underline-offset-4 hover:underline"
-                    >
-                      {step.cta}
-                    </Link>
-                  )}
+                  {!step.done &&
+                    (step.onClick ? (
+                      <button
+                        type="button"
+                        onClick={step.onClick}
+                        disabled={creating}
+                        className="shrink-0 text-sm font-medium text-primary underline-offset-4 hover:underline disabled:opacity-60"
+                      >
+                        {step.cta}
+                      </button>
+                    ) : (
+                      <Link
+                        href={step.href}
+                        className="shrink-0 text-sm font-medium text-primary underline-offset-4 hover:underline"
+                      >
+                        {step.cta}
+                      </Link>
+                    ))}
                 </li>
               ))}
             </ol>
@@ -342,7 +433,7 @@ function PayoffPreview() {
       <div className="mb-3 flex items-center gap-2">
         <Lock className="size-3.5 text-muted-foreground" aria-hidden />
         <h2 className="text-sm font-medium text-muted-foreground">
-          After your first send, this page shows you
+          Once you send to your subscribers, this page shows you
         </h2>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">

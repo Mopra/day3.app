@@ -179,16 +179,56 @@ function SendingBanner({
 // reaches "sent" the page shouldn't just turn into a table of numbers. A warm
 // success banner names the win and points the user at the two things they'll
 // want next — engagement (Metrics) and per-recipient troubleshooting (Activity).
+//
+// A sandbox send is the user's test run, not their launch: it reached their own
+// team. Calling that "Sent to 1 subscriber" and offering opens & clicks leaves
+// them on a dead end at the exact moment they are most invested, so it says
+// where the email went and hands them the road to their real list instead.
 function SentBanner({
   campaignId,
   stats,
   sentAt,
+  sandbox,
 }: {
   campaignId: string;
   stats: CampaignStats;
   sentAt: string | null;
+  sandbox: boolean;
 }) {
   const reached = (stats.sent ?? 0) + (stats.delivered ?? 0);
+  if (sandbox) {
+    return (
+      <div className="overflow-hidden rounded-xl border border-primary/20 bg-primary/5 p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-2xl">
+            🎉
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-medium">It worked. Check your inbox!</h2>
+            <p className="text-sm text-muted-foreground">
+              {reached > 0
+                ? `Sent to ${reached.toLocaleString()} ${reached === 1 ? "person" : "people"} on your team`
+                : "On its way to your team"}
+              {sentAt ? ` · ${formatDateTime(sentAt)}` : ""}. Next, get set up to reach your
+              real subscribers.
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+            <Button size="sm" render={<Link href="/dashboard" />}>
+              What&apos;s next
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              render={<Link href={`/metrics?campaign=${campaignId}`} />}
+            >
+              See opens &amp; clicks
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="overflow-hidden rounded-xl border border-primary/20 bg-primary/5 p-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -617,7 +657,12 @@ export default function CampaignDetailPage() {
       )}
 
       {campaign.status === "sent" && stats && stats.total > 0 && (
-        <SentBanner campaignId={id} stats={stats} sentAt={campaign.sentAt} />
+        <SentBanner
+          campaignId={id}
+          stats={stats}
+          sentAt={campaign.sentAt}
+          sandbox={campaign.sandbox}
+        />
       )}
 
       {campaign.status === "scheduled" && (
