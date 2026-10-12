@@ -25,6 +25,7 @@ import {
   type NodeChange,
   type OnBeforeDelete,
 } from "@xyflow/react";
+import dynamic from "next/dynamic";
 import { AlignStartVertical, FileText, Mail, Monitor } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -54,7 +55,14 @@ import { NodeInspector, type NodePatch } from "./inspector";
 import { LAYER_GAP_Y, NODE_WIDTH, applyLayout, layoutGraph } from "./layout";
 import { defaultConfig, mintNodeKey, needsLayout, nodeSummary, toDraftInput, toGraph } from "./node-kinds";
 import { nodeTypes, type CanvasNode, type CanvasNodeData } from "./nodes";
-import { SendNodeEditor } from "./send-node-editor";
+
+// The email editor is the whole campaign composer (rich text, the section
+// builder, AI), and it only opens when someone edits a send node. Loading it on
+// demand keeps all of that out of the canvas's first load.
+const SendNodeEditor = dynamic(
+  () => import("./send-node-editor").then((mod) => mod.SendNodeEditor),
+  { ssr: false },
+);
 
 // How long the graph must sit unchanged before the draft is saved. Matches the
 // composer so the two "Saved" indicators on this page feel like one system.
@@ -160,6 +168,13 @@ function CanvasInner({
   readOnly,
 }: Props) {
   const rf = useReactFlow<CanvasNode, Edge>();
+
+  // Fetch the email editor's chunk once the canvas has settled, so the first
+  // "Edit email" opens without waiting on the network.
+  useEffect(() => {
+    const t = setTimeout(() => void import("./send-node-editor"), 1500);
+    return () => clearTimeout(t);
+  }, []);
 
   /* ───────────────────────────── graph state ───────────────────────────── */
 
