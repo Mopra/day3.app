@@ -488,10 +488,10 @@ describe("review cache", () => {
 
   it("stores a verdict once and reuses it", async () => {
     const account = await seedAccount(db);
-    const first = await reviewAndStoreContent(db, account.id, HOTDOC_PHISH, undefined);
+    const first = await reviewAndStoreContent(db, account, HOTDOC_PHISH, undefined);
     expect(first.riskLevel).toBe("blocked");
 
-    const second = await reviewAndStoreContent(db, account.id, HOTDOC_PHISH, undefined);
+    const second = await reviewAndStoreContent(db, account, HOTDOC_PHISH, undefined);
     expect(second.id).toBe(first.id);
 
     const all = await db.select().from(contentReviews).where(eq(contentReviews.accountId, account.id));
@@ -504,7 +504,7 @@ describe("review cache", () => {
     // would let an account probe what a different account has been sending.
     const a = await seedAccount(db);
     const b = await seedAccount(db);
-    await reviewAndStoreContent(db, a.id, HOTDOC_PHISH, undefined);
+    await reviewAndStoreContent(db, a, HOTDOC_PHISH, undefined);
 
     const fingerprint = contentFingerprint(HOTDOC_PHISH);
     expect(await findContentReview(db, a.id, fingerprint)).not.toBeNull();
@@ -516,7 +516,7 @@ describe("review cache", () => {
       rampLiftedAt: null,
       createdAt: new Date().toISOString(),
     });
-    await reviewAndStoreContent(db, account.id, HOTDOC_PHISH, undefined);
+    await reviewAndStoreContent(db, account, HOTDOC_PHISH, undefined);
 
     const after = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
     expect(after!.riskStatus).toBe("paused");
@@ -528,7 +528,7 @@ describe("review cache", () => {
     // A 422 and an admin-queue row, not a pause: an established customer whose
     // migrated template trips the reviewer must not lose their whole account.
     const account = await seedAccount(db); // rampLiftedAt set by the helper
-    await reviewAndStoreContent(db, account.id, HOTDOC_PHISH, undefined);
+    await reviewAndStoreContent(db, account, HOTDOC_PHISH, undefined);
 
     const after = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
     expect(after!.riskStatus).toBe("normal");
@@ -552,8 +552,8 @@ describe("review cache", () => {
   it("survives a concurrent first review of the same content", async () => {
     const account = await seedAccount(db);
     const [x, y] = await Promise.all([
-      reviewAndStoreContent(db, account.id, HOTDOC_PHISH, undefined),
-      reviewAndStoreContent(db, account.id, HOTDOC_PHISH, undefined),
+      reviewAndStoreContent(db, account, HOTDOC_PHISH, undefined),
+      reviewAndStoreContent(db, account, HOTDOC_PHISH, undefined),
     ]);
     expect(x.id).toBe(y.id);
     const all = await db.select().from(contentReviews).where(eq(contentReviews.accountId, account.id));

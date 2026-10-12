@@ -28,6 +28,15 @@
 // FAIL-OPEN vs FAIL-CLOSED. The AI pass fails OPEN (a model outage must not
 // stop a customer's password resets) but the deterministic floor always
 // applies, and `blocked` is always terminal. This mirrors reviewCampaignRisk.
+//
+// SAMPLING. On an account that has earned review trust (services/review-trust.ts)
+// the AI pass runs on one new shape in TRUSTED_SAMPLE_EVERY; the rest are stored
+// deterministic-only with ai_review = 'sampled_out'. That is safe because an
+// established sender's AI verdict can never refuse its transactional mail
+// anyway (isBlocking), so the skipped call bought monitoring, not protection.
+// A sampled-out row is not a permanent pass: once the account drops out of
+// `trusted`, the next send of that shape is reviewed by the AI and the row is
+// rewritten in place. The deterministic floor runs on every shape regardless.
 import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import type { Db } from "../db/client";
@@ -35,7 +44,8 @@ import { accounts, contentReviews, type Account, type ContentReview } from "../d
 import { newId, nowIso } from "../lib/ids";
 import { logJob } from "../lib/job-log";
 import { logger } from "../lib/logger";
-import { htmlToText } from "./risk-ai";
+import { htmlToText, type AiRiskVerdict } from "./risk-ai";
+import { getReviewTrust, invalidateReviewTrust, shouldRunAiReview } from "./review-trust";
 import { rampDailyLimit } from "./send-ramp";
 import {
   extractImageSources,
@@ -305,6 +315,35 @@ export function screenTransactionalContent(content: TransactionalContent): Campa
   return runDeterministicRiskChecks(toRiskInput(content));
 }
 
+/** What the AI pass did for a stored row. Mirrors content_reviews.ai_review. */
+export type AiReviewState = "reviewed" | "failed" | "sampled_out" | "off";
+
+/** Test seams for reviewAndStoreContent. Production passes none of these. */
+export type ReviewContentDeps = {
+  /** Replaces the model call (risk-ai's aiReviewCampaign). */
+  aiFn?: (input: RiskCheckInput) => Promise<AiRiskVerdict>;
+  /** Replaces the sampling coin (review-trust's crypto-based default). */
+  random?: () => number;
+};
+
+function aiReviewState(review: CampaignRiskReview, aiReviewMode: string | undefined): AiReviewState {
+  if (aiReviewMode !== "ai") return "off";
+  if (review.ai) return "reviewed";
+  if (review.aiError) return "failed";
+  // Mode was "ai" but the engine returned neither: treat as not looked at.
+  return "off";
+}
+
+function rawResponse(review: CampaignRiskReview): string | null {
+  if (review.ai) return JSON.stringify(review.ai);
+  if (review.aiError) return JSON.stringify({ aiError: review.aiError });
+  return null;
+}
+
+function isFlagged(row: Pick<ContentReview, "riskLevel" | "hardBlock">): boolean {
+  return row.hardBlock || row.riskLevel === "high" || row.riskLevel === "blocked";
+}
+
 /**
  * Full review (deterministic + AI) for one fingerprint, persisted for reuse.
  *
@@ -313,19 +352,75 @@ export function screenTransactionalContent(content: TransactionalContent): Campa
  * messages of a new shape both review, both try to store, one wins, and the
  * loser re-reads the winner's row. Reviewing twice costs one extra model call;
  * storing twice would corrupt the cache, and the index makes that impossible.
+ *
+ * Takes the whole account, not just its id: review trust needs its ramp and
+ * risk status, and the hard-block pause needs it too. Every query below is
+ * still scoped by `account.id`.
  */
 export async function reviewAndStoreContent(
   db: Db,
-  accountId: string,
+  account: Account,
   content: TransactionalContent,
   aiReviewMode: string | undefined,
+  deps: ReviewContentDeps = {},
 ): Promise<ContentReview> {
+  const accountId = account.id;
   const fingerprint = contentFingerprint(content);
+  const input = toRiskInput(content);
 
   const existing = await findContentReview(db, accountId, fingerprint);
-  if (existing) return existing;
+  if (existing) {
+    // A shape stored while the account was trusted skipped the model. If the
+    // account has since lost that trust (a flag, a reputation warning, a
+    // pause), this send is the moment to pay for the review it skipped:
+    // otherwise a leaked key on a once-trusted account could keep sending a
+    // shape nobody but the keyword list ever read.
+    if (existing.aiReview !== "sampled_out" || aiReviewMode !== "ai") return existing;
+    const trust = await getReviewTrust(db, account);
+    if (trust.tier === "trusted") return existing;
 
-  const review = await reviewCampaignRisk(toRiskInput(content), aiReviewMode);
+    const review = await reviewCampaignRisk(input, aiReviewMode, deps.aiFn);
+    // Guarded on ai_review = 'sampled_out' so two workers racing on the same
+    // shape write once; the loser's model call is the only waste. blocked_count
+    // and created_at are deliberately left alone: the refusal history and the
+    // first-seen date belong to the shape, not to this verdict.
+    await db
+      .update(contentReviews)
+      .set({
+        riskLevel: review.riskLevel,
+        riskScore: review.riskScore,
+        categoriesJson: JSON.stringify(review.categories),
+        summary: review.summary,
+        guidanceJson: review.guidance.length > 0 ? JSON.stringify(review.guidance) : null,
+        rawResponseJson: rawResponse(review),
+        hardBlock: isHardBlock(review),
+        aiReview: aiReviewState(review, aiReviewMode),
+        trustTier: trust.tier,
+        updatedAt: nowIso(),
+      })
+      .where(
+        and(
+          eq(contentReviews.id, existing.id),
+          eq(contentReviews.accountId, accountId),
+          eq(contentReviews.aiReview, "sampled_out"),
+        ),
+      );
+    const reread = (await findContentReview(db, accountId, fingerprint)) ?? existing;
+    await afterStore(db, account, reread, aiReviewMode);
+    return reread;
+  }
+
+  // Trust only matters when there is a model call to skip. Outside "ai" mode
+  // (the API route's refusal path, mock-mode workers) it is not computed at
+  // all: that keeps computeAccountHealth off the web tier's request path.
+  const trust = aiReviewMode === "ai" ? await getReviewTrust(db, account) : null;
+  // Sampled out: the deterministic floor still runs (it is what refuses a
+  // phishing pair, on every tier); only the model call is skipped.
+  const sampledOut = trust !== null && !shouldRunAiReview(trust, deps.random);
+  const review = sampledOut
+    ? await reviewCampaignRisk(input, undefined)
+    : await reviewCampaignRisk(input, aiReviewMode, deps.aiFn);
+  const aiReview: AiReviewState = sampledOut ? "sampled_out" : aiReviewState(review, aiReviewMode);
   const now = nowIso();
 
   await db
@@ -339,11 +434,7 @@ export async function reviewAndStoreContent(
       categoriesJson: JSON.stringify(review.categories),
       summary: review.summary,
       guidanceJson: review.guidance.length > 0 ? JSON.stringify(review.guidance) : null,
-      rawResponseJson: review.ai
-        ? JSON.stringify(review.ai)
-        : review.aiError
-          ? JSON.stringify({ aiError: review.aiError })
-          : null,
+      rawResponseJson: rawResponse(review),
       subject: content.subject,
       fromEmail: content.fromEmail,
       fromName: content.fromName ?? null,
@@ -351,6 +442,8 @@ export async function reviewAndStoreContent(
       // is true only when the deterministic floor itself fired a pair.
       hardBlock: isHardBlock(review),
       blockedCount: 0,
+      aiReview,
+      trustTier: trust?.tier ?? null,
       createdAt: now,
       updatedAt: now,
     })
@@ -360,10 +453,7 @@ export async function reviewAndStoreContent(
   // the one every later send must agree with.
   const stored = await findContentReview(db, accountId, fingerprint);
   if (stored) {
-    if (stored.hardBlock) {
-      const account = await db.query.accounts.findFirst({ where: eq(accounts.id, accountId) });
-      if (account) await enforceBlockedVerdict(db, account, stored);
-    }
+    await afterStore(db, account, stored, aiReviewMode);
     return stored;
   }
 
@@ -385,9 +475,26 @@ export async function reviewAndStoreContent(
     fromName: content.fromName ?? null,
     hardBlock: isHardBlock(review),
     blockedCount: 0,
+    aiReview,
+    trustTier: trust?.tier ?? null,
     createdAt: now,
     updatedAt: now,
   };
+}
+
+// What follows every stored or rewritten verdict. A flagged verdict drops this
+// process's cached trust so the account is re-evaluated on its next new shape
+// rather than after the cache TTL (other processes see it when their own cache
+// expires), and a phishing pair may pause a new account. Trust is only cached
+// in "ai" mode, so there is nothing to invalidate outside it.
+async function afterStore(
+  db: Db,
+  account: Account,
+  row: ContentReview,
+  aiReviewMode: string | undefined,
+): Promise<void> {
+  if (aiReviewMode === "ai" && isFlagged(row)) invalidateReviewTrust(account.id);
+  if (row.hardBlock) await enforceBlockedVerdict(db, account, row);
 }
 
 /** The message shown to an API caller whose content was refused. */

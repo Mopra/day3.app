@@ -149,6 +149,29 @@ serves the UI and the API routes; a separate long-running Node worker
    `content_reviews.raw_response_json` is NULL on every row when that is what
    production is running. It was, for the whole of this incident.
 
+   **On the transactional path the AI pass is sampled by review trust, and only
+   there** (`src/services/review-trust.ts`, `docs/review-trust.md`). The model
+   (Claude Haiku 5.5 at low effort by default, `risk-ai.ts`) is the expensive half
+   of review, and fingerprinting link hosts makes it fire often: Exit1.dev alone
+   was ~1,444 shapes in 30 days, ~97% of all AI calls. An account is `new` (inside
+   the ramp, < 1,000 delivered, or < 25 AI-clean reviews) or `watch` (any hard
+   block in 30 days; or >= 3 flagged `high`/`blocked` reviews in 30 days that are
+   also >= 5% of the AI-reviewed shapes in that window; or reputation not normal;
+   or risk-paused) and gets the AI pass on every new shape, or `trusted` and gets
+   it on one in 10. A single AI flag does not demote: Exit1.dev's honest alerts
+   draw about 4 `high` per 500 reviews, and a one-flag rule meant it could never
+   be trusted. That is safe only because `isBlocking` already ignores the AI for
+   established senders, so on a trusted account the model is monitoring, not
+   protection. Keep the load-bearing halves: the deterministic floor runs on every
+   send whatever the tier; campaigns and automations are always reviewed in full;
+   a skipped shape is stored `ai_review = 'sampled_out'`, never as approved, and is
+   re-reviewed on its next send once the account leaves `trusted`; and any flagged
+   verdict calls `invalidateReviewTrust`. That clears only the storing process's
+   cache; every other worker picks the new tier up within the 10-minute TTL, so
+   do not describe demotion as immediate. Trust is only computed under
+   `AI_REVIEW_MODE=ai` (with the AI off, `trust_tier` is NULL). The thresholds are constants in
+   `review-trust.ts` and are restated in `docs/review-trust.md`: move them together.
+
    **A banned domain stays banned across accounts** (`src/services/blocked-domains.ts`).
    `isDomainClaimed` is an ownership rule, not a ban: the attacker deleted the
    domains from his paused accounts (a paused account can still log in) and

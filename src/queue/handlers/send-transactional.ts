@@ -132,7 +132,7 @@ export async function sendTransactionalEmail(
   });
   const review = await reviewAndStoreContent(
     db,
-    account.id,
+    account,
     {
       subject: email.subject,
       html: email.htmlBody,

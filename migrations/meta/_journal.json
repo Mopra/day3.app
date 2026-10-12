@@ -288,6 +288,13 @@
       "when": 1790204604169,
       "tag": "0040_remarkable_thunderbolts",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1791784669750,
+      "tag": "0041_lumpy_songbird",
+      "breakpoints": true
     }
   ]
 }

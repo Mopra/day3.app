@@ -301,7 +301,7 @@ export const POST = apiRoute(async (req, ctx) => {
       // Persist the deterministic verdict (no AI call — `undefined` mode keeps
       // this on the request path's zero-I/O budget) so every repeat is the
       // cached branch above rather than a fresh screen.
-      const stored = await reviewAndStoreContent(db, account.id, reviewContent, undefined);
+      const stored = await reviewAndStoreContent(db, account, reviewContent, undefined);
       await countRefusal(db, stored.id);
       void logger.reportError(
         "transactional content blocked by pre-send review",

@@ -35,6 +35,9 @@ import { useApi } from "@/lib/api";
 import { formatDate, statusLabel, statusVariant } from "@/lib/format";
 import { planLabel } from "@/lib/plans-catalog";
 import type { Account, AccountHealth, Campaign, SendingDomain } from "@/lib/types";
+// Type-only: the service module reaches the database, so the client never
+// imports its values. The thresholds arrive in the payload instead.
+import type { ReviewTrust, ReviewTrustTier } from "@/services/review-trust";
 
 type BlockedContent = {
   id: string;
@@ -45,7 +48,29 @@ type BlockedContent = {
   fromEmail: string;
   fromName: string | null;
   blockedCount: number;
+  aiReview: string;
+  trustTier: string | null;
   createdAt: string;
+};
+
+const TRUST_TIER_LABEL: Record<ReviewTrustTier, string> = {
+  trusted: "Trusted",
+  watch: "Watch",
+  new: "New",
+};
+
+const TRUST_TIER_VARIANT: Record<ReviewTrustTier, "default" | "destructive" | "outline"> = {
+  trusted: "default",
+  watch: "destructive",
+  new: "outline",
+};
+
+// Whether the AI looked at a stored verdict. `reviewed` is the normal case and
+// says nothing, so the label only appears when the verdict is rules-only.
+const AI_REVIEW_NOTE: Record<string, string> = {
+  sampled_out: "AI skipped, trusted sender",
+  failed: "AI failed",
+  off: "No AI",
 };
 
 type AdminApiKey = {
@@ -61,6 +86,8 @@ type AdminApiKey = {
 type Detail = {
   account: Account;
   health: AccountHealth;
+  reviewTrust: ReviewTrust;
+  reviewTrustTargets: { delivered: number; aiClean: number; lookbackDays: number };
   campaigns: Campaign[];
   subscriberCount: number;
   blockedContent: BlockedContent[];
@@ -147,7 +174,8 @@ export default function AdminAccountPage() {
   }
 
   if (!detail) return <OrbitLoaderScreen />;
-  const { account, health, subscriberCount, blockedContent, apiKeys } = detail;
+  const { account, health, subscriberCount, blockedContent, apiKeys, reviewTrust, reviewTrustTargets } =
+    detail;
 
   return (
     <div className="space-y-6">
@@ -292,6 +320,78 @@ export default function AdminAccountPage() {
         <p className="text-sm text-destructive">Paused: {account.pausedReason}</p>
       )}
 
+      {/* How much of this account's transactional mail the AI reads. The rules
+          check every send whatever the tier; this only moves the AI pass. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-3 text-base">
+            AI content review
+            <Badge variant={TRUST_TIER_VARIANT[reviewTrust.tier]}>
+              {TRUST_TIER_LABEL[reviewTrust.tier]}
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm">
+          <p className="text-muted-foreground">
+            {reviewTrust.sampleEvery <= 1
+              ? "Every new email shape gets an AI review."
+              : `1 in ${reviewTrust.sampleEvery} new email shapes gets an AI review.`}{" "}
+            Campaigns are always reviewed in full, and the rule checks run on every send.
+          </p>
+          {reviewTrust.reasons.length > 0 && (
+            <ul className="grid list-disc gap-1 pl-5 text-muted-foreground">
+              {reviewTrust.reasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          )}
+          <dl className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-1">
+              <dt className="text-muted-foreground">Delivered</dt>
+              <dd>
+                <span className="text-xl font-semibold tabular-nums">
+                  {reviewTrust.stats.deliveredCapped.toLocaleString()}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {" "}
+                  of {reviewTrustTargets.delivered.toLocaleString()} needed
+                </span>
+              </dd>
+            </div>
+            <div className="grid gap-1">
+              <dt className="text-muted-foreground">Clean AI reviews</dt>
+              <dd>
+                <span className="text-xl font-semibold tabular-nums">
+                  {reviewTrust.stats.aiClean.toLocaleString()}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {" "}
+                  of {reviewTrustTargets.aiClean.toLocaleString()} needed
+                </span>
+              </dd>
+            </div>
+            <div className="grid gap-1">
+              <dt className="text-muted-foreground">Last flagged</dt>
+              <dd>
+                {reviewTrust.stats.lastFlaggedAt ? (
+                  <span className="text-xl font-semibold">
+                    {formatDate(reviewTrust.stats.lastFlaggedAt)}
+                  </span>
+                ) : (
+                  <>
+                    <span className="text-xl font-semibold">Never</span>
+                    <span className="text-xs text-muted-foreground">
+                      {" "}
+                      in the last {reviewTrustTargets.lookbackDays} days
+                    </span>
+                  </>
+                )}
+              </dd>
+            </div>
+          </dl>
+        </CardContent>
+      </Card>
+
       {blockedContent.length > 0 && (
         <Card>
           <CardHeader>
@@ -326,9 +426,16 @@ export default function AdminAccountPage() {
                       {row.fromName ? `${row.fromName} <${row.fromEmail}>` : row.fromEmail}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={row.riskLevel === "blocked" ? "destructive" : "outline"}>
-                        {row.riskLevel}
-                      </Badge>
+                      <div className="flex items-center gap-2 whitespace-nowrap">
+                        <Badge variant={row.riskLevel === "blocked" ? "destructive" : "outline"}>
+                          {row.riskLevel}
+                        </Badge>
+                        {AI_REVIEW_NOTE[row.aiReview] && (
+                          <span className="text-xs text-muted-foreground">
+                            {AI_REVIEW_NOTE[row.aiReview]}
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{row.blockedCount}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">

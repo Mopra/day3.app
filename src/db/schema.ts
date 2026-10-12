@@ -900,6 +900,8 @@ export const transactionalEmails = pgTable(
     index("idx_transactional_emails_provider_message_id").on(t.providerMessageId),
     // The stuck-lock cron sweep scans for status='sending' with an old lock.
     index("idx_transactional_emails_status").on(t.status),
+    // Review trust (services/review-trust.ts) counts an account's delivered mail.
+    index("idx_transactional_emails_account_status").on(t.accountId, t.status),
   ],
 );
 
@@ -982,12 +984,26 @@ export const contentReviews = pgTable(
     // customer who made a mistake once.
     blockedCount: integer("blocked_count").notNull().default(0),
 
+    // Whether the AI pass looked at this content (services/review-trust.ts):
+    //   reviewed    the model returned a verdict (merged escalate-only)
+    //   failed      the model call failed; the deterministic verdict stands
+    //   sampled_out the account is trusted and this shape was not sampled.
+    //               Re-reviewed on its next send if the account loses trust.
+    //   off         AI_REVIEW_MODE is not "ai" (deterministic only)
+    aiReview: text("ai_review").notNull().default("off"),
+    // The account's review-trust tier when this row was written
+    // ("new" | "watch" | "trusted"); null on rows that predate trust tiers.
+    trustTier: text("trust_tier"),
+
     createdAt: tstz("created_at").notNull(),
     updatedAt: tstz("updated_at").notNull(),
   },
   (t) => [
     uniqueIndex("uq_content_reviews_account_fingerprint").on(t.accountId, t.fingerprint),
     index("idx_content_reviews_account_created").on(t.accountId, t.createdAt),
+    // Review trust's lookback window is keyed on updated_at (a re-review or a
+    // refusal moves a row back into the window).
+    index("idx_content_reviews_account_updated").on(t.accountId, t.updatedAt),
     // The admin queue's "what is being refused right now" read.
     index("idx_content_reviews_level_created").on(t.riskLevel, t.createdAt),
   ],

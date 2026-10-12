@@ -3,6 +3,12 @@ import { route, json, HttpError } from "@/api/http";
 import { requireAdmin } from "@/api/context";
 import { accounts, apiKeys, campaigns, contentReviews, riskReviews, subscribers } from "@/db/schema";
 import { computeAccountHealth } from "@/services/health";
+import {
+  getReviewTrust,
+  TRUST_LOOKBACK_DAYS,
+  TRUST_MIN_AI_CLEAN,
+  TRUST_MIN_DELIVERED,
+} from "@/services/review-trust";
 import { safeParseTheme } from "@/lib/theme";
 
 export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
@@ -11,7 +17,12 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
   const account = await db.query.accounts.findFirst({ where: eq(accounts.id, id) });
   if (!account) throw new HttpError(404, "Not found");
 
-  const health = await computeAccountHealth(db, account.id);
+  // getReviewTrust never throws: on failure it returns tier "new" with a
+  // reason saying so, which the panel lists like any other reason.
+  const [health, reviewTrust] = await Promise.all([
+    computeAccountHealth(db, account.id),
+    getReviewTrust(db, account),
+  ]);
   const campaignRows = await db
     .select()
     .from(campaigns)
@@ -66,6 +77,14 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
   return json({
     account,
     health,
+    reviewTrust,
+    // Sent with the payload so the client view never imports the service
+    // module (and with it the database code) just to read three numbers.
+    reviewTrustTargets: {
+      delivered: TRUST_MIN_DELIVERED,
+      aiClean: TRUST_MIN_AI_CLEAN,
+      lookbackDays: TRUST_LOOKBACK_DAYS,
+    },
     blockedContent,
     apiKeys: keys,
     campaigns: accountCampaigns,

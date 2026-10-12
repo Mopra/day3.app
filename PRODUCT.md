@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-10-11**.
+> Last verified against the codebase: **2026-10-12**.
 
 ---
 
@@ -439,10 +439,17 @@ guards make that observable:
 - **Risk review** runs before send: deterministic content checks (prohibited industries,
   phishing language, purchased-list/cold-outreach signals, link shorteners, misleading
   subjects, sender-identity mismatch, …) plus an optional AI pass (`AI_REVIEW_MODE=ai`,
-  via OpenRouter on a small model) that judges intent/context and can only **escalate**
-  the deterministic verdict, never lower it — so content-embedded prompt injection has
-  nothing to gain. The AI pass fails open (a model outage falls back to the deterministic
-  result) and is platform-funded — never plan-gated, never charged to the org's AI budget.
+  via OpenRouter on Claude Haiku 5.5 at low effort by default) that judges intent/context
+  and can only **escalate** the deterministic verdict, never lower it, so content-embedded
+  prompt injection has nothing to gain. The AI pass fails open (a model outage falls back
+  to the deterministic result) and is platform-funded: never plan-gated, never charged to
+  the org's AI budget. Campaigns and automations always get the full AI pass. On
+  transactional mail it is sampled by **review trust** (§6.7): accounts that are new
+  (inside the 14-day ramp, under 1,000 delivered emails or under 25 AI-clean reviews) or
+  on watch (any phishing-pair block in the last 30 days, a pattern of flagged reviews in
+  that window (at least 3, and at least 5% of what the AI reviewed), a reputation
+  warning, or a risk pause) get it on every new piece of content; trusted accounts get it
+  on one in ten.
   Only a `blocked` verdict stops a campaign or an automation publish; `medium` and
   `high` send and are flagged for admin review (a blocked campaign is final, and
   `high` was reachable by ordinary product updates). A **blocked campaign** shows the sender
@@ -756,6 +763,17 @@ other. Each domain still opens to its own detail page.
   - The deterministic checks run inline on the request (a refused email costs the
     caller a `422 content_blocked` and costs Day3 nothing); the AI pass runs in the
     worker before the send, so a caller never waits on a model.
+  - **The AI pass is sampled by review trust.** Each account is `new`, `watch` or
+    `trusted` (thresholds in §6.1 and `docs/review-trust.md`). New and watch accounts
+    get the AI pass on every new piece of content; trusted accounts on one in ten. The
+    deterministic checks still run on every send, and for an established sender the AI
+    verdict never refuses transactional mail anyway, so on a trusted account the model
+    is monitoring rather than protection. Content that skipped the AI pass is reviewed
+    by it on its next send if the account loses trust, and a change of tier reaches every
+    worker within ten minutes. One stray AI flag does not cost an account its trust, since
+    honest alerts draw an occasional false positive. This exists because one uptime-alert customer produced about 1,400
+    distinct pieces of content a month (one per monitored site), nearly all of the AI
+    review spend.
   - **Brand impersonation is the thing it is tuned to catch.** Mail that signs as one
     company in the From name while being authenticated by an unrelated domain, and
     that also asks the reader to sign in, verify, pay or claim a refund, is refused
