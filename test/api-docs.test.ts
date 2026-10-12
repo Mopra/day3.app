@@ -142,18 +142,27 @@ describe("mcp install snippets", () => {
   const setups = buildMcpSetups(CTX, null);
 
   it("offers the editors we support", () => {
-    expect(setups.map((s) => s.id)).toEqual(["claude-code", "cursor", "vscode"]);
+    expect(setups.map((s) => s.id)).toEqual(["claude-code", "claude-code-key", "cursor", "vscode"]);
   });
 
-  it("keeps the shell command on one line", () => {
-    const shell = setups.find((s) => s.id === "claude-code");
-    expect(shell).toBeDefined();
-    expect(shell!.code).not.toContain("\\\n");
-    expect(shell!.code.trim().split("\n")).toHaveLength(1);
+  it("keeps the shell commands on one line", () => {
+    for (const id of ["claude-code", "claude-code-key"]) {
+      const shell = setups.find((s) => s.id === id);
+      expect(shell).toBeDefined();
+      expect(shell!.code).not.toContain("\\\n");
+      expect(shell!.code.trim().split("\n")).toHaveLength(1);
+    }
   });
 
-  it("still carries the header the endpoint requires", () => {
+  // The default command connects over OAuth: no key, the human signs in and
+  // picks the workspace on Clerk's consent screen.
+  it("leads with the keyless OAuth command", () => {
     const shell = setups.find((s) => s.id === "claude-code")!;
+    expect(shell.code).toBe(`claude mcp add --transport http day3 ${mcpUrl(CTX.origin)}`);
+  });
+
+  it("still offers the key header as a fallback", () => {
+    const shell = setups.find((s) => s.id === "claude-code-key")!;
     expect(shell.code).toContain("--header");
     expect(shell.code).toContain(`Authorization: Bearer ${PLACEHOLDER_KEY}`);
     expect(shell.code).toContain(mcpUrl(CTX.origin));
@@ -163,7 +172,7 @@ describe("mcp install snippets", () => {
   // memory the snippet is paste-and-run, and once it's gone we can only offer the
   // placeholder — a stored key is unrecoverable. VS Code is the exception on
   // purpose: it prompts for the key so the file itself stays clean.
-  const embedsKey = (id: string) => id !== "vscode";
+  const embedsKey = (id: string) => id !== "vscode" && id !== "claude-code";
 
   it("fills in a fresh key, falls back to the placeholder", () => {
     for (const setup of buildMcpSetups(CTX, LIVE_KEY).filter((s) => embedsKey(s.id))) {

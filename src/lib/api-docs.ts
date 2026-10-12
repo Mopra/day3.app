@@ -57,9 +57,10 @@ export function mcpUrl(origin: string): string {
 export type McpSetup = { id: string; label: string; blurb: string; code: string };
 
 /**
- * Per-editor install snippets. All three do the same thing — point the editor at
- * one HTTP endpoint and attach the key as a header — they just disagree about
- * where that gets written down.
+ * Per-editor install snippets. Claude Code leads with OAuth: no key at all, the
+ * human signs in and picks the workspace on Clerk's consent screen (see
+ * src/mcp/oauth-metadata.ts). The rest point the editor at one HTTP endpoint and
+ * attach the key as a header; they just disagree about where that gets written.
  */
 export function buildMcpSetups(ctx: ApiDocsContext, key: string | null): McpSetup[] {
   const url = mcpUrl(ctx.origin);
@@ -68,7 +69,14 @@ export function buildMcpSetups(ctx: ApiDocsContext, key: string | null): McpSetu
     {
       id: "claude-code",
       label: "Claude Code",
-      blurb: "Run this in your project, then ask Claude to write you an email.",
+      blurb:
+        "Run this in your project, then run /mcp and sign in. You pick the workspace in the browser; no key needed.",
+      code: `claude mcp add --transport http day3 ${url}`,
+    },
+    {
+      id: "claude-code-key",
+      label: "Claude Code (API key)",
+      blurb: "For CI or anywhere a browser sign-in won't work. Uses this key instead.",
       // Deliberately ONE line, however long it gets. A `\` continuation is bash
       // syntax; CMD wants `^` and PowerShell a backtick, so on Windows the second
       // line runs as its own command and the --header never arrives. That fails

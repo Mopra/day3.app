@@ -1295,7 +1295,8 @@ the app.
   in a browser, and picks which workspace the connection belongs to on the
   consent screen. Nothing is pasted. **API key**: the same bearer key as the
   REST API, for scripts and editors without OAuth support. The API keys page
-  carries the exact install snippet for each editor.
+  carries the exact install snippet for each editor; Claude Code's leads with
+  the keyless OAuth command, with the key version as a fallback.
 - **An agent can sign itself up.** The OAuth sign-in is Day3's normal Clerk
   sign-in, so an agent with its own identity (AgentID, enabled as a Clerk SSO
   connection) can create a Day3 login from inside the connect flow. A login
