@@ -21,6 +21,9 @@ const isPublicRoute = createRouteMatcher([
   // users never dead-end on the 404 page mid-auth.
   "/login(.*)",
   "/signup(.*)",
+  // Where an SSO sign-in started from /login/agentid lands before the session
+  // exists (app/sso-callback).
+  "/sso-callback(.*)",
   // Public legal pages (linked from the marketing footer + every email footer).
   "/privacy",
   "/terms",

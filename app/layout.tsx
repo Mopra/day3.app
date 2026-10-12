@@ -74,8 +74,12 @@ export default function RootLayout({
       // input chrome were what made those surfaces read as a different product.
       // The theme's Tailwind classes are picked up via the @import of
       // "@clerk/themes/shadcn.css" in globals.css.
+      // socialButtonsVariant: with three providers Clerk collapses all but the
+      // last-used one into bare icons, and AgentID's icon means nothing to a
+      // person who has not seen it. Labelled buttons say "Continue with AgentID".
       appearance={{
         theme: shadcn,
+        options: { socialButtonsVariant: "blockButton" },
         variables: { fontFamily: "var(--font-geist)", borderRadius: "0.5rem" },
       }}
     >
