@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ClerkClient } from "@clerk/backend";
 import { accountUsers, accounts } from "../src/db/schema";
 import {
@@ -44,6 +44,26 @@ const auth = (orgId: string, orgRole?: string, userId = "user_1") => ({
 });
 
 describe("syncCurrentOrganization", () => {
+  it("reports a new workspace to GA4 once, even on concurrent first loads", async () => {
+    vi.stubEnv("GA4_MEASUREMENT_ID", "G-TEST");
+    vi.stubEnv("GA4_API_SECRET", "s3cret");
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const db = await testDb();
+      const clerk = fakeClerk({ email: "a@acme.com" });
+      await Promise.all([
+        syncCurrentOrganization(db, clerk, auth("org_ga")),
+        syncCurrentOrganization(db, clerk, auth("org_ga")),
+      ]);
+      await syncCurrentOrganization(db, clerk, auth("org_ga"));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("creates the account and records the member with the org role", async () => {
     const db = await testDb();
     const clerk = fakeClerk({ email: "Owner@Acme.com" });

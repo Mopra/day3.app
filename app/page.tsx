@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { SiteFooter } from "@/components/site-footer";
@@ -9,6 +10,13 @@ import { CookieNotice } from "@/components/cookie-notice";
 
 export default function LandingPage() {
   const { isSignedIn } = useAuth();
+  // The marketing site's CTAs land here with ga_cid and UTM tags. Carry them on
+  // to /sign-up, which stores them for signup attribution
+  // (src/services/signup-analytics.ts); dropping them here would lose the source.
+  const [signUpHref, setSignUpHref] = useState("/sign-up");
+  useEffect(() => {
+    if (window.location.search) setSignUpHref(`/sign-up${window.location.search}`);
+  }, []);
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -39,7 +47,7 @@ export default function LandingPage() {
             </Link>
           ) : (
             <>
-              <Link href="/sign-up">
+              <Link href={signUpHref}>
                 <Button size="lg">Get started free</Button>
               </Link>
               <Link href="/sign-in">

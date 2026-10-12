@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 export default function PrivacyPage() {
   return (
-    <LegalShell title="Privacy Policy" lastUpdated="24 June 2026">
+    <LegalShell title="Privacy Policy" lastUpdated="12 October 2026">
       <p>
         This Privacy Policy explains how Day3 (&quot;Day3&quot;, &quot;we&quot;, &quot;us&quot;),
         operated by <em>Pradsgaard Labs, Bogfinkevej 2, 7400 Herning, Denmark</em>, collects and processes
@@ -96,7 +96,10 @@ export default function PrivacyPage() {
       <h2>5. Cookies &amp; tracking</h2>
       <p>
         Our app uses <strong>essential cookies</strong> only (for login/session). We do not
-        use advertising cookies. Within the emails you send, Day3 can embed an open-tracking
+        use advertising cookies. When you create a workspace, our server tells Google
+        Analytics that a signup happened, with the anonymous visitor id and campaign tags
+        our website passed along, so we can see which pages bring people in. No cookie is
+        set for this, and no email address or name is sent. Within the emails you send, Day3 can embed an open-tracking
         pixel and rewrite links for click tracking; you control whether these are enabled,
         and recipients can always unsubscribe via the link in every email.
       </p>

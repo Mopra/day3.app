@@ -1,6 +1,10 @@
 import Image from "next/image";
 import { SignUp } from "@clerk/nextjs";
 import { Check } from "lucide-react";
+import {
+  SIGNUP_ATTRIBUTION_KEY,
+  attributionFromSearchParams,
+} from "@/services/signup-analytics";
 
 // The first screen a new customer sees after clicking "Get started". It used to
 // be a bare Clerk box on an empty page: no logo, nothing saying what happens
@@ -13,7 +17,15 @@ const PROMISES = [
   "Free to set up. Pay only to reach your list",
 ];
 
-export default function SignUpPage() {
+// The marketing site's CTA arrives with its GA client id and UTM tags. They ride
+// on the new Clerk user so the server can credit the signup to the page that
+// earned it once the workspace exists (see src/services/signup-analytics.ts).
+export default async function SignUpPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const attribution = attributionFromSearchParams(await searchParams);
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-8 px-4 py-12">
       <div className="max-w-sm space-y-5 text-center">
@@ -29,7 +41,11 @@ export default function SignUpPage() {
           ))}
         </ul>
       </div>
-      <SignUp signInUrl="/sign-in" fallbackRedirectUrl="/dashboard" />
+      <SignUp
+        signInUrl="/sign-in"
+        fallbackRedirectUrl="/dashboard"
+        unsafeMetadata={attribution ? { [SIGNUP_ATTRIBUTION_KEY]: attribution } : undefined}
+      />
     </div>
   );
 }

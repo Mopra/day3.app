@@ -6,6 +6,7 @@ import type { JobQueue } from "../queue/messages";
 import { newId, nowIso } from "../lib/ids";
 import { restampAutomationSandbox } from "./automation-sandbox";
 import { ensureSharedDomain } from "./shared-domain";
+import { attributionFromMetadata, reportSignup } from "./signup-analytics";
 import { addMemberToTeamAudience, ensureTeamAudience } from "./team-audience";
 import {
   FREE_PLAN,
@@ -225,10 +226,13 @@ export async function syncCurrentOrganization(
 
   let account = await getAccountByClerkOrgId(db, auth.orgId);
   const now = nowIso();
+  // True only for the one request whose insert won, so a concurrent first load
+  // cannot report the same signup twice.
+  let created = false;
 
   if (!account) {
     const id = newId("acc");
-    await db
+    const inserted = await db
       .insert(accounts)
       .values({
         id,
@@ -238,7 +242,9 @@ export async function syncCurrentOrganization(
         createdAt: now,
         updatedAt: now,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: accounts.id });
+    created = inserted.length > 0;
     // Re-read in case a concurrent request created it first.
     account = await getAccountByClerkOrgId(db, auth.orgId);
     if (!account) throw new Error("failed to create account");
@@ -299,6 +305,12 @@ export async function syncCurrentOrganization(
     email,
     role: roleFromClerk(auth.orgRole),
   });
+
+  // A new workspace is a signup: tell the marketing site's GA4 (see
+  // signup-analytics.ts). Never throws.
+  if (created) {
+    await reportSignup(attributionFromMetadata(user.unsafeMetadata));
+  }
 
   // Day-one provisioning: a pre-verified Day3 sending domain and an audience
   // seeded with the org's own members, so a brand new org can send itself a real
