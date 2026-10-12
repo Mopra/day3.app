@@ -54,6 +54,9 @@ export async function listAudiences(db: Db, accountId: string) {
       id: audiences.id,
       name: audiences.name,
       createdAt: audiences.createdAt,
+      // The audience provisioned with the org's own members. Pickers that
+      // choose where strangers land (signup forms) need to tell it apart.
+      seededTeam: audiences.seededTeam,
       // `audiences.id` is written literally for the same reason as above: an
       // interpolated column would resolve against `s` and lose the correlation.
       subscriberCount: sql<number>`(

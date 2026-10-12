@@ -201,12 +201,26 @@ export function FormsView({
                   <SelectContent>
                     {audiences.map((a) => (
                       <SelectItem key={a.id} value={a.id}>
-                        {a.name}
+                        {a.seededTeam ? `${a.name} (your teammates)` : a.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">Signups land in this audience.</p>
+                {/* Every account starts with only the seeded team audience, and
+                    a public form pointed at it mixes strangers with staff. Say so
+                    before the form exists rather than after the signups do. */}
+                {audiences.length > 0 && audiences.every((a) => a.seededTeam) ? (
+                  <p className="text-xs text-muted-foreground">
+                    Your only list is your team. Signups from the public should go to a list of
+                    their own:{" "}
+                    <Link href="/audiences?new=1" className="underline underline-offset-2">
+                      create one first
+                    </Link>
+                    .
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Signups land in this audience.</p>
+                )}
               </div>
               <label className="flex items-start gap-2.5 text-sm">
                 <input

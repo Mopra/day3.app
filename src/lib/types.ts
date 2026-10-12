@@ -139,6 +139,8 @@ export type Audience = {
   name: string;
   createdAt: string;
   subscriberCount?: number;
+  // The "Your team" audience seeded with the org's members at signup.
+  seededTeam?: boolean;
 };
 
 // A saved dynamic segment (the Segments tab): a named filter over an audience's
