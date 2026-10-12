@@ -408,6 +408,17 @@ describe("MCP setup tools", () => {
     expect(String(form.data.url)).toBe(`https://app.day3.test/f/${form.data.id}`);
   });
 
+  // The free plan is an active Clerk subscription too, so subscription status
+  // alone once reported a free workspace as paid and hid the upgrade step.
+  it("does not report the free plan as paid", async () => {
+    const free = await seedAccount(currentDb, { plan: "free_org", subscriptionStatus: "active" });
+    currentAccount = free;
+    const status = await tool("day3_setup_status");
+    expect(status.data.sandbox).toBe(true);
+    expect((status.data.done as Record<string, boolean>).paid_plan).toBe(false);
+    expect((status.data.next_steps as string[]).some((s) => s.includes("paid plan"))).toBe(true);
+  });
+
   it("cannot add contacts to another account's audience", async () => {
     const other = await seedAccount(currentDb);
     const foreign = await seedAudience(currentDb, other.id);

@@ -62,6 +62,9 @@ export const SETUP_TOOLS: Tool<Ctx>[] = [
     annotations: { readOnlyHint: true },
     handler: async (_args, { db, account }) => {
       const s = await computeOnboardingState(db, account);
+      // billingActive is the Clerk subscription's status, and the free plan is
+      // an active subscription too. Sandbox is what actually says "not paid".
+      const paidPlan = s.billingActive && !s.sandbox;
       const next: string[] = [];
       if (!s.hasMailingAddress) {
         next.push("Set the business mailing address every email footer must carry (day3_set_mailing_address).");
@@ -78,7 +81,7 @@ export const SETUP_TOOLS: Tool<Ctx>[] = [
             "who opted in) or start a list with a signup form (day3_create_form).",
         );
       }
-      if (!s.billingActive) {
+      if (!paidPlan) {
         next.push(
           "Mailing anyone outside the team needs a paid plan, which a human picks at " +
             "https://go.day3.app/billing. Drafting and test sends work without one.",
@@ -93,7 +96,7 @@ export const SETUP_TOOLS: Tool<Ctx>[] = [
           mailing_address: s.hasMailingAddress,
           verified_domain: s.hasVerifiedDomain,
           own_subscribers: s.hasOwnSubscribers,
-          paid_plan: s.billingActive,
+          paid_plan: paidPlan,
           first_campaign: s.hasCampaign,
           first_send: s.hasSentCampaign,
         },
