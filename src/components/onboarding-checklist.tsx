@@ -33,7 +33,7 @@ export function OnboardingChecklist({ onboarding }: { onboarding: OnboardingStat
       // Not hasSubscribers: that counts the seeded team audience, which would
       // tick this step on day one for a list the user never built.
       done: onboarding.hasOwnSubscribers,
-      href: "/audiences",
+      href: "/audiences?new=1",
       cta: "Add subscribers",
     },
     {

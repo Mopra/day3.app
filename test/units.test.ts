@@ -5,6 +5,7 @@ import {
   isValidEmail,
   validateCsvUpload,
   countCsvDataRows,
+  csvHeaderError,
   MAX_IMPORT_BYTES,
 } from "../src/lib/csv";
 import { runDeterministicRiskChecks } from "../src/services/risk";
@@ -913,5 +914,42 @@ describe("send eligibility", () => {
     const result = checkSendEligibility({ ...account, monthlyEmailSentCount: 100 } as Account);
     expect(result.allowed).toBe(false);
     if (!result.allowed) expect(result.reason).toMatch(/upgrade/i);
+  });
+});
+
+// Real exports, not hand-made fixtures: Mailchimp writes "Email Address", and
+// Excel on a Danish (or most European) machine separates with semicolons.
+describe("CSV import: common export shapes", () => {
+  it("reads Mailchimp's 'Email Address' header", () => {
+    const result = parseSubscriberCsv(
+      "Email Address,First Name,Last Name\nada@example.com,Ada,Lovelace",
+    );
+    expect(result.rows).toEqual([
+      expect.objectContaining({ email: "ada@example.com", firstName: "Ada", lastName: "Lovelace" }),
+    ]);
+  });
+
+  it("reads a semicolon-separated file, keeping commas inside fields", () => {
+    const result = parseSubscriberCsv(
+      'email;fornavn;company\nada@example.com;Ada;"Lovelace, Ltd"\nbob@example.com;Bob;Acme',
+    );
+    expect(result.rows.map((r) => r.email)).toEqual(["ada@example.com", "bob@example.com"]);
+    expect(result.rows[0].firstName).toBe("Ada");
+    expect(result.rows[0].attributes).toEqual({ company: "Lovelace, Ltd" });
+  });
+
+  it("reads a tab-separated file", () => {
+    const result = parseSubscriberCsv("email\tfirst_name\nada@example.com\tAda");
+    expect(result.rows[0]).toEqual(expect.objectContaining({ email: "ada@example.com", firstName: "Ada" }));
+  });
+
+  it("still treats a plain comma file as comma-separated", () => {
+    expect(countCsvDataRows("email,first_name\na@x.co,A\nb@x.co,B")).toBe(2);
+  });
+
+  it("rejects a file with no email column at upload, with a fix", () => {
+    expect(csvHeaderError("name,phone\nAda,123")).toMatch(/email column/);
+    expect(csvHeaderError("Email Address\nada@example.com")).toBeNull();
+    expect(csvHeaderError("e-mail;navn\nada@example.com;Ada")).toBeNull();
   });
 });

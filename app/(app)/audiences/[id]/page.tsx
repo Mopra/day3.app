@@ -9,7 +9,9 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { usePlan } from "@/components/app-shell";
+import { maxSubscribersForPlan } from "@/lib/plans-catalog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
@@ -178,6 +180,10 @@ export default function AudienceDetailPage() {
     }
   }
   const [audience, setAudience] = useState<Audience | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const plan = usePlan();
+  const subscriberCap = plan ? maxSubscribersForPlan(plan) : null;
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [subscribers, setSubscribers] = useState<Subscriber[] | null>(null);
   // Contacts | Fields | Segments | Topics. Reflected in ?tab= so each view is
@@ -418,15 +424,22 @@ export default function AudienceDetailPage() {
     }
   }
 
+  // Upload failures stay on the page rather than in a toast: they are the
+  // instructions for fixing the file (no email column, too many rows, over the
+  // Free cap), and a toast is gone before the user has opened their spreadsheet.
   async function onUpload(file: File) {
     const form = new FormData();
     form.append("file", file);
+    setUploading(true);
+    setUploadError(null);
     try {
       await api.upload(`/api/audiences/${id}/import`, form);
-      toast.success("Import started");
+      toast.success("Import started. We'll show the result here.");
       loadImports();
     } catch (err) {
-      toastApiError(err, "Upload failed");
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -627,8 +640,13 @@ export default function AudienceDetailPage() {
               {addingTeam && <OrbitLoader size={16} />}
               Add your team
             </Button>
-            <Button variant="outline" onClick={() => fileRef.current?.click()}>
-              Import CSV
+            <Button
+              variant="outline"
+              disabled={uploading}
+              onClick={() => fileRef.current?.click()}
+            >
+              {uploading && <OrbitLoader size={16} />}
+              {uploading ? "Uploading" : "Import CSV"}
             </Button>
             <Dialog open={addOpen} onOpenChange={setAddOpen}>
               <DialogTrigger render={<Button>Add subscriber</Button>} />
@@ -666,9 +684,17 @@ export default function AudienceDetailPage() {
               onClick={downloadTemplate}
               className="transition-colors hover:text-foreground"
             >
-              CSV needs an <code className="font-mono">email</code> column —{" "}
-              <span className="underline underline-offset-2">download a template</span>
+              CSV needs an <code className="font-mono">email</code> column.{" "}
+              <span className="underline underline-offset-2">Download a template</span>
             </button>
+            {subscriberCap !== null && (
+              <p>
+                Free plan: up to {subscriberCap.toLocaleString()} subscribers in total.{" "}
+                <Link href="/billing" className="underline underline-offset-2 hover:text-foreground">
+                  See plans
+                </Link>
+              </p>
+            )}
             {/* Migration guidance where the migration actually happens. A `status`
                 column now carries opt-outs, and the suppression list has to be
                 loaded first for bounces to be filtered on the way in. */}
@@ -691,7 +717,37 @@ export default function AudienceDetailPage() {
         )}
       </div>
 
-      {/* Contacts | Fields | Segments | Topics — one audience workspace, Resend-style. */}
+      {uploadError && (
+        <Alert variant="destructive">
+          <AlertTitle>That file couldn&apos;t be imported</AlertTitle>
+          <AlertDescription>
+            <p>{uploadError}</p>
+            <div className="mt-2 flex flex-wrap gap-3">
+              {/\blimit\b|\bplan\b|\bupgrade\b|\bslots\b/i.test(uploadError) && (
+                <Link href="/billing" className="font-medium underline underline-offset-4">
+                  See plans
+                </Link>
+              )}
+              <button
+                type="button"
+                className="font-medium underline underline-offset-4"
+                onClick={() => fileRef.current?.click()}
+              >
+                Try another file
+              </button>
+              <button
+                type="button"
+                className="underline underline-offset-4"
+                onClick={() => setUploadError(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* Contacts | Fields | Segments | Topics: one audience workspace, Resend-style. */}
       <Tabs value={tab} onValueChange={(v) => changeTab(v as typeof tab)}>
         <TabsList>
           <TabsTrigger value="contacts">Contacts</TabsTrigger>

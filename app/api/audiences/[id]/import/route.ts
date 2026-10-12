@@ -3,7 +3,7 @@ import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
 import { imports } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
-import { MAX_IMPORT_ROWS, countCsvDataRows, validateCsvUpload } from "@/lib/csv";
+import { MAX_IMPORT_ROWS, countCsvDataRows, csvHeaderError, validateCsvUpload } from "@/lib/csv";
 import { putImportObject } from "@/lib/supabase-storage";
 import { getQueue } from "@/queue/producer";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -34,12 +34,18 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
   const bytes = await file.arrayBuffer();
   // Enforce the row cap at the edge: a file over the limit must never become a
   // queued job that only fails inside the worker.
-  const rowCount = countCsvDataRows(new TextDecoder().decode(bytes));
+  const content = new TextDecoder().decode(bytes);
+  const headerError = csvHeaderError(content);
+  if (headerError) throw new HttpError(400, headerError);
+  const rowCount = countCsvDataRows(content);
   if (rowCount === 0) {
     throw new HttpError(400, "The CSV has no data rows");
   }
   if (rowCount > MAX_IMPORT_ROWS) {
-    throw new HttpError(400, `CSV has ${rowCount} rows; the maximum is ${MAX_IMPORT_ROWS}`);
+    throw new HttpError(
+      400,
+      `This file has ${rowCount.toLocaleString()} rows, and one import takes up to ${MAX_IMPORT_ROWS.toLocaleString()}. Split it into smaller files and import them one after another.`,
+    );
   }
   // Free-tier subscriber cap: reject at the edge if this import couldn't fit
   // within the remaining headroom, before storing the file or queuing a job.

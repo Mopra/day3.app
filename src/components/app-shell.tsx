@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useImperativeHandle, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ComponentType, Ref, RefAttributes } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -192,6 +192,14 @@ const sessionSynced = new Set<string>();
 
 // `plan` is resolved by the server layout and passed in — it rides along on the
 // account lookup the page already does, so the pill costs no request of its own.
+// The account's plan key, already resolved by the server layout, for client
+// pages that need to say plan-specific things up front (the Free subscriber cap
+// next to Import CSV) without a fetch of their own. Null outside the app shell.
+const PlanContext = createContext<string | null>(null);
+export function usePlan(): string | null {
+  return useContext(PlanContext);
+}
+
 export function AppShell({
   children,
   plan,
@@ -265,6 +273,7 @@ export function AppShell({
     : NAV_GROUPS;
 
   return (
+    <PlanContext.Provider value={plan}>
     <AiBudgetProvider>
       {/* h-dvh, not h-screen: on iOS Safari `100vh` is the *largest* viewport
           height (URL bar retracted), so a full-height shell puts its bottom
@@ -380,6 +389,7 @@ export function AppShell({
       </div>
       <CommandPalette />
     </AiBudgetProvider>
+    </PlanContext.Provider>
   );
 }
 

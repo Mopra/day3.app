@@ -507,8 +507,13 @@ themselves, and manual writing continues unaffected.
   custom fields keyed by a slug of the header; up to **5,000 rows / 5 MB** per file) with
   dedup, suppression filtering, progress tracking, and re-upload/retry for failed imports.
   Column order is flexible and headers are alias-matched (`email` / `e-mail` /
-  `email_address`, `first_name` / `firstname` / `first name`, …) — only an `email` column
-  is required — and a downloadable sample template shows the expected shape. Import
+  `email_address` / Mailchimp's `Email Address`, `first_name` / `firstname` / `first name`,
+  Danish `fornavn` / `efternavn`, …). Only an `email` column is required, and a file
+  without one is refused at upload with the fix, not after "Import started". Comma,
+  semicolon (Excel on a European machine) and tab separators are detected from the header
+  row. Upload errors stay on the page with a next step, the Free plan's subscriber cap is
+  stated beside Import, and a new audience opens straight onto its import screen. A
+  downloadable sample template shows the expected shape. Import
   behavior worth knowing before a migration (§10.2):
   - **Imported contacts land as `subscribed`** unless the file says otherwise — a CSV
     upload is you vouching for consent you already have, so it does **not** run double

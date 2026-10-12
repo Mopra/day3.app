@@ -116,7 +116,7 @@ export function FirstSendView({
         title: "Bring your subscribers in",
         description: "Upload a CSV of the people who already said yes to hearing from you.",
         done: onboarding.hasOwnSubscribers,
-        href: "/audiences",
+        href: "/audiences?new=1",
         cta: "Import a CSV",
         icon: Upload,
       };

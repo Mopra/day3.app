@@ -86,6 +86,20 @@ export function countCsvDataRows(content: string): number {
   return lines.length === 0 ? 0 : lines.length - 1;
 }
 
+// The reason a file can't be imported because of its header row, or null. Run
+// at upload as well as in the worker, so "no email column" is an answer on the
+// upload screen instead of an import that says "started" and then fails.
+export function csvHeaderError(content: string): string | null {
+  const lines = parseCsvLines(content);
+  if (lines.length === 0) return "The CSV is empty.";
+  const header = lines[0].map((h) => h.trim().toLowerCase());
+  if (header.some((h) => HEADER_ALIASES[h] === "email")) return null;
+  return (
+    "We couldn't find an email column. The first row of the file should be column names, " +
+    'with one called "email" (an export\u2019s "Email Address" works too).'
+  );
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // The single canonical form for an email everywhere it is stored or compared:
@@ -100,8 +114,28 @@ export function isValidEmail(value: string): boolean {
   return value.length <= 320 && EMAIL_RE.test(value);
 }
 
-// Minimal RFC-4180-ish parser: handles quoted fields, escaped quotes, CRLF.
+// The field separator, guessed from the header row. Comma is the standard, but
+// Excel writes semicolons wherever the decimal mark is a comma (Denmark, most of
+// Europe), and some tools export tabs. Whichever of the three appears most
+// often outside quotes in the first line wins; a tie (or none) means comma.
+function detectDelimiter(content: string): string {
+  const counts: Record<string, number> = { ",": 0, ";": 0, "\t": 0 };
+  let inQuotes = false;
+  for (let i = 0; i < content.length; i++) {
+    const ch = content[i];
+    if (ch === '"') inQuotes = !inQuotes;
+    else if (!inQuotes && (ch === "\n" || ch === "\r")) break;
+    else if (!inQuotes && ch in counts) counts[ch]++;
+  }
+  let best = ",";
+  for (const d of [";", "\t"]) if (counts[d] > counts[best]) best = d;
+  return best;
+}
+
+// Minimal RFC-4180-ish parser: handles quoted fields, escaped quotes, CRLF, and
+// a comma, semicolon or tab separator (see detectDelimiter).
 function parseCsvLines(content: string): string[][] {
+  const delimiter = detectDelimiter(content);
   const rows: string[][] = [];
   let field = "";
   let row: string[] = [];
@@ -122,7 +156,7 @@ function parseCsvLines(content: string): string[][] {
       }
     } else if (ch === '"') {
       inQuotes = true;
-    } else if (ch === ",") {
+    } else if (ch === delimiter) {
       row.push(field);
       field = "";
     } else if (ch === "\n" || ch === "\r") {
@@ -148,6 +182,15 @@ const HEADER_ALIASES: Record<string, KnownColumn> = {
   email: "email",
   "e-mail": "email",
   email_address: "email",
+  // Mailchimp, Substack and most exports write it with a space.
+  "email address": "email",
+  "e-mail address": "email",
+  emailaddress: "email",
+  // Danish exports.
+  "e-mailadresse": "email",
+  emailadresse: "email",
+  fornavn: "firstName",
+  efternavn: "lastName",
   first_name: "firstName",
   firstname: "firstName",
   "first name": "firstName",

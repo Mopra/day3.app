@@ -12,6 +12,7 @@ import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -73,6 +74,17 @@ export function AudiencesView({ initialAudiences }: { initialAudiences: Audience
   const [audiences, setAudiences] = useState<Audience[]>(initialAudiences);
   useEffect(() => setAudiences(initialAudiences), [initialAudiences]);
   const [open, setOpen] = useState(false);
+  // Onboarding's "Import a CSV" lands here with ?new=1. Every new account
+  // already has the "Your team" audience, and importing customers into it
+  // mixes them with staff, so the import starts by naming a list of its own.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("new") !== "1") return;
+    setOpen(true);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("new");
+    window.history.replaceState(null, "", url);
+  }, []);
   const { register, handleSubmit, reset, formState } = useForm<{ name: string }>();
 
   // Rename + delete state, each keyed by the audience the action targets.
@@ -92,13 +104,15 @@ export function AudiencesView({ initialAudiences }: { initialAudiences: Audience
     initialSort: { key: "createdAt", dir: "desc" },
   });
 
+  // A new audience is empty, so the next thing is always to fill it: open it
+  // rather than leaving the user to find the row and click in to reach Import.
   const onSubmit = handleSubmit(async (values) => {
     try {
-      await api.post("/api/audiences", values);
+      const res = await api.post<{ audience: { id: string } }>("/api/audiences", values);
       toast.success("Audience created");
       setOpen(false);
       reset();
-      router.refresh();
+      router.push(`/audiences/${res.audience.id}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed");
     }
@@ -174,6 +188,10 @@ export function AudiencesView({ initialAudiences }: { initialAudiences: Audience
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Create audience</DialogTitle>
+              <DialogDescription>
+                A list of people you email. Name it, then import a CSV or add people on the
+                next screen.
+              </DialogDescription>
             </DialogHeader>
             <form onSubmit={onSubmit} className="space-y-4">
               <div className="space-y-2">

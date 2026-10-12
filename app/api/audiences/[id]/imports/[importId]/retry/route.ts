@@ -4,7 +4,7 @@ import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
 import { imports } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
-import { MAX_IMPORT_ROWS, countCsvDataRows, validateCsvUpload } from "@/lib/csv";
+import { MAX_IMPORT_ROWS, countCsvDataRows, csvHeaderError, validateCsvUpload } from "@/lib/csv";
 import { putImportObject } from "@/lib/supabase-storage";
 import { getQueue } from "@/queue/producer";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -45,12 +45,18 @@ export const POST = route<{ params: Promise<{ id: string; importId: string }> }>
     }
 
     const bytes = await file.arrayBuffer();
-    const rowCount = countCsvDataRows(new TextDecoder().decode(bytes));
+    const content = new TextDecoder().decode(bytes);
+    const headerError = csvHeaderError(content);
+    if (headerError) throw new HttpError(400, headerError);
+    const rowCount = countCsvDataRows(content);
     if (rowCount === 0) {
       throw new HttpError(400, "The CSV has no data rows");
     }
     if (rowCount > MAX_IMPORT_ROWS) {
-      throw new HttpError(400, `CSV has ${rowCount} rows; the maximum is ${MAX_IMPORT_ROWS}`);
+      throw new HttpError(
+        400,
+        `This file has ${rowCount.toLocaleString()} rows, and one import takes up to ${MAX_IMPORT_ROWS.toLocaleString()}. Split it into smaller files and import them one after another.`,
+      );
     }
 
     // Overwrite the stored object in place (same r2Key) with the corrected file.
