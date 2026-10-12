@@ -51,7 +51,7 @@ block in Day3's visual composer, so whatever you write stays editable by hand.
 
   ===                                        force a split between two text blocks
 
-Images must be absolute https URLs that are already hosted publicly — the API
+Images must be absolute https URLs that are already hosted publicly. The API
 cannot upload files.
 
 Personalization: {{first_name}}, {{last_name}} and {{email}} are merged per

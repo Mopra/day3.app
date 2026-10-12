@@ -155,7 +155,7 @@ export function buildEmailSnippets(ctx: ApiDocsContext): SnippetTask[] {
       id: "send-email",
       label: "Send an email",
       blurb:
-        "One transactional email — password reset, receipt, magic link. `from` is any address on a verified sending domain; `to` takes up to 50 addresses. Set `Idempotency-Key` so a network retry can never double-send.",
+        "One transactional email: a password reset, receipt or magic link. `from` is any address on a verified sending domain; `to` takes up to 50 addresses. Set `Idempotency-Key` so a network retry can never double-send.",
       curl: `curl -X POST "${base}/emails" \\
   -H "Authorization: Bearer $DAY3_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -254,7 +254,7 @@ export function buildSnippetTasks(ctx: ApiDocsContext): SnippetTask[] {
       id: "add",
       label: "Add a contact",
       blurb:
-        "Creates one contact. `?upsert=true` updates instead of failing when the email already exists — use it whenever you're syncing from your own database.",
+        "Creates one contact. `?upsert=true` updates instead of failing when the email already exists. Use it whenever you're syncing from your own database.",
       curl: `curl -X POST "${base}/audiences/${aud}/contacts?upsert=true" \\
   -H "Authorization: Bearer $DAY3_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -312,7 +312,7 @@ contact = res.json()`,
     ]
   }'`,
       js: `// Send in chunks of 1,000. Idempotency-Key makes a retry after a network
-// failure safe — the replay returns the original result instead of re-writing.
+// failure safe: the replay returns the original result instead of re-writing.
 async function importContacts(contacts) {
   for (let i = 0; i < contacts.length; i += 1000) {
     const chunk = contacts.slice(i, i + 1000);
@@ -358,7 +358,7 @@ def import_contacts(contacts):
       id: "unsubscribe",
       label: "Unsubscribe",
       blurb:
-        "Address a contact by plain email — no id lookup first. Prefer this over DELETE: deleting erases the contact, unsubscribing keeps the record of their opt-out.",
+        "Address a contact by plain email, with no id lookup first. Prefer this over DELETE: deleting erases the contact, unsubscribing keeps the record of their opt-out.",
       curl: `curl -X PATCH "${base}/audiences/${aud}/contacts/jane%40acme.com" \\
   -H "Authorization: Bearer $DAY3_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -389,7 +389,7 @@ requests.patch(
       id: "list",
       label: "List contacts",
       blurb:
-        "Cursor pagination — follow `next_cursor` until `has_more` is false. Filter with `?status=`, `?email=`, or `?segment_id=` to walk a segment's live members.",
+        "Cursor pagination: follow `next_cursor` until `has_more` is false. Filter with `?status=`, `?email=`, or `?segment_id=` to walk a segment's live members.",
       curl: `curl "${base}/audiences/${aud}/contacts?status=subscribed&limit=100" \\
   -H "Authorization: Bearer $DAY3_API_KEY"`,
       js: `async function* allContacts() {
@@ -428,7 +428,7 @@ def all_contacts():
       id: "suppress",
       label: "Suppression list",
       blurb:
-        "Bring your old provider's bounces and complaints with you so your first send doesn't re-mail addresses that already failed. Add-only over the API — un-suppressing is done here in the app, on purpose.",
+        "Bring your old provider's bounces and complaints with you so your first send doesn't re-mail addresses that already failed. Add-only over the API. Un-suppressing is done here in the app, on purpose.",
       curl: `curl -X POST "${base}/suppressions" \\
   -H "Authorization: Bearer $DAY3_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -442,7 +442,7 @@ def all_contacts():
     Authorization: \`Bearer \${process.env.DAY3_API_KEY}\`,
     "Content-Type": "application/json",
   },
-  // "unsubscribed" | "bounced" | "complained" — required, and stored per entry
+  // "unsubscribed" | "bounced" | "complained": required, and stored per entry
   body: JSON.stringify({ reason: "bounced", emails: ["dead@acme.com"] }),
 });
 const summary = await res.json();
@@ -455,7 +455,7 @@ summary = requests.post(
     headers={"Authorization": f"Bearer {os.environ['DAY3_API_KEY']}"},
     json={"reason": "bounced", "emails": ["dead@acme.com"]},
 ).json()
-# check total_suppressed_after before/after — suppression is account-wide`,
+# check total_suppressed_after before/after; suppression is account-wide`,
     },
   ];
 }
@@ -472,7 +472,7 @@ export function buildReferenceMarkdown(ctx: ApiDocsContext): string {
   const base = apiBaseUrl(ctx.origin);
   const aud = ctx.audienceId;
 
-  return `# Day3 API v1 — reference
+  return `# Day3 API v1 reference
 
 Day3 is an email platform. This API sends transactional emails (password
 resets, receipts, magic links) and manages audiences and everything inside
@@ -481,20 +481,20 @@ API.
 
 - **Base URL**: \`${base}\`
 - **Auth**: \`Authorization: Bearer day3_live_...\` on every request. Read the key
-  from the \`DAY3_API_KEY\` environment variable — never hard-code or commit it.
+  from the \`DAY3_API_KEY\` environment variable. Never hard-code or commit it.
 - **Format**: JSON in, JSON out. Field names are \`snake_case\`. Ids are prefixed
   strings (\`eml_\`, \`aud_\`, \`sub_\`, \`seg_\`, \`top_\`, \`fld_\`). Timestamps are ISO-8601 UTC.
-- Ignore unknown response fields — new ones get added without a version bump.
+- Ignore unknown response fields: new ones get added without a version bump.
 
 ## Objects
 
-- **Email** (\`eml_...\`) — one transactional email sent through the API.
-- **Audience** (\`aud_...\`) — a list of contacts. Everything else lives inside one.
-- **Contact** (\`sub_...\`) — a subscriber. Unique by email within an audience.
-- **Field** (\`fld_...\`) — a registered custom attribute key.
-- **Segment** (\`seg_...\`) — a saved filter, evaluated live at read time.
-- **Topic** (\`top_...\`) — a subscription category a contact can opt out of alone.
-- **Suppression** — an account-wide "never email this address" entry.
+- **Email** (\`eml_...\`): one transactional email sent through the API.
+- **Audience** (\`aud_...\`): a list of contacts. Everything else lives inside one.
+- **Contact** (\`sub_...\`): a subscriber. Unique by email within an audience.
+- **Field** (\`fld_...\`): a registered custom attribute key.
+- **Segment** (\`seg_...\`): a saved filter, evaluated live at read time.
+- **Topic** (\`top_...\`): a subscription category a contact can opt out of alone.
+- **Suppression**: an account-wide "never email this address" entry.
 
 Email object:
 
@@ -540,7 +540,7 @@ Contact object:
 ## Endpoints
 
 Emails (transactional sending)
-- \`POST /emails\` — send one email. Body:
+- \`POST /emails\`: send one email. Body:
   \`\`\`json
   { "from": "Acme <notifications@${fromDomain(ctx)}>",
     "to": ["jane@acme.com"],
@@ -553,42 +553,42 @@ Emails (transactional sending)
   \`from\` + \`to\` + \`subject\` + (\`html\` and/or \`text\`) are required; the rest is
   optional. \`to\` is a string or an array of up to 50 addresses (one message,
   all visible in the To header). Returns the Email object with \`status:
-  "queued"\` — delivery is asynchronous and takes a couple of seconds.
-- \`GET  /emails\` — list, newest first. Filter with \`?status=\`.
-- \`GET  /emails/{id}\` — one email + its delivery \`events\`.
+  "queued"\`. Delivery is asynchronous and takes a couple of seconds.
+- \`GET  /emails\`: list, newest first. Filter with \`?status=\`.
+- \`GET  /emails/{id}\`: one email + its delivery \`events\`.
 
 Audiences
-- \`GET    /audiences\` — list
-- \`POST   /audiences\` — create, body \`{ "name": "..." }\`
-- \`GET    /audiences/{id}\` — includes \`contact_counts\`
-- \`PATCH  /audiences/{id}\` — rename
-- \`DELETE /audiences/{id}\` — **also deletes every contact, field, segment and topic in it**
+- \`GET    /audiences\`: list
+- \`POST   /audiences\`: create, body \`{ "name": "..." }\`
+- \`GET    /audiences/{id}\`: includes \`contact_counts\`
+- \`PATCH  /audiences/{id}\`: rename
+- \`DELETE /audiences/{id}\`: **also deletes every contact, field, segment and topic in it**
 
 Contacts
-- \`GET    /audiences/{aud}/contacts\` — filters: \`?status=\`, \`?email=\` (exact), \`?segment_id=\`
-- \`POST   /audiences/{aud}/contacts\` — add \`?upsert=true\` to update on conflict
-- \`POST   /audiences/{aud}/contacts/batch\` — up to 1,000 per call ← use for bulk
-- \`GET    /audiences/{aud}/contacts/{id_or_email}\` — add \`?expand=topics\` for the topic map
+- \`GET    /audiences/{aud}/contacts\`: filters \`?status=\`, \`?email=\` (exact), \`?segment_id=\`
+- \`POST   /audiences/{aud}/contacts\`: add \`?upsert=true\` to update on conflict
+- \`POST   /audiences/{aud}/contacts/batch\`: up to 1,000 per call ← use for bulk
+- \`GET    /audiences/{aud}/contacts/{id_or_email}\`: add \`?expand=topics\` for the topic map
 - \`PATCH  /audiences/{aud}/contacts/{id_or_email}\`
-- \`DELETE /audiences/{aud}/contacts/{id_or_email}\` — erases the contact
-- \`GET    /audiences/{aud}/contacts/{id_or_email}/topics\` — effective per-topic state
-- \`PATCH  /audiences/{aud}/contacts/{id_or_email}/topics\` — body \`{ "topics": { "top_x": false } }\`
+- \`DELETE /audiences/{aud}/contacts/{id_or_email}\`: erases the contact
+- \`GET    /audiences/{aud}/contacts/{id_or_email}/topics\`: effective per-topic state
+- \`PATCH  /audiences/{aud}/contacts/{id_or_email}/topics\`: body \`{ "topics": { "top_x": false } }\`
 
 Fields
-- \`GET/POST        /audiences/{aud}/fields\` — body \`{ "key", "label"?, "type"?, "fallback"? }\`
+- \`GET/POST        /audiences/{aud}/fields\`: body \`{ "key", "label"?, "type"?, "fallback"? }\`
 - \`GET/PATCH/DELETE /audiences/{aud}/fields/{id_or_key}\`
 
 Segments
-- \`GET/POST        /audiences/{aud}/segments\` — body \`{ "name", "filter" }\`
+- \`GET/POST        /audiences/{aud}/segments\`: body \`{ "name", "filter" }\`
 - \`GET/PATCH/DELETE /audiences/{aud}/segments/{id}\`
-- \`GET             /audiences/{aud}/segments/{id}/contacts\` — live members
+- \`GET             /audiences/{aud}/segments/{id}/contacts\`: live members
 
 Topics
-- \`GET/POST        /audiences/{aud}/topics\` — body \`{ "name", "description"?, "default_subscribed"? }\`
+- \`GET/POST        /audiences/{aud}/topics\`: body \`{ "name", "description"?, "default_subscribed"? }\`
 - \`GET/PATCH/DELETE /audiences/{aud}/topics/{id}\`
 
-A segment's \`filter\` is the whole contract — \`match\` is \`"all"\` or \`"any"\`, with
-1–10 conditions. \`field\` is \`email\`, \`first_name\`, \`last_name\`, or any custom
+A segment's \`filter\` is the whole contract: \`match\` is \`"all"\` or \`"any"\`, with
+1 to 10 conditions. \`field\` is \`email\`, \`first_name\`, \`last_name\`, or any custom
 attribute key. \`op\` is one of \`equals\`, \`not_equals\`, \`contains\`,
 \`not_contains\`, \`is_set\`, \`is_not_set\`, \`greater_than\`, \`less_than\`.
 \`is_set\`/\`is_not_set\` take no \`value\`; \`greater_than\`/\`less_than\` need a numeric
@@ -601,9 +601,9 @@ one:
                               { "field": "company", "op": "is_set" } ] } }
 \`\`\`
 
-Campaigns (newsletters — one email to a whole audience)
-- \`GET    /campaigns\` — list, newest first. Filter with \`?status=\`.
-- \`POST   /campaigns\` — create a draft. Every field is optional; a draft can be
+Campaigns (newsletters: one email to a whole audience)
+- \`GET    /campaigns\`: list, newest first. Filter with \`?status=\`.
+- \`POST   /campaigns\`: create a draft. Every field is optional; a draft can be
   incomplete, exactly as in the app. Body:
   \`\`\`json
   { "subject": "...", "markdown": "# Hello\\n\\nBody copy.",
@@ -611,25 +611,25 @@ Campaigns (newsletters — one email to a whole audience)
     "audience_id": "${PLACEHOLDER_AUDIENCE}", "segment_id": null, "topic_id": null,
     "sender_id": "snd_...", "from_name": "...", "reply_to": "...", "footer_text": "..." }
   \`\`\`
-  Give the body as exactly ONE of \`markdown\` (Day3 Markdown — preferred),
+  Give the body as exactly ONE of \`markdown\` (Day3 Markdown, preferred),
   \`sections\` (the composer's own structure), or \`html\` (sanitized, stored
   without structure). \`audience_id\` defaults to the only audience when there is
   one; the From identity defaults to the account's default sender.
-- \`GET    /campaigns/{id}\` — the campaign plus its body as \`markdown\`,
+- \`GET    /campaigns/{id}\`: the campaign plus its body as \`markdown\`,
   \`sections\` and \`html\`. Read before editing so composer changes aren't lost.
-- \`PATCH  /campaigns/{id}\` — same body as create; only fields you send change.
+- \`PATCH  /campaigns/{id}\`: same body as create; only fields you send change.
   \`409\` once the campaign has left \`draft\`/\`scheduled\`.
-- \`DELETE /campaigns/{id}\` — drafts and scheduled campaigns only.
-- \`GET    /campaigns/{id}/preview\` — the rendered email (theme, merge tags and
+- \`DELETE /campaigns/{id}\`: drafts and scheduled campaigns only.
+- \`GET    /campaigns/{id}/preview\`: the rendered email (theme, merge tags and
   compliance footer applied). Add \`?format=html\` to get the document itself.
-- \`POST   /campaigns/{id}/test\` — body \`{ "to": "you@example.com" }\` (or an array,
+- \`POST   /campaigns/{id}/test\`: body \`{ "to": "you@example.com" }\` (or an array,
   max 5). Goes only to the addresses you name, never the audience.
-- \`POST   /campaigns/{id}/send\` — **send to the whole audience, now.** Requires a
+- \`POST   /campaigns/{id}/send\`: **send to the whole audience, now.** Requires a
   key with the \`campaigns:send\` scope. Irreversible: it starts the automated
   risk review and delivery follows if that passes. There is no confirmation step.
-- \`POST   /campaigns/{id}/schedule\` — body \`{ "send_at": "2026-09-01T09:00:00Z" }\`,
+- \`POST   /campaigns/{id}/schedule\`: body \`{ "send_at": "2026-09-01T09:00:00Z" }\`,
   at least a minute ahead. Same scope, same consequences, just later.
-- \`DELETE /campaigns/{id}/schedule\` — back to draft. Needs no scope.
+- \`DELETE /campaigns/{id}/schedule\`: back to draft. Needs no scope.
 
 Automations (published flows a contact runs through; built in the app, driven here)
 - \`GET  /automations\`: list, newest first. \`trigger\` is \`audience_join\` or \`api\`;
@@ -643,13 +643,13 @@ Automations (published flows a contact runs through; built in the app, driven he
   Only \`enrolled\` created a run; the others explain why not. Honors \`Idempotency-Key\`.
 
 Suppressions (account-wide, not per audience)
-- \`GET  /suppressions\` — list
-- \`GET  /suppressions/{email}\` — 200 with the reason, or 404 if not suppressed
-- \`POST /suppressions\` — body \`{ "reason": "unsubscribed"|"bounced"|"complained", "emails": [...] }\`, max 1,000. **Add-only** — there is no delete.
+- \`GET  /suppressions\`: list
+- \`GET  /suppressions/{email}\`: 200 with the reason, or 404 if not suppressed
+- \`POST /suppressions\`: body \`{ "reason": "unsubscribed"|"bounced"|"complained", "emails": [...] }\`, max 1,000. **Add-only**: there is no delete.
 
 ## Rules that will bite you if you guess
 
-1. **Contacts are addressable by plain email**, URL-encoded — no id lookup first:
+1. **Contacts are addressable by plain email**, URL-encoded, with no id lookup first:
    \`GET /audiences/${aud}/contacts/jane%40acme.com\`
 2. **Bulk goes through \`/contacts/batch\`.** Up to 1,000 items, and the whole call
    costs one request against the rate limit. Never loop single creates for an
@@ -666,7 +666,7 @@ Suppressions (account-wide, not per audience)
 3. **Upsert merge**: provided fields overwrite; \`attributes\` is a *shallow merge*
    (absent keys survive, an explicit \`null\` value deletes that key).
 4. **\`attributes\` is a flat map of string → string.** Unknown keys auto-register
-   as fields — no need to declare them first — and become \`{{merge_tags}}\` in
+   as fields (no need to declare them first) and become \`{{merge_tags}}\` in
    campaigns. Three things bite here when importing a provider export:
    - **Values must be strings.** A number or boolean (\`{"orders": 5}\`) fails
      schema validation and rejects the **entire batch** with \`400
@@ -676,11 +676,11 @@ Suppressions (account-wide, not per audience)
      top-level fields.
    - Keys are normalized to \`snake_case\` (\`"Company / Org"\` → \`company_org\`),
      so two source columns can collide into one key.
-5. **Unknown top-level fields are silently dropped, not rejected** — so a payload
+5. **Unknown top-level fields are silently dropped, not rejected**, so a payload
    can look accepted while quietly losing data. In particular **you cannot
    backdate a contact**: a \`created_at\` in the payload is ignored and there is no
-   way to preserve original signup dates. \`unsubscribed_at\` is the one exception
-   — honoured on create, so opt-out dates *do* survive a migration. Map every
+   way to preserve original signup dates. \`unsubscribed_at\` is the one exception:
+   it is honoured on create, so opt-out dates *do* survive a migration. Map every
    source column onto a field listed above (or into \`attributes\`), and tell the
    user what couldn't be carried over rather than pretending it was.
 6. **Writable statuses are \`subscribed\` and \`unsubscribed\` only.** \`bounced\`,
@@ -688,30 +688,30 @@ Suppressions (account-wide, not per audience)
    an upsert against such a contact updates the other fields and leaves the
    status alone.
 7. **Emails are canonicalized (trimmed and lowercased) before anything else.**
-   So \`Ada@Acme.com\` and \`ada@acme.com\` are the *same* contact — and two such
+   So \`Ada@Acme.com\` and \`ada@acme.com\` are the *same* contact, and two such
    rows in one batch payload are a duplicate, which rejects the whole request.
    De-duplicate case-insensitively before sending a chunk.
 8. **DELETE erases** (GDPR). To stop mailing someone while keeping the record,
    \`PATCH { "status": "unsubscribed" }\`.
-9. **Suppressed emails are rejected** with \`email_suppressed\` — the contact is
+9. **Suppressed emails are rejected** with \`email_suppressed\`, and the contact is
    not created. Suppression is account-wide and beats everything, so if you
    import a suppression list first, contacts for those addresses will fail on
    the way in. That is correct behaviour, not an error to retry.
-10. **Pagination**: \`?limit=\` (1–100, default 50) and \`?after={next_cursor}\`.
+10. **Pagination**: \`?limit=\` (1 to 100, default 50) and \`?after={next_cursor}\`.
     Responses are \`{ "data": [...], "has_more": true, "next_cursor": "..." }\`.
     Loop until \`has_more\` is false. There are no page numbers or offsets.
 11. **Idempotency**: send \`Idempotency-Key: <uuid>\` on any POST. A retry with the
-    same key within 24h replays the original response instead of writing twice —
-    always set it on imports. The same key with a *different* body is a \`409\`.
+    same key within 24h replays the original response instead of writing twice,
+    so always set it on imports. The same key with a *different* body is a \`409\`.
 12. **Rate limit**: 600 requests per minute per account. Every response carries
     \`RateLimit-Limit\` and \`RateLimit-Remaining\`; a \`429\` carries \`Retry-After\`
-    (seconds) — sleep for that long and retry rather than backing off blindly.
+    (seconds). Sleep for that long and retry rather than backing off blindly.
 13. **\`403 plan_limit_reached\` means the account is out of subscriber headroom**
     (the free plan caps at 500). The batch is rejected whole, never partially
     applied, so the import can simply be re-run after upgrading. Tell the user
-    to upgrade — don't retry, and don't split the batch to sneak under the cap.
+    to upgrade. Don't retry, and don't split the batch to sneak under the cap.
     On \`POST /emails\` the same code means the monthly send allowance is used up.
-14. **\`POST /emails\` requires \`from\` on a verified sending domain** — any
+14. **\`POST /emails\` requires \`from\` on a verified sending domain**. Any
     local-part works (\`noreply@\`, \`receipts@\`, …) once the domain is verified
     under Domains in the app. An unverified domain is \`403
     domain_not_verified\`; verify first, don't retry.
@@ -721,13 +721,13 @@ Suppressions (account-wide, not per audience)
     rejected with \`400 email_suppressed\` and must not be retried.
 16. **Free plans send in sandbox mode**: recipients must be
     members of the caller's own organization (anything else is \`403
-    sandbox_recipient_not_allowed\`) and there is a small monthly allowance —
+    sandbox_recipient_not_allowed\`) and there is a small monthly allowance,
     enough to integrate and test, not to run production email. Responses carry
     \`"sandbox": true\`. Upgrading lifts both restrictions with no code change.
     The allowance is shared with the app's own sandbox sends (campaigns and test
     sends), so a free org draws all three from one monthly pool.
 17. **Transactional sends have their own rate bucket** (default 120/min per
-    account) inside the general limit — a \`429\` still carries \`Retry-After\`.
+    account) inside the general limit. A \`429\` still carries \`Retry-After\`.
 
 ## Errors
 
@@ -745,7 +745,7 @@ Every failure uses one envelope. Branch on \`code\`, never on \`message\`:
 | 400 | \`invalid_request\`, \`invalid_email\`, \`invalid_filter\`, \`batch_too_large\`, \`email_suppressed\` |
 | 401 | \`invalid_api_key\`, \`revoked_api_key\` |
 | 403 | \`plan_limit_reached\`, \`sending_disabled\`, \`domain_not_verified\`, \`sandbox_recipient_not_allowed\`, \`insufficient_scope\`, \`test_keys_not_supported\`, \`forbidden\` |
-| 404 | \`not_found\` (also returned for another account's ids — existence is never leaked) |
+| 404 | \`not_found\` (also returned for another account's ids; existence is never leaked) |
 | 409 | \`contact_already_exists\`, \`email_suppressed\`, \`idempotency_conflict\` |
 | 422 | \`immutable_field\` (e.g. changing a field's \`key\`) |
 | 429 | \`rate_limit_exceeded\` |
@@ -760,13 +760,13 @@ ${MARKDOWN_DIALECT_REFERENCE}
 ## Webhooks
 
 \`GET|POST /v1/webhooks\`, \`GET|PATCH|DELETE /v1/webhooks/{id}\`,
-\`GET /v1/webhooks/{id}/deliveries\` — endpoints Day3 POSTs events to, so an app
+\`GET /v1/webhooks/{id}/deliveries\`: endpoints Day3 POSTs events to, so an app
 learns about delivery, bounces, complaints and suppressions without polling.
 
 Events: \`email.sent\`, \`email.delivered\`, \`email.bounced\`,
 \`email.complained\`, \`email.failed\`, \`suppression.created\`.
 
-Every route here — reads included — needs the \`webhooks:manage\` scope, which
+Every route here, reads included, needs the \`webhooks:manage\` scope, which
 is off by default. If the key lacks it you get 403 \`insufficient_scope\`: tell
 the user to mint a key with webhooks enabled, don't work around it. The signing
 secret is in the \`POST\` response only and is never readable again over the API;
@@ -779,7 +779,7 @@ the event \`id\`. Full receiver guide, with a reference verifier:
 
 ## Not in v1
 
-Domains and senders, and OAuth have no endpoints yet. Don't invent them — if a
+Domains and senders, and OAuth have no endpoints yet. Don't invent them. If a
 task needs one, say so instead.
 `;
 }
@@ -809,7 +809,7 @@ const KEY_AND_CONDUCT_RULES = `- My API key is in the \`DAY3_API_KEY\` environme
 // assistant reads it before writing anything — not left to a 403.
 function subscriberLimitLine(limit: SubscriberLimit | null | undefined): string {
   return limit
-    ? `\n- **My plan caps me at ${limit.cap.toLocaleString()} contacts in total, and I already have ${limit.used.toLocaleString()} — so I can add at most ${limit.headroom.toLocaleString()} more.** Count my source rows BEFORE writing anything. If there are more than that, stop and tell me I need to upgrade my Day3 plan first. Do not import a partial list, and do not split the work to get under the cap.`
+    ? `\n- **My plan caps me at ${limit.cap.toLocaleString()} contacts in total, and I already have ${limit.used.toLocaleString()}, so I can add at most ${limit.headroom.toLocaleString()} more.** Count my source rows BEFORE writing anything. If there are more than that, stop and tell me I need to upgrade my Day3 plan first. Do not import a partial list, and do not split the work to get under the cap.`
     : "";
 }
 
@@ -822,7 +822,7 @@ export function buildAgentPrompts(ctx: ApiDocsContext): AgentPrompt[] {
   const aud = ctx.audienceId;
   const audLine =
     ctx.audienceId === PLACEHOLDER_AUDIENCE
-      ? `- My audience id: I don't have one yet — create one with \`POST /audiences\` first, or ask me for it.`
+      ? `- My audience id: I don't have one yet. Create one with \`POST /audiences\` first, or ask me for it.`
       : `- My audience id: \`${aud}\`${ctx.audienceName ? ` ("${ctx.audienceName}")` : ""}`;
 
   const shared = `
@@ -839,15 +839,15 @@ ${KEY_AND_CONDUCT_RULES}
       id: "integrate",
       label: "Integrate into my app",
       blurb:
-        "For adding Day3 to a codebase — a small client plus the calls your app actually needs.",
+        "For adding Day3 to a codebase: a small client plus the calls your app actually needs.",
       text: `I want to integrate the Day3 email API into my application. Read the API reference at the end of this message before writing any code.
 
 Please:
-1. First look at my codebase and tell me what language, framework, and HTTP client it already uses — then match that style. Don't add a dependency if something suitable is already there.
+1. First look at my codebase and tell me what language, framework, and HTTP client it already uses, then match that style. Don't add a dependency if something suitable is already there.
 2. Write a small, typed Day3 client module wrapping the calls I need, with the API key read from the environment and errors surfaced as real exceptions carrying \`error.code\` and \`request_id\`.
 3. Wire it into the obvious places in my app (for example: subscribe a user on signup, update their attributes when their profile or plan changes, unsubscribe them when they opt out or delete their account).
 4. Show me exactly which environment variable to set and where, and add it to my \`.env.example\` (never the real key).
-5. Keep it simple — no retry frameworks or queues unless I ask. One clear module I can read.
+5. Keep it simple: no retry frameworks or queues unless I ask. One clear module I can read.
 
 Before you start, ask me anything you need to know about my app's user model.
 ${shared}${buildReferenceMarkdown(ctx)}`,
@@ -856,25 +856,25 @@ ${shared}${buildReferenceMarkdown(ctx)}`,
       id: "migrate",
       label: "Migrate from another provider",
       blurb:
-        "For moving a list off Mailchimp, Resend, ConvertKit, Substack, Klaviyo, Brevo — subscribers, custom fields, opt-outs and bounces.",
+        "For moving a list off Mailchimp, Resend, ConvertKit, Substack, Klaviyo or Brevo, with subscribers, custom fields, opt-outs and bounces.",
       text: `I'm moving my email list to Day3 from another provider and I want you to write and run the migration for me. Read the API reference at the end of this message before writing any code.
 
 Please:
 1. Ask me which provider I'm coming from and whether I have an export file (CSV) or API credentials for it. Wait for my answer.
-2. Write a migration script that reads my contacts from that source and loads them into Day3 through \`POST /audiences/{id}/contacts/batch\` — 1,000 per call, \`"upsert": true\`, and a fresh \`Idempotency-Key\` per batch so an interrupted run can be re-run safely.
+2. Write a migration script that reads my contacts from that source and loads them into Day3 through \`POST /audiences/{id}/contacts/batch\`: 1,000 per call, \`"upsert": true\`, and a fresh \`Idempotency-Key\` per batch so an interrupted run can be re-run safely.
 3. Bring over everything, not just the email addresses:
-   - names as top-level \`first_name\`/\`last_name\`, and any custom/merge fields as \`attributes\` (they auto-register — no setup needed). **Stringify every attribute value** — a number or boolean rejects the whole batch.
+   - names as top-level \`first_name\`/\`last_name\`, and any custom/merge fields as \`attributes\` (they auto-register, so no setup is needed). **Stringify every attribute value**: a number or boolean rejects the whole batch.
    - people who had **unsubscribed**, as \`status: "unsubscribed"\` with their original \`unsubscribed_at\` date if the export has one. This matters: re-mailing someone who opted out is illegal in most places.
-   - **hard bounces and spam complaints only** from the old provider's suppression list, via \`POST /suppressions\` with the right \`reason\`. Do this *before* importing contacts so those addresses are rejected on the way in. Do **not** put plain unsubscribes on the suppression list — they belong in the audience as \`status: "unsubscribed"\`, and suppressing them would stop them being imported at all.
+   - **hard bounces and spam complaints only** from the old provider's suppression list, via \`POST /suppressions\` with the right \`reason\`. Do this *before* importing contacts so those addresses are rejected on the way in. Do **not** put plain unsubscribes on the suppression list. They belong in the audience as \`status: "unsubscribed"\`, and suppressing them would stop them being imported at all.
 4. Expect these and handle them rather than treating them as bugs:
-   - rows failing with \`email_suppressed\` — that is the bounce list doing its job
-   - the same address twice in one chunk (compare lowercased) — de-duplicate before sending, or the whole chunk is rejected
-   - \`403 plan_limit_reached\` — the account needs a bigger plan; stop and tell me, don't split the batch to get under the cap
+   - rows failing with \`email_suppressed\`: that is the bounce list doing its job
+   - the same address twice in one chunk (compare lowercased): de-duplicate before sending, or the whole chunk is rejected
+   - \`403 plan_limit_reached\`: the account needs a bigger plan; stop and tell me, don't split the batch to get under the cap
 5. Make the script re-runnable and chatty: print the running \`created\`/\`updated\`/\`failed\` totals, and write every failed row (with its \`error.code\`) to a CSV I can inspect afterwards. Never let one bad address abort the run.
 6. Before the full run, do a dry run with the first 10 contacts and show me the result so I can confirm the field mapping looks right.
-7. Afterwards, tell me the final counts and how to verify them against my old provider, and tell me plainly what did **not** come across — original signup dates can't be preserved, and anything the old export didn't include obviously can't either.
+7. Afterwards, tell me the final counts and how to verify them against my old provider, and tell me plainly what did **not** come across. Original signup dates can't be preserved, and anything the old export didn't include obviously can't either.
 
-Warn me clearly before anything irreversible. Suppression is account-wide and cannot be undone over the API (only by hand, one address at a time, on the Suppressions page in the app), and there is no sandbox — this runs against my real account, which is exactly why I want the dry run first.
+Warn me clearly before anything irreversible. Suppression is account-wide and cannot be undone over the API (only by hand, one address at a time, on the Suppressions page in the app), and there is no sandbox. This runs against my real account, which is exactly why I want the dry run first.
 ${shared}${buildReferenceMarkdown(ctx)}`,
     },
     {
@@ -889,10 +889,10 @@ Please:
 2. Add a sync that keeps Day3 current:
    - on signup (or on email confirmation, if I have one) → upsert the contact
    - on profile/plan change → upsert with updated \`attributes\` so I can segment on them
-   - on marketing opt-out → \`PATCH { "status": "unsubscribed" }\` (do **not** delete — I need the record that they opted out)
+   - on marketing opt-out → \`PATCH { "status": "unsubscribed" }\` (do **not** delete; I need the record that they opted out)
    - on account deletion → \`DELETE\` the contact, which erases them
 3. Use \`?upsert=true\` everywhere so the sync is idempotent and safe to replay.
-4. Don't let Day3 being slow or down break my app: do the call outside the critical path (background job, queue, or after-response hook — whichever my stack already has) and log failures instead of throwing into the user's request.
+4. Don't let Day3 being slow or down break my app: do the call outside the critical path (background job, queue, or after-response hook, whichever my stack already has) and log failures instead of throwing into the user's request.
 5. Also write a one-off backfill script that pushes my existing users through \`/contacts/batch\` in chunks of 1,000, so the sync starts from a correct state.
 6. Tell me which of my user fields you mapped to \`first_name\`, \`last_name\`, and each \`attributes\` key.
 ${shared}${buildReferenceMarkdown(ctx)}`,
@@ -963,7 +963,7 @@ export function buildPanelPrompt(ctx: ApiDocsContext, extras: PanelPromptExtras 
       `- My audience${ctx.audienceName ? ` "${ctx.audienceName}"` : ""}: \`${ctx.audienceId}\``,
     );
   } else {
-    lines.push(`- I have no audience yet — create one with \`POST /audiences\` first, or ask me.`);
+    lines.push(`- I have no audience yet. Create one with \`POST /audiences\` first, or ask me.`);
   }
   if (extras.segments && extras.segments.length > 0) {
     lines.push(`- Segments in that audience:`);
@@ -986,16 +986,16 @@ export function buildPanelPrompt(ctx: ApiDocsContext, extras: PanelPromptExtras 
         ? `- My verified sending domains (any local-part works as \`from\` on \`POST /emails\`): ${extras.verifiedDomains
             .map((d) => `\`${d}\``)
             .join(", ")}`
-        : `- I have no verified sending domain yet — \`POST /emails\` will be rejected until one is verified under Domains in the app.`,
+        : `- I have no verified sending domain yet, so \`POST /emails\` will be rejected until one is verified under Domains in the app.`,
     );
   }
   if (extras.transactionalSandbox) {
     lines.push(
-      `- My account is on the free plan, so \`POST /emails\` runs in **sandbox mode**: recipients must be members of my own organization, on a small monthly allowance. Write the integration normally — upgrading lifts the restriction with no code change.`,
+      `- My account is on the free plan, so \`POST /emails\` runs in **sandbox mode**: recipients must be members of my own organization, on a small monthly allowance. Write the integration normally; upgrading lifts the restriction with no code change.`,
     );
   }
 
-  return `I'm working with the Day3 email API. Below is my real workspace context — use these ids directly instead of asking me for them — then ground rules, then the full API reference.
+  return `I'm working with the Day3 email API. Below is my real workspace context (use these ids directly instead of asking me for them), then ground rules, then the full API reference.
 
 My workspace:
 ${lines.join("\n")}
@@ -1023,7 +1023,7 @@ export function buildFieldSnippets(
       id: "set-attributes",
       label: "Set a value",
       blurb:
-        "Field values live on the contact as `attributes` — a flat string→string map. Updates shallow-merge (absent keys survive, an explicit `null` deletes one), and every key becomes a `{{merge_tag}}` in campaigns.",
+        "Field values live on the contact as `attributes`, a flat string→string map. Updates shallow-merge (absent keys survive, an explicit `null` deletes one), and every key becomes a `{{merge_tag}}` in campaigns.",
       curl: `curl -X PATCH "${base}/audiences/${aud}/contacts/jane%40acme.com" \\
   -H "Authorization: Bearer $DAY3_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -1035,7 +1035,7 @@ await fetch(\`${base}/audiences/${aud}/contacts/\${email}\`, {
     Authorization: \`Bearer \${process.env.DAY3_API_KEY}\`,
     "Content-Type": "application/json",
   },
-  // Values must be strings — stringify numbers and booleans first.
+  // Values must be strings: stringify numbers and booleans first.
   body: JSON.stringify({ attributes: { "${key}": "some value" } }),
 });`,
       python: `import os, requests
@@ -1052,7 +1052,7 @@ requests.patch(
       id: "create-field",
       label: "Declare a field",
       blurb:
-        "Fields auto-register the first time a contact arrives with a new attribute key — declare one explicitly when you want a label, a type, or a fallback value for its `{{merge_tag}}`.",
+        "Fields auto-register the first time a contact arrives with a new attribute key. Declare one explicitly when you want a label, a type, or a fallback value for its `{{merge_tag}}`.",
       curl: `curl -X POST "${base}/audiences/${aud}/fields" \\
   -H "Authorization: Bearer $DAY3_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -1065,7 +1065,7 @@ requests.patch(
   },
   body: JSON.stringify({ key: "plan", label: "Plan", type: "text", fallback: "free" }),
 });
-const field = await res.json(); // field.id is "fld_…" — but the key is what you use`,
+const field = await res.json(); // field.id is "fld_…", but the key is what you use`,
       python: `import os, requests
 
 field = requests.post(
@@ -1092,7 +1092,7 @@ export function buildSegmentSnippets(
     {
       id: "segment-contacts",
       label: "Who matches now",
-      blurb: `Membership is evaluated live — this is who matches right now${
+      blurb: `Membership is evaluated live: this is who matches right now${
         segment ? ` in "${segment.name}"` : ""
       }. Cursor-paginate with \`?after=\`; the same list is also available as \`GET /contacts?segment_id=\`.`,
       curl: `curl "${base}/audiences/${aud}/segments/${seg}/contacts?limit=100" \\
@@ -1114,7 +1114,7 @@ page = requests.get(
       id: "create-segment",
       label: "Create a segment",
       blurb:
-        'A segment is a saved filter: `match` is "all" or "any" over 1–10 conditions on `email`, `first_name`, `last_name`, or any custom field key.',
+        'A segment is a saved filter: `match` is "all" or "any" over 1 to 10 conditions on `email`, `first_name`, `last_name`, or any custom field key.',
       curl: `curl -X POST "${base}/audiences/${aud}/segments" \\
   -H "Authorization: Bearer $DAY3_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -1170,7 +1170,7 @@ export function buildTopicSnippets(
     {
       id: "set-topics",
       label: "Set a contact's topics",
-      blurb: `Per-topic opt-out for one contact — \`false\` opts them out${
+      blurb: `Per-topic opt-out for one contact: \`false\` opts them out${
         topic ? ` of "${topic.name}"` : ""
       }, \`true\` opts them back in. Read the effective state with GET on the same path.`,
       curl: `curl -X PATCH "${base}/audiences/${aud}/contacts/jane%40acme.com/topics" \\
@@ -1249,7 +1249,7 @@ function buildAudienceCrudSnippets(ctx: ApiDocsContext): SnippetTask[] {
     {
       id: "list-audiences",
       label: "List audiences",
-      blurb: "The smallest call there is — also the standard way to verify a key works.",
+      blurb: "The smallest call there is, and also the standard way to verify a key works.",
       curl: `curl "${base}/audiences" \\
   -H "Authorization: Bearer $DAY3_API_KEY"`,
       js: `const res = await fetch("${base}/audiences", {
@@ -1266,7 +1266,7 @@ page = requests.get(
     {
       id: "create-audience",
       label: "Create an audience",
-      blurb: "The response carries the new `aud_…` id — everything else in the API lives under it.",
+      blurb: "The response carries the new `aud_…` id. Everything else in the API lives under it.",
       curl: `curl -X POST "${base}/audiences" \\
   -H "Authorization: Bearer $DAY3_API_KEY" \\
   -H "Content-Type: application/json" \\
@@ -1413,7 +1413,7 @@ export function buildEmailsPanelContent(input: {
   };
 
   return {
-    blurb: "Send transactional email — password resets, receipts, magic links — from your own code.",
+    blurb: "Send transactional email (password resets, receipts, magic links) from your own code.",
     idGroups:
       input.verifiedDomains.length > 0
         ? [
@@ -1433,7 +1433,7 @@ export function buildEmailsPanelContent(input: {
     }),
     note:
       input.verifiedDomains.length === 0
-        ? "Sends are rejected until a sending domain is verified — set one up under Domains first."
+        ? "Sends are rejected until a sending domain is verified. Set one up under Domains first."
         : undefined,
     docs: [REFERENCE.emails, REFERENCE.errors, REFERENCE.webhooks],
   };
@@ -1442,7 +1442,7 @@ export function buildEmailsPanelContent(input: {
 // Domains and senders have no v1 endpoints (the reference says so explicitly) —
 // their panels show ids without pretending there's an API to call.
 const NOT_IN_V1_NOTE =
-  "Domains and senders don't have public API endpoints yet — verification and sending setup happen here in the app. These ids identify your resources when you talk to Day3 support.";
+  "Domains and senders don't have public API endpoints yet. Verification and sending setup happen here in the app. These ids identify your resources when you talk to Day3 support.";
 
 /** Panel content for the domains pages (list or a single domain). */
 export function buildDomainsPanelContent(input: {

@@ -34,7 +34,7 @@ export type UrlRejection =
 export const URL_REJECTION_MESSAGES: Record<UrlRejection, string> = {
   invalid_url: "That doesn't look like a URL.",
   scheme_not_https: "Webhook URLs must use https://.",
-  credentials_in_url: "Remove the username/password from the URL — sign requests with the signing secret instead.",
+  credentials_in_url: "Remove the username/password from the URL. Sign requests with the signing secret instead.",
   hostname_not_public: "That address isn't reachable from the public internet. Use a public hostname (a tunnel like ngrok works for local development).",
   port_not_allowed: "Only ports 443 and 8443 are allowed.",
 };

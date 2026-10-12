@@ -222,7 +222,7 @@ export async function enforceAiBudget(
       ? canUpgradeAllowance
         ? "Your team's monthly AI assist budget is used up. It resets at the start of next month, or upgrade your plan for a larger allowance."
         : "Your team's monthly AI assist budget is used up. It resets at the start of next month."
-      : "Your team's AI assist budget is used up for now. It resets shortly — try again then.";
+      : "Your team's AI assist budget is used up for now. It resets shortly, so try again then.";
   throw new HttpError(429, message, { "Retry-After": String(Math.max(1, snap.resetsInSeconds)) });
 }
 

@@ -198,7 +198,7 @@ export const CAMPAIGN_TEMPLATES: CampaignTemplate[] = [
       text(
         "<h1>What's new</h1>" +
           "<p>Hi {{first_name|there}},</p>" +
-          "<p>A short line on the theme of this update — what you've been working on and why it matters to them.</p>",
+          "<p>A short line on the theme of this update: what you've been working on and why it matters to them.</p>",
       ),
       rule(),
       card(
@@ -206,13 +206,13 @@ export const CAMPAIGN_TEMPLATES: CampaignTemplate[] = [
         "image-left",
       ),
       card(
-        "<h3>Second feature</h3><p>Keep each card to two or three lines — the detail belongs on the linked page.</p>",
+        "<h3>Second feature</h3><p>Keep each card to two or three lines. The detail belongs on the linked page.</p>",
         "image-right",
       ),
       button("See what's new", "#2563eb"),
       rule(),
       text(
-        "<p>Anything you'd like us to build next? Just reply to this email — it comes straight to us.</p>",
+        "<p>Anything you'd like us to build next? Just reply to this email. It comes straight to us.</p>",
       ),
       social("Follow along:"),
     ],
@@ -246,11 +246,11 @@ export const CAMPAIGN_TEMPLATES: CampaignTemplate[] = [
       imagePlaceholder(1, 260),
       text(
         "<p>Hi {{first_name|there}},</p>" +
-          "<p>Two or three sentences on why you built this and what changes for them today. Resist listing every detail — the goal of this email is one click.</p>",
+          "<p>Two or three sentences on why you built this and what changes for them today. Resist listing every detail. The goal of this email is one click.</p>",
       ),
       button("Try it now", "#4f46e5", { fullWidth: true }),
       quote(
-        "<p>A short line from an early user or beta customer — proof beats adjectives.</p>",
+        "<p>A short line from an early user or beta customer. Proof beats adjectives.</p>",
         "#f5f3ff",
         "Add their name, Company",
       ),
@@ -260,10 +260,10 @@ export const CAMPAIGN_TEMPLATES: CampaignTemplate[] = [
   {
     key: "founder-note",
     name: "Founder note",
-    description: "A plain personal letter. No chrome, no layout — highest reply rate.",
+    description: "A plain personal letter. No chrome, no layout. Highest reply rate.",
     structure: "Just text, styled like a real email from a person",
     subject: "A quick note from me",
-    previewText: "No announcement — just something I've been thinking about.",
+    previewText: "No announcement, just something I've been thinking about.",
     // Deliberately styleless: no border, no radius, white on white. A note that looks
     // designed reads as marketing; this one should look like it was typed.
     theme: {
@@ -280,10 +280,10 @@ export const CAMPAIGN_TEMPLATES: CampaignTemplate[] = [
     build: () => [
       text(
         "<p>Hi {{first_name|there}},</p>" +
-          "<p>Open with the thought itself — no preamble, no \"we're excited to announce\". One paragraph on what you noticed or decided.</p>" +
+          "<p>Open with the thought itself: no preamble, no \"we're excited to announce\". One paragraph on what you noticed or decided.</p>" +
           "<p>Then a paragraph on what it means for them, in plain words.</p>" +
           "<p>Close with a real question. Replies come straight back to you, and people do answer this one.</p>" +
-          "<p>— Your name<br>Founder, {{company_name}}</p>",
+          "<p>Your name<br>Founder, {{company_name}}</p>",
       ),
     ],
   },
@@ -308,7 +308,7 @@ export const CAMPAIGN_TEMPLATES: CampaignTemplate[] = [
     build: () => [
       text(
         "<h1>The {{company_name}} digest</h1>" +
-          "<p>Hi {{first_name|there}} — three things worth your time this week.</p>",
+          "<p>Hi {{first_name|there}}, three things worth your time this week.</p>",
       ),
       rule(),
       text(
@@ -317,7 +317,7 @@ export const CAMPAIGN_TEMPLATES: CampaignTemplate[] = [
       ),
       text(
         "<h3>Second headline goes here</h3>" +
-          "<p>Keep every item to a single line — a digest earns its opens by being short.</p>",
+          "<p>Keep every item to a single line. A digest earns its opens by being short.</p>",
       ),
       text(
         "<h3>Third headline goes here</h3>" +
@@ -330,7 +330,7 @@ export const CAMPAIGN_TEMPLATES: CampaignTemplate[] = [
   {
     key: "event-invite",
     name: "Event invite",
-    description: "A webinar, demo day, or office hours — details block plus RSVP.",
+    description: "A webinar, demo day, or office hours, with a details block plus RSVP.",
     structure: "Invite · details callout · full-width RSVP · can't-make-it note",
     subject: "You're invited: our next live session",
     previewText: "30 minutes, live, with time for questions at the end.",
