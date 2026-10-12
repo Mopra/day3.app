@@ -26,6 +26,7 @@ import { useComposerSave } from "@/components/campaign-composer";
 import { RowActions } from "@/components/ui/data-list";
 import { MenuItem } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
+import { PLANS, firstSendingPlan } from "@/lib/plans-catalog";
 import type { Campaign, OnboardingState } from "@/lib/types";
 
 // Maps a send-blocking condition to the page that fixes it, so the user gets a
@@ -317,6 +318,38 @@ export function CampaignActions({
                 bigger.
               </p>
             )}
+            {/* The moment a free user most wants to pay is when they see who
+                they're leaving out, so name the number and the price here. */}
+            {sandboxRecipients !== null &&
+              audienceSummary &&
+              audienceSummary.subscribed > sandboxRecipients && (
+                <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
+                  <p className="text-muted-foreground">
+                    {/* The audience count ignores segment/topic scoping, so
+                        only quote the gap for a whole-list send. */}
+                    {campaign.segmentId || campaign.topicId ? (
+                      "Everyone else on this list won't get it."
+                    ) : (
+                      <>
+                        <strong className="text-foreground">
+                          {(audienceSummary.subscribed - sandboxRecipients).toLocaleString()}{" "}
+                          {audienceSummary.subscribed - sandboxRecipients === 1
+                            ? "subscriber"
+                            : "subscribers"}
+                        </strong>{" "}
+                        on this list won&apos;t get it.
+                      </>
+                    )} Plans start at $
+                    {PLANS[firstSendingPlan()].monthlyPriceUsd}/mo and send to everyone.
+                  </p>
+                  <Link
+                    href={`/billing?next=${encodeURIComponent(`/campaigns/${campaignId}`)}`}
+                    className="mt-2 inline-block font-medium underline underline-offset-4"
+                  >
+                    Choose a plan
+                  </Link>
+                </div>
+              )}
             <dl className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
               <div className="flex gap-2">
                 <dt className="w-16 shrink-0 text-muted-foreground">From</dt>

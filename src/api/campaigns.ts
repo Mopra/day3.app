@@ -8,6 +8,7 @@ import {
 } from "../services/render";
 import { SectionsSchema, serializeSections, type CampaignSection } from "../lib/sections";
 import { CampaignThemeSchema, type CampaignThemeInput } from "../lib/theme";
+import { PLANS, firstSendingPlan } from "../lib/plans-catalog";
 import { campaignRecipientScope } from "../services/recipient-scope";
 import { orgMemberEmails } from "../services/sandbox";
 import { sharedDomainSendError } from "../services/shared-domain";
@@ -270,7 +271,7 @@ export async function campaignSendGateError(
           .limit(1)
       : [];
     if (reachable.length === 0) {
-      return "On the Free plan you can only send to your own team. Add your teammates as contacts in this audience, then send.";
+      return `On the Free plan, sends only reach people on your team, and nobody on your team is in this audience. Pick a plan (from $${PLANS[firstSendingPlan()].monthlyPriceUsd}/mo) to send to this list, or add yourself to it to send a test.`;
     }
   }
 
