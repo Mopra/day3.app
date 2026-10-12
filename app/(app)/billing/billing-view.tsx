@@ -9,7 +9,19 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useApi } from "@/lib/api";
 import { formatDate, statusLabel, statusVariant } from "@/lib/format";
-import { planLabel } from "@/lib/plans-catalog";
+import { planCanSend, planLabel } from "@/lib/plans-catalog";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+
+// Only same-origin app paths: ?next= arrives in a URL anyone can craft, so an
+// absolute or protocol-relative value ("//evil.example") must never become a
+// redirect target.
+function safeNextPath(value: string | null): string | null {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) {
+    return null;
+  }
+  return value;
+}
 import { UpgradeNudge, UsageSummary } from "@/components/plan-usage";
 import { PlanSlider } from "@/components/plan-slider";
 import type { Account } from "@/lib/types";
@@ -36,6 +48,7 @@ function pastDueNotice(status: string) {
 export function BillingView({ initialAccount }: { initialAccount: Account }) {
   const clerk = useClerk();
   const api = useApi();
+  const router = useRouter();
   const [account, setAccount] = useState<Account>(initialAccount);
   useEffect(() => setAccount(initialAccount), [initialAccount]);
   // Latest account, read by the reconcile baseline from a callback (not render).
@@ -69,7 +82,18 @@ export function BillingView({ initialAccount }: { initialAccount: Account }) {
         const { account: fresh } = await api.get<{ account: Account }>("/api/account");
         if (runId !== reconcileRun.current) return;
         setAccount(fresh);
-        if (`${fresh.plan}:${fresh.subscriptionStatus}` !== beforeKey) return; // settled
+        if (`${fresh.plan}:${fresh.subscriptionStatus}` !== beforeKey) {
+          // Settled. If the user came here from something they were doing
+          // (?next=, e.g. the campaign they wanted to send to their list), put
+          // them back there now that the plan allows it, instead of leaving
+          // them on Billing to find their own way back.
+          const next = safeNextPath(new URLSearchParams(window.location.search).get("next"));
+          if (next && planCanSend(fresh.plan)) {
+            toast.success(`You're on the ${planLabel(fresh.plan)} plan. Taking you back.`);
+            router.push(next);
+          }
+          return;
+        }
       } catch {
         // Transient error — keep polling; the next attempt may succeed.
       }

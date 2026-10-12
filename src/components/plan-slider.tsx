@@ -27,6 +27,8 @@ import {
   FREE_PLAN,
   MAX_AI_MONTHLY_CREDITS,
   PLAN_ORDER,
+  SANDBOX_MONTHLY_ALLOWANCE,
+  firstSendingPlan,
   TOP_PLAN,
   isPlanKey,
   missingClerkPlanSlugs,
@@ -44,7 +46,9 @@ function planFeatures(meta: PlanMeta): { ok: boolean; label: string }[] {
   return [
     meta.sendingEnabled
       ? { ok: true, label: `Send up to ${meta.monthlyEmailLimit.toLocaleString()}/mo` }
-      : { ok: false, label: "Set-up & drafts (no sending)" },
+      : // Free does send, to the team (sandbox). "No sending" contradicted the
+        // test email the user has usually just received.
+        { ok: false, label: `Test sends to your team only (${SANDBOX_MONTHLY_ALLOWANCE}/mo)` },
     meta.aiWindowCredits > 0
       ? {
           ok: true,
@@ -312,9 +316,14 @@ export function PlanSlider({
   const currentPlan: PlanKey | null = isPlanKey(account.plan) ? account.plan : null;
   const currentIndex = currentPlan ? PLAN_ORDER.indexOf(currentPlan) : -1;
 
-  // Open the carousel on the org's current plan (or the free tier for an
-  // unrecognized/legacy value).
-  const [index, setIndex] = useState(currentIndex >= 0 ? currentIndex : 0);
+  // Open the carousel on the org's current plan, except on Free: someone on
+  // Free who opens Billing is shopping, and landing on their own card (whose
+  // only button is a disabled "Current plan") made the first thing they saw a
+  // dead end. They start on the cheapest plan that sends.
+  const onFree = currentPlan === null || !planMeta(currentPlan).sendingEnabled;
+  const [index, setIndex] = useState(
+    onFree ? PLAN_ORDER.indexOf(firstSendingPlan()) : currentIndex,
+  );
   // Mirror of `index` for the resize/init handlers to read without re-subscribing.
   const indexRef = useRef(index);
   useEffect(() => {
@@ -422,6 +431,9 @@ export function PlanSlider({
             <p className="text-sm text-muted-foreground">
               How many emails do you send per month?
             </p>
+            <p className="text-xs text-muted-foreground/80">
+              Subscribers × emails each. 1,000 subscribers and 2 updates a month is 2,000.
+            </p>
             <p className="mt-0.5 font-display text-3xl tabular-nums sm:text-4xl">
               {onContact ? (
                 <>
@@ -438,7 +450,7 @@ export function PlanSlider({
                   </span>
                 </>
               ) : (
-                "Set-up only"
+                "Team test sends"
               )}
             </p>
           </div>

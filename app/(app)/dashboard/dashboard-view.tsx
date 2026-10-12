@@ -125,7 +125,7 @@ export function DashboardView({
   }[sendingState];
   const sendingValue = {
     paused: "Paused",
-    sandbox: "Sandbox",
+    sandbox: "Test mode",
     disabled: "Disabled",
     degraded: "Enabled",
     normal: "Enabled",
@@ -181,7 +181,7 @@ export function DashboardView({
             {/* On free, "active" reads as contradictory next to "Sending: set-up
                 mode" — say what free actually is. Reserve the status word for paid. */}
             {!canSend ? (
-              <Badge variant="secondary">Sandbox</Badge>
+              <Badge variant="secondary">Test mode</Badge>
             ) : (
               <Badge
                 variant={
@@ -237,7 +237,7 @@ export function DashboardView({
             sendingState === "sandbox" ? (
               <span className="text-muted-foreground">Real sends, your team only</span>
             ) : sendingState === "paused" ? (
-              <span className="text-muted-foreground">Paused — contact support</span>
+              <span className="text-muted-foreground">Paused. Contact support.</span>
             ) : sendingState === "disabled" ? (
               <span className="text-muted-foreground">Sending is turned off</span>
             ) : sendingState === "degraded" ? (

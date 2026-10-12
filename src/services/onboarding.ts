@@ -128,8 +128,15 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
   // `eligibility` is included because a past-due, paused or allowance-exhausted
   // account has no path to any email, shared domain or not. Offering one would
   // be a button that fails when pressed.
+  //
+  // `sandbox` is included because a shared-domain send must be a sandbox send
+  // (sharedDomainSendError). A paid account is not in sandbox mode, so the test
+  // address cannot carry its mail; treating the path as open let a user who had
+  // just upgraded press an enabled Send and get a refusal toast, at the exact
+  // moment they had paid to reach their list. For them the domain and address
+  // are real blockers and are named as such below.
   const hasSharedDomain = sharedDomain !== null;
-  const canSendFirstEmail = hasSharedDomain && teamSize > 0 && eligibility.allowed;
+  const canSendFirstEmail = hasSharedDomain && teamSize > 0 && eligibility.allowed && sandbox;
 
   // The first concrete thing stopping a send, in the order a user must fix them.
   // Mirrors the real gate order (plan eligibility, then campaignSendGateError:
@@ -148,7 +155,11 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
     sendBlockedReason =
       "Add your business mailing address in Settings. It's legally required in every email.";
   } else if (!hasVerifiedDomain && !canSendFirstEmail) {
-    sendBlockedReason = "Verify a sending domain before you can send.";
+    sendBlockedReason = hasSharedDomain
+      ? // No "address" in this text: the composer reads that word as the
+        // mailing-address blocker and would offer the wrong fix.
+        "To email your subscribers, send from your own domain. Day3's test sender only reaches your team."
+      : "Verify a sending domain before you can send.";
   } else if (!hasSubscribers) {
     sendBlockedReason = "Import subscribers before you can send.";
   }

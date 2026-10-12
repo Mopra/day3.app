@@ -282,4 +282,22 @@ describe("onboarding state", () => {
     const state = await computeOnboardingState(db, account);
     expect(state.canSendFirstEmail).toBe(false);
   });
+
+  // A paid account is not in sandbox mode, and a shared-domain send must be a
+  // sandbox send, so the test address cannot carry its mail. The composer must
+  // say "use your own domain" up front, not enable Send and refuse after.
+  it("names the domain as the blocker for a paid account on the test address", async () => {
+    const db = await testDb();
+    const account = await seedAccount(db, { companyAddress: "1 Main St" });
+    await seedMember(db, account.id, "founder@example.com");
+    await ensureSharedDomain(db, account);
+    await ensureTeamAudience(db, account);
+
+    const state = await computeOnboardingState(db, account);
+    expect(state.sandbox).toBe(false);
+    expect(state.canSendFirstEmail).toBe(false);
+    expect(state.canSend).toBe(false);
+    expect(state.sendBlockedReason).toMatch(/own domain/);
+    expect(state.sendBlockedReason).not.toMatch(/address/);
+  });
 });

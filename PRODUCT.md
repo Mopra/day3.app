@@ -847,7 +847,14 @@ other. Each domain still opens to its own detail page.
   the numbers derive from the catalog's top plan, not hardcoded copy)
   whose "Contact us" opens an in-app message form — like the Help widget, it
   relays to the support inbox with the user as Reply-To — custom volume is
-  arranged manually, not self-serve.
+  arranged manually, not self-serve. A Free account opens the carousel on the
+  cheapest plan that sends (its own card's only button would be "Current plan"), and
+  the Free card describes what Free does: test sends to your own team. Upgrade links
+  from test-mode surfaces carry `?next=`, and once checkout settles on a plan that
+  sends, Billing returns the user to that page.
+- A paid account still on the Day3 test address sees "send from your own domain" as
+  the send blocker up front: the test address only carries sandbox mail, so Send is not
+  offered and then refused.
 - Settings: company mailing address (legally required in email footers) and Clerk's
   organization management (team members, org name, logo).
 - **Deleting an account is real erasure (GDPR right-to-erasure).** Deleting the
