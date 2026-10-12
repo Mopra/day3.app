@@ -104,7 +104,7 @@ SES_CONFIGURATION_SET=day3-default
 # needs OPENROUTER_API_KEY — see .env.worker.example). "mock" = deterministic only.
 AI_REVIEW_MODE=ai
 OPENROUTER_API_KEY=<key>
-# OPENROUTER_RISK_MODEL=anthropic/claude-haiku-4.5
+# OPENROUTER_RISK_MODEL=anthropic/claude-haiku-5.5
 
 # --- Error reporting (set the SAME value as Vercel) ---
 ERROR_REPORTING_DSN=<HTTP collector URL — see §4>

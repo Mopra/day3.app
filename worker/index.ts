@@ -32,6 +32,7 @@ import { setAmbientQueue } from "../src/queue/enqueue";
 import { runScheduledSweeps } from "../src/queue/cron";
 import { recordDeadLetter } from "../src/lib/job-log";
 import { logger } from "../src/lib/logger";
+import { DEFAULT_RISK_MODEL } from "../src/services/risk-ai";
 import { getDb } from "../src/db/client";
 import { emailProviderFromEnv } from "../src/email/factory";
 import { createSendPacer, withSendPacing } from "../src/email/send-rate";
@@ -220,7 +221,7 @@ const worker = new Worker(
 logger.info("pre-send review configured", {
   mode: process.env.AI_REVIEW_MODE === "ai" ? "deterministic + AI" : "deterministic only",
   aiKeyPresent: Boolean(process.env.OPENROUTER_API_KEY),
-  riskModel: process.env.OPENROUTER_RISK_MODEL || "anthropic/claude-haiku-4.5 (default)",
+  riskModel: process.env.OPENROUTER_RISK_MODEL || `${DEFAULT_RISK_MODEL} (default)`,
 });
 
 worker.on("ready", () =>

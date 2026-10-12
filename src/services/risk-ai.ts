@@ -5,7 +5,7 @@
 //      deterministic result, never lower it — campaign content is untrusted
 //      input to the model, so prompt injection must have nothing to gain.
 //   2. CHEAP BY CONSTRUCTION. One call per campaign submission, small model
-//      (default Haiku), HTML stripped to text and truncated, links capped,
+//      (default Haiku 5.5, low effort), HTML stripped to text and truncated, links capped,
 //      output tokens capped. This is platform protection, so it is NOT charged
 //      against the org's AI budget and is not plan-gated.
 //   3. FAIL OPEN. Throws on any error/timeout; the caller catches and keeps
@@ -69,10 +69,17 @@ const AiVerdictSchema = z.object({
     ),
 });
 
-const DEFAULT_RISK_MODEL = "anthropic/claude-haiku-4.5";
+// Haiku 5.5 is a tenth of Haiku 4.5's price per token. It thinks by default and
+// thinking bills as output, so the effort is pinned low: this is a one-shot
+// classification, and a deeper think buys little but a bigger bill. Note the
+// effort turns thinking ON for older models (Haiku 4.5), so an override back to
+// one of those costs more than it used to.
+export const DEFAULT_RISK_MODEL = "anthropic/claude-haiku-5.5";
+const REASONING_EFFORT = "low";
 const MAX_BODY_CHARS = 10_000;
 const MAX_LINKS_SHOWN = 30;
-const MAX_OUTPUT_TOKENS = 700;
+// Includes the thinking tokens, so it is well above the ~100-token verdict.
+const MAX_OUTPUT_TOKENS = 2_000;
 const TIMEOUT_MS = 30_000;
 const MAX_GUIDANCE_FROM_AI = 5;
 
@@ -152,11 +159,11 @@ export async function aiReviewCampaign(input: RiskCheckInput): Promise<AiRiskVer
   const openrouter = createOpenRouter({ apiKey });
 
   const { object, usage } = await generateObject({
-    model: openrouter(modelId),
+    // No `temperature`: Haiku 5.5 rejects non-default sampling values.
+    model: openrouter(modelId, { reasoning: { effort: REASONING_EFFORT } }),
     schema: AiVerdictSchema,
     system: SYSTEM,
     prompt: buildPrompt(input),
-    temperature: 0,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
     abortSignal: AbortSignal.timeout(TIMEOUT_MS),
   });
