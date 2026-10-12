@@ -120,9 +120,13 @@ function StatusCell({ domain }: { domain: SendingDomain }) {
 export function DomainsView({
   initialDomains,
   tabs,
+  addRequest = 0,
 }: {
   initialDomains: SendingDomain[];
   tabs: React.ReactNode;
+  // Bumped by the page to open the Add domain dialog from outside this view
+  // (the test-address card, or an onboarding link with ?add=domain).
+  addRequest?: number;
 }) {
   const api = useApi();
   const router = useRouter();
@@ -132,6 +136,9 @@ export function DomainsView({
   const [domains, setDomains] = useState<SendingDomain[]>(initialDomains);
   useEffect(() => setDomains(initialDomains), [initialDomains]);
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (addRequest > 0) setOpen(true);
+  }, [addRequest]);
   const [autoEmail, setAutoEmail] = useState(true);
   const [status, setStatus] = useState("all");
   const [confirmDelete, setConfirmDelete] = useState<SendingDomain | null>(null);

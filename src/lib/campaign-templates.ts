@@ -394,6 +394,60 @@ export function campaignTemplate(key: string): CampaignTemplate | undefined {
   return CAMPAIGN_TEMPLATES.find((t) => t.key === key);
 }
 
+// The email a brand new account sends itself (POST /api/campaigns/first). Not in
+// the gallery: it is written for one moment, the user's own inbox on minute one.
+//
+// The gallery layouts are scaffolds ("First feature: what it does, in one
+// sentence"), which is right for a draft and wrong for a payoff: the first thing
+// Day3 ever puts in someone's inbox was filler text and two empty image slots.
+// This one says what just happened and points at the parts worth noticing (the
+// merge tag, tracking, the footer), so the test email is a small demo of the
+// product rather than a reminder of the work still to do.
+//
+// It breaks the gallery's no-prefilled-links rule on purpose, and only here: the
+// button links back to the app's Metrics page, so the user's own click shows up
+// as their first tracked click. `appUrl` must be absolute (the caller's origin).
+export function firstEmailTemplate(appUrl: string): CampaignTemplate {
+  const base = CAMPAIGN_TEMPLATES[0];
+  const metricsUrl = `${appUrl.replace(/\/+$/, "")}/metrics`;
+  return {
+    key: "first-email",
+    name: "Your first email",
+    description: "The test email a new account sends itself.",
+    structure: "Hero · what to notice · CTA · next steps",
+    subject: "It works: your first email",
+    previewText: "Sent through Day3, straight to your inbox.",
+    theme: base.theme,
+    build: () => [
+      text(
+        "<h1>It works 🎉</h1>" +
+          "<p>Hi {{first_name|there}}, this email just went through Day3 and landed in your inbox. Real delivery, real tracking, nothing faked.</p>",
+        { align: "center", bg: "#eff6ff" },
+      ),
+      text(
+        "<h3>A few things to notice</h3>" +
+          "<p><strong>The greeting.</strong> It used your first name, or \"there\" if we don't have it yet. Every subscriber gets their own.</p>" +
+          "<p><strong>The footer.</strong> The unsubscribe link and postal address are added to every email for you.</p>" +
+          "<p><strong>The button below.</strong> Click it, and your click shows up in Day3 a moment later.</p>",
+      ),
+      {
+        id: newSectionId(),
+        kind: "button",
+        columns: 1,
+        content: [""],
+        align: "center",
+        buttons: [
+          { label: "See my click in Day3", href: metricsUrl, bgColor: "#2563eb", textColor: "#ffffff" },
+        ],
+      },
+      rule(),
+      text(
+        "<p>This is your draft, so make it yours: change the words, try a template, and send it to yourself again. When you're ready for your real subscribers, Day3 walks you through it.</p>",
+      ),
+    ],
+  };
+}
+
 // The section kinds a template is allowed to use. Not a runtime guard — it exists so
 // the test suite fails loudly if a template starts leaning on a kind whose editor or
 // serializer hasn't been considered here.

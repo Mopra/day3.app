@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
@@ -303,6 +303,9 @@ export default function CampaignDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [submitOpen, setSubmitOpen] = useState(false);
+  // The send dialog opens on its confirm button, not Cancel: the user pressed
+  // Send to get here, and Enter should finish what they started.
+  const sendButtonRef = useRef<HTMLButtonElement>(null);
   // Audience name + subscribed count for the send-confirmation dialog. Fetched
   // when the dialog opens (recipients aren't generated until after submit, so
   // we can't use `stats`); null = still loading.
@@ -454,7 +457,7 @@ export default function CampaignDetailPage() {
 
   async function confirmSubmit() {
     setSubmitOpen(false);
-    await action("submit", undefined, "Campaign submitted");
+    await action("submit", undefined, "Sending now");
   }
 
   // Open the schedule dialog seeded with the existing time, or a sensible
@@ -582,7 +585,7 @@ export default function CampaignDetailPage() {
               Sending…
             </>
           ) : (
-            "Submit & send"
+            "Send now"
           )}
         </Button>
       )}
@@ -763,7 +766,10 @@ export default function CampaignDetailPage() {
         </CollapsibleNotice>
       )}
 
-      {submittable && personalization.length > 0 && (
+      {/* Not on a sandbox send: its recipients are the user's own team, and
+          "1 of 1 recipients have no first name" about yourself is noise on the
+          one screen where the email should have the room. */}
+      {submittable && !sandbox && personalization.length > 0 && (
         <CollapsibleNotice
           noticeKey="campaign-personalization"
           title="Some recipients are missing personalization"
@@ -1046,7 +1052,7 @@ export default function CampaignDetailPage() {
       />
 
       <Dialog open={submitOpen} onOpenChange={setSubmitOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md" initialFocus={sendButtonRef}>
           <DialogHeader>
             <DialogTitle>Send this campaign?</DialogTitle>
           </DialogHeader>
@@ -1070,15 +1076,16 @@ export default function CampaignDetailPage() {
                   in <strong className="text-foreground">{audienceSummary.name}</strong>
                 </>
               ) : null}
-              . After a quick safety review it sends right away — this can&apos;t be undone.
+              . It goes out after a quick automatic check, usually within seconds. A sent email can&apos;t be
+              recalled.
             </p>
             {/* The count above is the whole confirmation on the free tier: the
                 audience may hold thousands, but a sandbox send reaches only the
                 teammates in it. Say so rather than letting the number puzzle. */}
             {sandboxRecipients !== null && (
               <p className="text-sm text-muted-foreground">
-                Sandbox mode — only members of your organization receive this send, even if the
-                audience is larger.
+                Test mode: only people on your team get this, even if the list is
+                bigger.
               </p>
             )}
             <dl className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
@@ -1100,7 +1107,7 @@ export default function CampaignDetailPage() {
               <Button variant="ghost" disabled={busy} onClick={() => setSubmitOpen(false)}>
                 Cancel
               </Button>
-              <Button disabled={busy} onClick={confirmSubmit}>
+              <Button ref={sendButtonRef} disabled={busy} onClick={confirmSubmit}>
                 {busy ? (
                   <>
                     <SendDots />

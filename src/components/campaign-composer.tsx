@@ -202,13 +202,13 @@ const headerInputClass =
 const AUTOSAVE_DELAY_MS = 800;
 
 // Lets the send actions the composer renders in its title row (Send test,
-// Schedule, Submit & send — all passed in as `titleActions`) push the pending
+// Schedule, Send now: all passed in as `titleActions`) push the pending
 // draft to the server before they act on it.
 //
 // They need it because every one of them operates on the SAVED row, not on what
 // is on screen: the server re-reads the campaign by id and renders from that. With
 // an 800 ms debounce between the last keystroke and the save, "edit the subject,
-// hit Submit & send" could put the previous subject in front of every subscriber,
+// hit Send now" could put the previous subject in front of every subscriber,
 // and there is no unsend. Awaiting the flush makes the row the user is looking at
 // the row that ships. The default is a no-op so a caller outside a composer (or one
 // with autosave disabled) still works.
@@ -1065,7 +1065,7 @@ export function CampaignComposer({
           )}
           {titleBadge}
         </div>
-        {/* Test / Schedule / Submit & send is ~320px of buttons — more than a
+        {/* Test / Schedule / Send now is ~320px of buttons — more than a
             phone has, so the group wraps instead of being clipped. */}
         <div className="flex flex-wrap items-center gap-2 sm:ml-auto sm:shrink-0 sm:gap-3">
           {onAutosave && <AutosaveIndicator status={autosaveStatus} />}

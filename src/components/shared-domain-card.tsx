@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { FlaskConical } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -17,10 +16,13 @@ import { Card, CardContent } from "@/components/ui/card";
 export function SharedDomainCard({
   fromEmail,
   disabled,
+  onAddDomain,
 }: {
   fromEmail: string;
   // True when an operator has cut this account off the shared identity.
   disabled: boolean;
+  // Opens the Add domain dialog on the domains list below.
+  onAddDomain: () => void;
 }) {
   return (
     <Card className="border-dashed">
@@ -54,12 +56,13 @@ export function SharedDomainCard({
             )}
           </p>
         </div>
-        <Link
-          href="#add-domain"
+        <button
+          type="button"
+          onClick={onAddDomain}
           className="shrink-0 text-sm font-medium text-primary underline-offset-4 hover:underline"
         >
           Add my domain
-        </Link>
+        </button>
       </CardContent>
     </Card>
   );

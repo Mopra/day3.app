@@ -56,12 +56,12 @@ export default function CampaignNewPage() {
   // no refresh, and the composer keeps its place since this page never remounts.
   const pendingActions = (
     <>
-      <Button type="button" variant="outline" disabled title="Keep writing — your draft is saving automatically">
+      <Button type="button" variant="outline" disabled title="Keep writing. Your draft is saving automatically.">
         <CalendarClock className="size-4" />
         Schedule
       </Button>
-      <Button type="button" disabled title="Keep writing — your draft is saving automatically">
-        Submit &amp; send
+      <Button type="button" disabled title="Keep writing. Your draft is saving automatically.">
+        Send now
       </Button>
     </>
   );

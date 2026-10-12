@@ -277,7 +277,7 @@ guards make that observable:
   defaults to the From address when left blank.
 - **Autosave only (no Save button):** drafts save automatically a beat (~1s) after each
   edit, with a live "Saving… / Saved" indicator. The title bar carrying it and the
-  send actions (Send test, Schedule, Submit & send) stays pinned while you scroll. Partial drafts are persisted from the
+  send actions (Send test, Schedule, Send now) stays pinned while you scroll. Partial drafts are persisted from the
   first keystroke, so nothing is ever lost; everything a send needs is enforced at
   submit/schedule time instead. A brand-new draft is created on the first autosave and
   the URL switches to the campaign in place.
@@ -408,7 +408,7 @@ guards make that observable:
   one working link is guaranteed).
 - **Send a test email** before sending for real — to your own address (pre-filled) or
   any addresses you type in, up to 5 per test. The subject is prefixed with `[Test]`.
-- **Submit & send** kicks off a review → recipient-generation → batched-send pipeline.
+- **Send now** kicks off a review → recipient-generation → batched-send pipeline.
 - **Schedule for later:** pick a future date/time and the campaign parks in `scheduled`;
   a cron sweep releases it into the same review→send pipeline when due (granularity ~15
   min). Reschedule or cancel (back to `draft`) any time before it fires. If a send gate

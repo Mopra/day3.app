@@ -139,7 +139,7 @@ export function FirstSendView({
       title: "Send from your own address",
       description: "A few DNS records so mail arrives from your domain instead of ours. We check them for you.",
       done: onboarding.hasVerifiedDomain,
-      href: "/sending",
+      href: "/sending?add=domain",
       cta: "Set up my domain",
       icon: Globe,
     },

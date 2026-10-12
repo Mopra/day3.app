@@ -24,8 +24,19 @@ export function SendingView({
   sharedFromEmail: string | null;
 }) {
   const [tab, setTab] = useState<TabKey>("domains");
+  // Opens the Add domain dialog. Onboarding links arrive with ?add=domain so
+  // "Set up my domain" lands in the form rather than on a page with a button
+  // for it; the param is dropped so a refresh doesn't reopen the dialog.
+  const [addDomainRequest, setAddDomainRequest] = useState(0);
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("tab") === "senders") setTab("senders");
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab") === "senders") setTab("senders");
+    if (params.get("add") === "domain") {
+      setAddDomainRequest((n) => n + 1);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("add");
+      window.history.replaceState(null, "", url);
+    }
   }, []);
   function changeTab(next: TabKey) {
     setTab(next);
@@ -53,10 +64,14 @@ export function SendingView({
         </p>
       </div>
       {tab === "domains" && sharedFromEmail && (
-        <SharedDomainCard fromEmail={sharedFromEmail} disabled={false} />
+        <SharedDomainCard
+          fromEmail={sharedFromEmail}
+          disabled={false}
+          onAddDomain={() => setAddDomainRequest((n) => n + 1)}
+        />
       )}
       {tab === "domains" ? (
-        <DomainsView initialDomains={initialDomains} tabs={tabs} />
+        <DomainsView initialDomains={initialDomains} tabs={tabs} addRequest={addDomainRequest} />
       ) : (
         <SendersView initialSenders={initialSenders} initialDomains={initialDomains} tabs={tabs} />
       )}

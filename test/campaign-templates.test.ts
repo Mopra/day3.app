@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { sanitizeHtml } from "../src/services/render";
 import {
   CAMPAIGN_TEMPLATES,
+  firstEmailTemplate,
   TEMPLATE_SECTION_KINDS,
   campaignTemplate,
 } from "../src/lib/campaign-templates";
@@ -132,5 +133,31 @@ describe("campaign templates", () => {
     // variant, so two templates should never resolve to the same styling.
     const looks = CAMPAIGN_TEMPLATES.map((t) => JSON.stringify(resolveTheme(t.theme)));
     expect(new Set(looks).size).toBe(looks.length);
+  });
+});
+
+// The first-email showcase is not in the gallery, but it ships through the same
+// pipeline, so it keeps the same two invariants.
+describe("firstEmailTemplate", () => {
+  const template = firstEmailTemplate("https://go.day3.app/");
+
+  it("parses under SectionsSchema", () => {
+    const parsed = SectionsSchema.safeParse(template.build());
+    expect(parsed.success, JSON.stringify(parsed.error?.issues)).toBe(true);
+  });
+
+  it("serializes to a body the sanitizer leaves untouched", () => {
+    const html = serializeSections(template.build());
+    expect(html.trim()).not.toBe("");
+    expect(sanitizeHtml(html)).toBe(html);
+  });
+
+  it("links its button to the app's Metrics page", () => {
+    const html = serializeSections(template.build());
+    expect(html).toContain('href="https://go.day3.app/metrics"');
+  });
+
+  it("fits the subject limit", () => {
+    expect(template.subject.length).toBeLessThanOrEqual(MAX_SUBJECT);
   });
 });

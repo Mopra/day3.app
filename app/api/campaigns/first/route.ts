@@ -5,7 +5,7 @@ import { campaignBodyFields } from "@/api/campaigns";
 import { campaigns, senders } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { enforceRateLimit } from "@/lib/rate-limit";
-import { CAMPAIGN_TEMPLATES, campaignTemplate } from "@/lib/campaign-templates";
+import { campaignTemplate, firstEmailTemplate } from "@/lib/campaign-templates";
 import { serializeSections } from "@/lib/sections";
 import { computeOnboardingState } from "@/services/onboarding";
 import { findSharedDomain } from "@/services/shared-domain";
@@ -51,11 +51,13 @@ export const POST = route(async (req) => {
   }
 
   // Let the caller name a template so the same endpoint serves "start with this
-  // one" from the picker later; default to the first, which is the general
-  // product-update layout.
+  // one" from the picker later. The default is the first-email showcase, written
+  // for the user's own inbox rather than as a scaffold to fill in.
   const url = new URL(req.url);
   const requested = url.searchParams.get("template");
-  const template = (requested && campaignTemplate(requested)) || CAMPAIGN_TEMPLATES[0];
+  const template =
+    (requested && campaignTemplate(requested)) ||
+    firstEmailTemplate(process.env.APP_URL?.trim() || url.origin);
 
   const sections = template.build();
   const body = campaignBodyFields({ sections });
@@ -84,7 +86,7 @@ export const POST = route(async (req) => {
     topicId: null,
     sendingDomainId: domain.id,
     senderId: sender?.id ?? null,
-    name: template.subject,
+    name: "Your first email",
     subject: template.subject,
     previewText: template.previewText,
     fromName: domain.fromName ?? account.name,

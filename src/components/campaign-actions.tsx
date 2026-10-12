@@ -1,12 +1,12 @@
 "use client";
 
-// The campaign send-actions cluster — "Send test to me", Schedule, Submit & send,
+// The campaign send-actions cluster — "Send test to me", Schedule, Send now,
 // Pause/Resume, and Delete — plus the confirm/schedule dialogs they open. Pulled
 // out of the campaign detail page so the brand-new-campaign page (`/campaigns/new`)
 // can show the *same* live actions the moment its draft is created, without
 // remounting the composer mid-edit. Self-contained: it loads the campaign and the
 // org's onboarding/send-gates by id, so a caller only needs to hand it an id.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -84,6 +84,9 @@ export function CampaignActions({
   const [busy, setBusy] = useState(false);
 
   const [submitOpen, setSubmitOpen] = useState(false);
+  // The send dialog opens on its confirm button, not Cancel: the user pressed
+  // Send to get here, and Enter should finish what they started.
+  const sendButtonRef = useRef<HTMLButtonElement>(null);
   const [audienceSummary, setAudienceSummary] = useState<{
     name: string;
     subscribed: number;
@@ -169,7 +172,7 @@ export function CampaignActions({
 
   async function confirmSubmit() {
     setSubmitOpen(false);
-    await action("submit", undefined, "Campaign submitted");
+    await action("submit", undefined, "Sending now");
     onSent?.();
   }
 
@@ -255,7 +258,7 @@ export function CampaignActions({
               Sending…
             </>
           ) : (
-            "Submit & send"
+            "Send now"
           )}
         </Button>
       )}
@@ -279,7 +282,7 @@ export function CampaignActions({
       )}
 
       <Dialog open={submitOpen} onOpenChange={setSubmitOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-md" initialFocus={sendButtonRef}>
           <DialogHeader>
             <DialogTitle>Send this campaign?</DialogTitle>
           </DialogHeader>
@@ -303,14 +306,15 @@ export function CampaignActions({
                   in <strong className="text-foreground">{audienceSummary.name}</strong>
                 </>
               ) : null}
-              . After a quick safety review it sends right away — this can&apos;t be undone.
+              . It goes out after a quick automatic check, usually within seconds. A sent email can&apos;t be
+              recalled.
             </p>
             {/* Mirrors the campaign detail page's dialog: on the free tier the
                 audience count isn't who receives it, so name the real reach. */}
             {sandboxRecipients !== null && (
               <p className="text-sm text-muted-foreground">
-                Sandbox mode — only members of your organization receive this send, even if the
-                audience is larger.
+                Test mode: only people on your team get this, even if the list is
+                bigger.
               </p>
             )}
             <dl className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
@@ -340,7 +344,7 @@ export function CampaignActions({
               <Button variant="ghost" disabled={busy} onClick={() => setSubmitOpen(false)}>
                 Cancel
               </Button>
-              <Button disabled={busy} onClick={confirmSubmit}>
+              <Button ref={sendButtonRef} disabled={busy} onClick={confirmSubmit}>
                 {busy ? (
                   <>
                     <SendDots />
