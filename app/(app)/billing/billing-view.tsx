@@ -15,12 +15,20 @@ import { toast } from "sonner";
 
 // Only same-origin app paths: ?next= arrives in a URL anyone can craft, so an
 // absolute or protocol-relative value ("//evil.example") must never become a
-// redirect target.
+// redirect target. Prefix checks alone are not enough: the URL parser strips
+// tabs and newlines, so "/<TAB>/evil.example" would still land on "//evil.example".
+// Resolve it the way the browser will, then keep only the path.
 function safeNextPath(value: string | null): string | null {
-  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) {
+  // eslint-disable-next-line no-control-regex -- rejecting control characters is the point
+  if (!value || !value.startsWith("/") || /[\u0000-\u001f\u007f\\]/.test(value)) return null;
+  try {
+    const url = new URL(value, window.location.origin);
+    if (url.origin !== window.location.origin) return null;
+    const path = url.pathname + url.search + url.hash;
+    return path.startsWith("//") ? null : path;
+  } catch {
     return null;
   }
-  return value;
 }
 import { UpgradeNudge, UsageSummary } from "@/components/plan-usage";
 import { PlanSlider } from "@/components/plan-slider";

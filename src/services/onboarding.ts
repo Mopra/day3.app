@@ -20,9 +20,12 @@ export type OnboardingState = {
   hasOwnSubscribers: boolean;
   hasCampaign: boolean;
   hasSentCampaign: boolean;
-  // True once a campaign has gone out to people outside the team (a non-sandbox
-  // send). The first sandbox email proves the pipeline works; this is the moment
-  // setup is actually over, so the guided day-one surfaces stay up until then.
+  // True once mail has gone out to people outside the team: a non-sandbox
+  // campaign that has started delivering (sending, paused part-way, or sent), or
+  // any non-sandbox API or automation delivery. The first sandbox email proves
+  // the pipeline works; this is the moment setup is actually over, so the guided
+  // day-one surfaces stay up until then. An account that only ever sends over
+  // the API or through automations counts too, or it would sit in setup forever.
   hasSentRealCampaign: boolean;
   // Day-one state (docs/dashboard-day-zero-plan.md). `canSendFirstEmail` is the
   // question the first-run dashboard actually asks: is there a working path to a
@@ -62,6 +65,7 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
     [verifiedDomain],
     [{ subscriberCount, ownCount }],
     [campaignCounts],
+    otherDelivery,
     sharedDomain,
     [teamAudienceId, teamSize],
   ] = await Promise.all([
@@ -100,12 +104,29 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
       .select({
         total: sql<number>`count(*)`.as("total"),
         sent: sql<number>`count(*) FILTER (WHERE ${campaigns.status} = 'sent')`.as("sent"),
-        sentReal: sql<number>`count(*) FILTER (WHERE ${campaigns.status} = 'sent' AND ${campaigns.sandbox} = false)`.as(
+        sentReal: sql<number>`count(*) FILTER (WHERE ${campaigns.status} IN ('sending', 'paused', 'sent') AND ${campaigns.sandbox} = false)`.as(
           "sentReal",
         ),
       })
       .from(campaigns)
       .where(eq(campaigns.accountId, account.id)),
+    // Real (non-sandbox) delivery outside campaigns. Outer columns are written
+    // literally: Drizzle renders interpolated columns unqualified here.
+    db.execute<{ reached: boolean }>(sql`
+      SELECT (
+        EXISTS (
+          SELECT 1 FROM transactional_emails t
+          WHERE t.account_id = ${account.id} AND t.sandbox = false
+            AND t.status IN ('sent', 'delivered', 'bounced', 'complained')
+        )
+        OR EXISTS (
+          SELECT 1 FROM campaign_recipients r
+          JOIN automations a ON a.id = r.automation_id
+          WHERE r.account_id = ${account.id} AND a.sandbox = false
+            AND r.status IN ('sent', 'delivered', 'bounced', 'complained', 'unsubscribed')
+        )
+      ) AS reached
+    `),
     findSharedDomain(db, account.id),
     // Chained inside the batch rather than after it, so the team count does not
     // add a second round trip in series on every page load.
@@ -171,7 +192,8 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
     hasOwnSubscribers,
     hasCampaign: Number(campaignCounts?.total ?? 0) > 0,
     hasSentCampaign: Number(campaignCounts?.sent ?? 0) > 0,
-    hasSentRealCampaign: Number(campaignCounts?.sentReal ?? 0) > 0,
+    hasSentRealCampaign:
+      Number(campaignCounts?.sentReal ?? 0) > 0 || firstRow<{ reached: boolean }>(otherDelivery)?.reached === true,
     hasSharedDomain,
     teamAudienceId,
     teamAudienceSize: teamSize,
@@ -185,4 +207,9 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
     sandbox,
     sendBlockedReason,
   };
+}
+
+// db.execute returns an array on postgres.js and `{ rows }` on pglite (tests).
+function firstRow<T>(result: unknown): T | undefined {
+  return (Array.isArray(result) ? result[0] : (result as { rows?: T[] }).rows?.[0]) as T | undefined;
 }

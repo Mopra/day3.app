@@ -6,6 +6,7 @@ import {
   validateCsvUpload,
   countCsvDataRows,
   csvHeaderError,
+  decodeCsvBytes,
   MAX_IMPORT_BYTES,
 } from "../src/lib/csv";
 import { runDeterministicRiskChecks } from "../src/services/risk";
@@ -936,6 +937,25 @@ describe("CSV import: common export shapes", () => {
     expect(result.rows.map((r) => r.email)).toEqual(["ada@example.com", "bob@example.com"]);
     expect(result.rows[0].firstName).toBe("Ada");
     expect(result.rows[0].attributes).toEqual({ company: "Lovelace, Ltd" });
+  });
+
+  it("honours and drops Excel's sep= line", () => {
+    const content = "sep=;\r\nemail;fornavn\r\nada@example.com;Ada";
+    expect(csvHeaderError(content)).toBeNull();
+    expect(countCsvDataRows(content)).toBe(1);
+    expect(parseSubscriberCsv(content).rows[0].firstName).toBe("Ada");
+  });
+
+  it("decodes an Excel Windows-1252 export without mangling names", () => {
+    // "email;fornavn\nsoren@example.dk;Søren" with ø as the single byte 0xF8.
+    const bytes = new Uint8Array([
+      ...new TextEncoder().encode("email;fornavn\nsoren@example.dk;S"),
+      0xf8,
+      ...new TextEncoder().encode("ren"),
+    ]);
+    expect(parseSubscriberCsv(decodeCsvBytes(bytes)).rows[0].firstName).toBe("Søren");
+    // Valid UTF-8 is read as UTF-8.
+    expect(decodeCsvBytes(new TextEncoder().encode("Søren"))).toBe("Søren");
   });
 
   it("reads a tab-separated file", () => {

@@ -114,6 +114,28 @@ export function isValidEmail(value: string): boolean {
   return value.length <= 320 && EMAIL_RE.test(value);
 }
 
+// Decodes an uploaded CSV. UTF-8 when the bytes are valid UTF-8; otherwise
+// Windows-1252, which is what Excel's "CSV (semicolon)" export writes on a Danish
+// or most other European machines. Decoding that as UTF-8 turns "Søren" into
+// a replacement character, which then lands in every greeting. The upload routes store the
+// decoded text re-encoded as UTF-8, so the worker reads the same string.
+export function decodeCsvBytes(bytes: ArrayBuffer | Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return new TextDecoder("windows-1252").decode(bytes);
+  }
+}
+
+// The decoded text as UTF-8 bytes, for storing the upload (see decodeCsvBytes).
+export function utf8Body(text: string): ArrayBuffer {
+  return new TextEncoder().encode(text).buffer as ArrayBuffer;
+}
+
+// Excel can prefix a file with a "sep=;" line naming the separator. It is a hint
+// for Excel, not a header row, so it is honoured and dropped.
+const EXCEL_SEP_LINE = /^\uFEFF?sep=(.)\r?\n/i;
+
 // The field separator, guessed from the header row. Comma is the standard, but
 // Excel writes semicolons wherever the decimal mark is a comma (Denmark, most of
 // Europe), and some tools export tabs. Whichever of the three appears most
@@ -134,8 +156,10 @@ function detectDelimiter(content: string): string {
 
 // Minimal RFC-4180-ish parser: handles quoted fields, escaped quotes, CRLF, and
 // a comma, semicolon or tab separator (see detectDelimiter).
-function parseCsvLines(content: string): string[][] {
-  const delimiter = detectDelimiter(content);
+function parseCsvLines(input: string): string[][] {
+  const sepLine = EXCEL_SEP_LINE.exec(input);
+  const content = sepLine ? input.slice(sepLine[0].length) : input;
+  const delimiter = sepLine ? sepLine[1] : detectDelimiter(content);
   const rows: string[][] = [];
   let field = "";
   let row: string[] = [];

@@ -56,6 +56,7 @@ import { SendTestButton } from "@/components/send-test-button";
 import { BusinessAddressDialog } from "@/components/business-address-dialog";
 import { SandboxBadge, SandboxBanner } from "@/components/sandbox-notice";
 import { SendReadiness } from "@/components/send-readiness";
+import { SendReachNotices } from "@/components/send-reach-notices";
 import type {
   Campaign,
   CampaignStats,
@@ -1101,28 +1102,13 @@ export function CampaignDetailView({
               . It goes out after a quick automatic check, usually within seconds. A sent email can&apos;t be
               recalled.
             </p>
-            {/* The count above is the whole confirmation on the free tier: the
-                audience may hold thousands, but a sandbox send reaches only the
-                teammates in it. Say so rather than letting the number puzzle. */}
-            {sandboxRecipients !== null && (
-              <p className="text-sm text-muted-foreground">
-                Test mode: only people on your team get this, even if the list is
-                bigger.
-              </p>
-            )}
-            {/* The new-account ramp would otherwise pause this send part-way
-                through with no warning. Say it before the click. */}
-            {sandboxRecipients === null &&
-              rampLeft !== null &&
-              audienceSummary &&
-              audienceSummary.subscribed > rampLeft && (
-                <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-muted-foreground">
-                  New workspaces warm up their sending over the first two weeks. About{" "}
-                  <strong className="text-foreground">{rampLeft.toLocaleString()}</strong> of these
-                  go out today, and the campaign picks up again on its own each day until the
-                  rest are sent.
-                </p>
-              )}
+            <SendReachNotices
+              campaignId={campaign.id}
+              scoped={!!(campaign.segmentId || campaign.topicId)}
+              sandboxRecipients={sandboxRecipients}
+              audienceSubscribed={audienceSummary?.subscribed ?? null}
+              rampRemaining={rampLeft}
+            />
             <dl className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
               <div className="flex gap-2">
                 <dt className="w-16 shrink-0 text-muted-foreground">From</dt>

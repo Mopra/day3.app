@@ -4,7 +4,14 @@ import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
 import { imports } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
-import { MAX_IMPORT_ROWS, countCsvDataRows, csvHeaderError, validateCsvUpload } from "@/lib/csv";
+import {
+  MAX_IMPORT_ROWS,
+  countCsvDataRows,
+  csvHeaderError,
+  decodeCsvBytes,
+  utf8Body,
+  validateCsvUpload,
+} from "@/lib/csv";
 import { putImportObject } from "@/lib/supabase-storage";
 import { getQueue } from "@/queue/producer";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -45,7 +52,7 @@ export const POST = route<{ params: Promise<{ id: string; importId: string }> }>
     }
 
     const bytes = await file.arrayBuffer();
-    const content = new TextDecoder().decode(bytes);
+    const content = decodeCsvBytes(bytes);
     const headerError = csvHeaderError(content);
     if (headerError) throw new HttpError(400, headerError);
     const rowCount = countCsvDataRows(content);
@@ -60,7 +67,7 @@ export const POST = route<{ params: Promise<{ id: string; importId: string }> }>
     }
 
     // Overwrite the stored object in place (same r2Key) with the corrected file.
-    await putImportObject(importRow.r2Key, bytes, "text/csv");
+    await putImportObject(importRow.r2Key, utf8Body(content), "text/csv");
 
     await db
       .update(imports)

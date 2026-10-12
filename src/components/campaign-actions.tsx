@@ -22,11 +22,11 @@ import {
 import { SendDots } from "@/components/ui/send-loader";
 import { SendTestButton } from "@/components/send-test-button";
 import { SendReadiness } from "@/components/send-readiness";
+import { SendReachNotices } from "@/components/send-reach-notices";
 import { useComposerSave } from "@/components/campaign-composer";
 import { RowActions } from "@/components/ui/data-list";
 import { MenuItem } from "@/components/ui/menu";
 import { useApi } from "@/lib/api";
-import { PLANS, firstSendingPlan } from "@/lib/plans-catalog";
 import type { Campaign, OnboardingState } from "@/lib/types";
 
 // Maps a send-blocking condition to the page that fixes it, so the user gets a
@@ -95,6 +95,8 @@ export function CampaignActions({
   // How many people a sandbox (free-tier) send would actually reach — teammates
   // in the audience, not the whole audience. null = not a sandbox account.
   const [sandboxRecipients, setSandboxRecipients] = useState<number | null>(null);
+  // Sends the new-account ramp still allows today (null = no ramp applies).
+  const [rampRemaining, setRampRemaining] = useState<number | null>(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleAt, setScheduleAt] = useState("");
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -113,11 +115,14 @@ export function CampaignActions({
       .then((res) => setOnboarding(res.onboarding))
       .catch(() => {});
     try {
-      const res = await api.get<{ campaign: Campaign; sandboxRecipients: number | null }>(
-        `/api/campaigns/${campaignId}`,
-      );
+      const res = await api.get<{
+        campaign: Campaign;
+        sandboxRecipients: number | null;
+        rampRemaining: number | null;
+      }>(`/api/campaigns/${campaignId}`);
       setCampaign(res.campaign);
       setSandboxRecipients(res.sandboxRecipients ?? null);
+      setRampRemaining(res.rampRemaining ?? null);
       return res.campaign;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't load campaign");
@@ -310,46 +315,13 @@ export function CampaignActions({
               . It goes out after a quick automatic check, usually within seconds. A sent email can&apos;t be
               recalled.
             </p>
-            {/* Mirrors the campaign detail page's dialog: on the free tier the
-                audience count isn't who receives it, so name the real reach. */}
-            {sandboxRecipients !== null && (
-              <p className="text-sm text-muted-foreground">
-                Test mode: only people on your team get this, even if the list is
-                bigger.
-              </p>
-            )}
-            {/* The moment a free user most wants to pay is when they see who
-                they're leaving out, so name the number and the price here. */}
-            {sandboxRecipients !== null &&
-              audienceSummary &&
-              audienceSummary.subscribed > sandboxRecipients && (
-                <div className="rounded-lg border border-border bg-muted/40 p-3 text-sm">
-                  <p className="text-muted-foreground">
-                    {/* The audience count ignores segment/topic scoping, so
-                        only quote the gap for a whole-list send. */}
-                    {campaign.segmentId || campaign.topicId ? (
-                      "Everyone else on this list won't get it."
-                    ) : (
-                      <>
-                        <strong className="text-foreground">
-                          {(audienceSummary.subscribed - sandboxRecipients).toLocaleString()}{" "}
-                          {audienceSummary.subscribed - sandboxRecipients === 1
-                            ? "subscriber"
-                            : "subscribers"}
-                        </strong>{" "}
-                        on this list won&apos;t get it.
-                      </>
-                    )} Plans start at $
-                    {PLANS[firstSendingPlan()].monthlyPriceUsd}/mo and send to everyone.
-                  </p>
-                  <Link
-                    href={`/billing?next=${encodeURIComponent(`/campaigns/${campaignId}`)}`}
-                    className="mt-2 inline-block font-medium underline underline-offset-4"
-                  >
-                    Choose a plan
-                  </Link>
-                </div>
-              )}
+            <SendReachNotices
+              campaignId={campaignId}
+              scoped={!!(campaign.segmentId || campaign.topicId)}
+              sandboxRecipients={sandboxRecipients}
+              audienceSubscribed={audienceSummary?.subscribed ?? null}
+              rampRemaining={rampRemaining}
+            />
             <dl className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
               <div className="flex gap-2">
                 <dt className="w-16 shrink-0 text-muted-foreground">From</dt>

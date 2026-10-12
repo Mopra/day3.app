@@ -121,19 +121,28 @@ export function FirstSendView({
         icon: Upload,
       };
 
+  // The team-only test email is a Free-plan step: the shared test address only
+  // carries sandbox mail, so a paid account (often one that upgraded before ever
+  // trying it) skips straight to the real-send checklist.
+  const testSendPhase = onboarding.sandbox;
+
   const steps: ChecklistStep[] = [
-    {
-      key: "first-send",
-      title: "Send yourself the first one",
-      description: "A real email, from the real pipeline, to you and your teammates. Nothing to set up.",
-      done: onboarding.hasSentCampaign,
-      href: "/campaigns",
-      cta: "Start",
-      icon: Send,
-      // The same one-click draft as the hero, not the campaigns list: the list
-      // is an empty page that makes the user find "New campaign" themselves.
-      onClick: onboarding.canSendFirstEmail ? startFirstCampaign : undefined,
-    },
+    ...(testSendPhase
+      ? [
+          {
+            key: "first-send",
+            title: "Send yourself the first one",
+            description: "A real email, from the real pipeline, to you and your teammates. Nothing to set up.",
+            done: onboarding.hasSentCampaign,
+            href: "/campaigns",
+            cta: "Start",
+            icon: Send,
+            // The same one-click draft as the hero, not the campaigns list: the list
+            // is an empty page that makes the user find "New campaign" themselves.
+            onClick: onboarding.canSendFirstEmail ? startFirstCampaign : undefined,
+          },
+        ]
+      : []),
     {
       key: "domain",
       title: "Send from your own address",
@@ -169,9 +178,17 @@ export function FirstSendView({
       : []),
   ];
 
-  const firstSendDone = onboarding.hasSentCampaign;
+  const firstSendDone = onboarding.hasSentCampaign || !testSendPhase;
   // After the test email, the hero becomes the next unfinished step, or the
   // first real campaign once nothing is left.
+  // Where the fallback card (no day-one path) sends the user: the page that fixes
+  // the reason it names, not always DNS.
+  const reason = onboarding.sendBlockedReason?.toLowerCase() ?? "";
+  const blockedFix = /plan|billing|payment|subscription|limit/.test(reason)
+    ? { href: "/billing", cta: "See plans" }
+    : reason.includes("mailing address")
+      ? { href: "/settings", cta: "Add address" }
+      : { href: "/sending", cta: "Get started" };
   const nextStep = firstSendDone ? steps.find((s) => !s.done) : undefined;
   const readyForRealSend = firstSendDone && !nextStep;
 
@@ -181,7 +198,9 @@ export function FirstSendView({
         <h1 className="font-display text-2xl sm:text-3xl">Welcome to Day3</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {firstSendDone
-            ? "Your first email is out. Here's what's left before you can reach real subscribers."
+            ? onboarding.hasSentCampaign
+              ? "Your first email is out. Here's what's left before you can reach real subscribers."
+              : "Here's what's left before you can reach your subscribers."
             : "Let's get an email into your inbox. It takes about a minute."}
         </p>
       </div>
@@ -240,13 +259,15 @@ export function FirstSendView({
           <Card>
             <CardContent className="flex flex-col gap-4 py-2 sm:flex-row sm:items-center">
               <div className="min-w-0 flex-1">
-                <h2 className="font-display text-xl">Set up your sending domain</h2>
+                <h2 className="font-display text-xl">
+                  {blockedFix.href === "/sending" ? "Set up your sending domain" : "One thing first"}
+                </h2>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {onboarding.sendBlockedReason ??
                     "Publish a few DNS records and you can send your first campaign."}
                 </p>
               </div>
-              <Button className="shrink-0" render={<Link href="/sending">Get started</Link>} />
+              <Button className="shrink-0" render={<Link href={blockedFix.href}>{blockedFix.cta}</Link>} />
             </CardContent>
           </Card>
         </Reveal>

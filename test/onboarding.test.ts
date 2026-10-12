@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { transactionalEmails } from "../src/db/schema";
+import { newId, nowIso } from "../src/lib/ids";
 import { computeOnboardingState } from "../src/services/onboarding";
 import {
   TEST_EMAILS,
@@ -164,5 +166,50 @@ describe("computeOnboardingState", () => {
 
     expect(state.hasSentCampaign).toBe(true);
     expect(state.hasSentRealCampaign).toBe(false);
+  });
+
+  // A real campaign that is still going out (or paused part-way by the ramp)
+  // has already reached subscribers; setup guidance must not hang over it.
+  it("counts a real campaign that is still sending or paused", async () => {
+    const db = await testDb();
+    const account = await seedAccount(db);
+    const domain = await seedDomain(db, account.id);
+    const audience = await seedAudience(db, account.id);
+    await seedSubscribers(db, account.id, audience.id, TEST_EMAILS);
+    await seedCampaign(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      sendingDomainId: domain.id,
+      status: "paused",
+    });
+
+    const state = await computeOnboardingState(db, account);
+
+    expect(state.hasSentRealCampaign).toBe(true);
+  });
+
+  // An API-only customer never sends a campaign; it must still leave setup.
+  it("counts real transactional delivery, but not sandbox API sends", async () => {
+    const db = await testDb();
+    const account = await seedAccount(db);
+    const insert = (sandbox: boolean) =>
+      db.insert(transactionalEmails).values({
+        id: newId("eml"),
+        accountId: account.id,
+        fromEmail: "app@updates.test.co",
+        to: ["user@example.com"],
+        subject: "Reset your password",
+        textBody: "Click here",
+        status: "delivered",
+        sandbox,
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      });
+
+    await insert(true);
+    expect((await computeOnboardingState(db, account)).hasSentRealCampaign).toBe(false);
+
+    await insert(false);
+    expect((await computeOnboardingState(db, account)).hasSentRealCampaign).toBe(true);
   });
 });

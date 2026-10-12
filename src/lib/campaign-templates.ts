@@ -442,7 +442,7 @@ export function firstEmailTemplate(appUrl: string): CampaignTemplate {
       },
       rule(),
       text(
-        "<p>This is your draft, so make it yours: change the words, try a template, and send it to yourself again. When you're ready for your real subscribers, Day3 walks you through it.</p>",
+        "<p>Want to try your own words? In Day3, duplicate this campaign, change anything you like, and send it to yourself again. When you're ready for your real subscribers, Day3 walks you through it.</p>",
       ),
     ],
   };

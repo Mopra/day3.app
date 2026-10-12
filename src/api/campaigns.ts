@@ -271,7 +271,7 @@ export async function campaignSendGateError(
           .limit(1)
       : [];
     if (reachable.length === 0) {
-      return `On the Free plan, sends only reach people on your team, and nobody on your team is in this audience. Pick a plan (from $${PLANS[firstSendingPlan()].monthlyPriceUsd}/mo) to send to this list, or add yourself to it to send a test.`;
+      return `On the Free plan, sends only reach your own team, and nobody on your team is in this audience. Pick a plan (from $${PLANS[firstSendingPlan()].monthlyPriceUsd}/mo) to send to this list, or add yourself to it to send a test.`;
     }
   }
 

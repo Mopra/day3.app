@@ -3,7 +3,14 @@ import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
 import { imports } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
-import { MAX_IMPORT_ROWS, countCsvDataRows, csvHeaderError, validateCsvUpload } from "@/lib/csv";
+import {
+  MAX_IMPORT_ROWS,
+  countCsvDataRows,
+  csvHeaderError,
+  decodeCsvBytes,
+  utf8Body,
+  validateCsvUpload,
+} from "@/lib/csv";
 import { putImportObject } from "@/lib/supabase-storage";
 import { getQueue } from "@/queue/producer";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -34,7 +41,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
   const bytes = await file.arrayBuffer();
   // Enforce the row cap at the edge: a file over the limit must never become a
   // queued job that only fails inside the worker.
-  const content = new TextDecoder().decode(bytes);
+  const content = decodeCsvBytes(bytes);
   const headerError = csvHeaderError(content);
   if (headerError) throw new HttpError(400, headerError);
   const rowCount = countCsvDataRows(content);
@@ -62,7 +69,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
 
   const importId = newId("imp");
   const key = `imports/${account.id}/${importId}.csv`;
-  await putImportObject(key, bytes, "text/csv");
+  await putImportObject(key, utf8Body(content), "text/csv");
 
   const now = nowIso();
   await db.insert(imports).values({
