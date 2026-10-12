@@ -213,7 +213,7 @@ export function DashboardView({
               <span className="text-muted-foreground tabular-nums">
                 {usage.state === "over"
                   ? "Limit reached"
-                  : `${Math.max(0, usage.limit - usage.used).toLocaleString()} ${canSend ? "left" : "sandbox emails left"}`}
+                  : `${Math.max(0, usage.limit - usage.used).toLocaleString()} ${canSend ? "left" : "test emails left"}`}
               </span>
             )
           }

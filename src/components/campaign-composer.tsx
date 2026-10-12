@@ -64,6 +64,7 @@ import { FloatingSidePanel, StylingPanel } from "@/components/ui/styling-panel";
 import { SectionInspector } from "@/components/ui/section-inspector";
 import { MergeTagsProvider, type MergeTag } from "@/components/ui/rich-text-editor";
 import { useApi } from "@/lib/api";
+import { AI_UPGRADE_MESSAGE } from "@/lib/plans-catalog";
 import { cn } from "@/lib/utils";
 import { domainState } from "@/lib/domain";
 import { sanitizeHtml, wrapEmailDocument, DEFAULT_FOOTER_TEXT } from "@/services/render";
@@ -1229,7 +1230,7 @@ export function CampaignComposer({
             size="sm"
             variant="outline"
             className="h-6 px-2"
-            title="The AI assistant is included on every paid plan"
+            title={AI_UPGRADE_MESSAGE}
             render={
               <Link href="/billing">
                 <Sparkles />

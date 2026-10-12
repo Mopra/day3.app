@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { ArrowUpRight, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
   effectiveMonthlyLimit,
@@ -133,27 +135,7 @@ function NudgeCard({
 // Renders nothing when a paid account is comfortably within its allowance, or is
 // already on the top tier.
 export function UpgradeNudge({ account }: { account: Account }) {
-  if (planSandboxMode(account.plan)) {
-    const target = planMeta(firstSendingPlan());
-    const left = Math.max(0, SANDBOX_MONTHLY_ALLOWANCE - account.monthlyEmailSentCount);
-    return (
-      <NudgeCard
-        tone={left === 0 ? "over" : "info"}
-        primary
-        headline={
-          left === 0
-            ? "You've used up this month's sandbox emails"
-            : "You're on the Free plan: sandbox sending"
-        }
-        body={
-          left === 0
-            ? `Sandbox sends are capped at ${SANDBOX_MONTHLY_ALLOWANCE} emails a month. Subscribe (from $${target.monthlyPriceUsd}/mo) to send to your real audience.`
-            : `Send real campaigns to your own team. ${left} of ${SANDBOX_MONTHLY_ALLOWANCE} sandbox emails left this month. Subscribe (from $${target.monthlyPriceUsd}/mo) to send to everyone else.`
-        }
-        cta="Choose a plan"
-      />
-    );
-  }
+  if (planSandboxMode(account.plan)) return <FreePlanNudge account={account} />;
 
   const info = usageInfo(account);
   if (info.state === "ok" || !info.next) return null;
@@ -171,6 +153,65 @@ export function UpgradeNudge({ account }: { account: Account }) {
           : `Upgrade to the ${next.name} plan for ${next.monthlyEmailLimit.toLocaleString()} emails/mo ($${next.monthlyPriceUsd}) and never get blocked mid-send.`
       }
       cta="Upgrade plan"
+    />
+  );
+}
+
+// The Free plan has two ceilings: the monthly test-send allowance and the stored
+// subscriber cap. The cap used to be invisible until it blocked an import or,
+// worse, quietly turned away signup-form visitors, so it is metered here too and
+// takes over the card once the list is nearly full.
+function FreePlanNudge({ account }: { account: Account }) {
+  const api = useApi();
+  const [subs, setSubs] = useState<{ cap: number; used: number } | null>(null);
+  useEffect(() => {
+    api
+      .get<{ cap: number | null; used: number | null }>("/api/account/subscriber-limit")
+      .then((res) => {
+        if (res.cap !== null && res.used !== null) setSubs({ cap: res.cap, used: res.used });
+      })
+      .catch(() => {});
+  }, [api]);
+
+  const price = planMeta(firstSendingPlan()).monthlyPriceUsd;
+  const left = Math.max(0, SANDBOX_MONTHLY_ALLOWANCE - account.monthlyEmailSentCount);
+  const listFull = subs !== null && subs.used >= subs.cap;
+  const listNearlyFull = subs !== null && !listFull && subs.used >= subs.cap * 0.8;
+  const subsLine = subs
+    ? ` ${subs.used.toLocaleString()} of ${subs.cap.toLocaleString()} subscribers stored.`
+    : "";
+
+  if (listFull) {
+    return (
+      <NudgeCard
+        tone="over"
+        primary
+        headline="Your list is full"
+        body={`The Free plan stores up to ${subs.cap.toLocaleString()} subscribers. New signups and imports are turned away until you pick a plan (from $${price}/mo, no subscriber limit).`}
+        cta="Choose a plan"
+      />
+    );
+  }
+  if (left === 0) {
+    return (
+      <NudgeCard
+        tone="over"
+        primary
+        headline="You've used this month's test emails"
+        body={`Free accounts get ${SANDBOX_MONTHLY_ALLOWANCE} test emails a month, to your team only. Pick a plan (from $${price}/mo) to send to your real audience.${subsLine}`}
+        cta="Choose a plan"
+      />
+    );
+  }
+  return (
+    <NudgeCard
+      tone={listNearlyFull ? "warning" : "info"}
+      primary
+      headline={
+        listNearlyFull ? "Your list is nearly full" : "You're on the Free plan: test mode"
+      }
+      body={`Campaigns send for real, but only to your team. ${left} of ${SANDBOX_MONTHLY_ALLOWANCE} test emails left this month.${subsLine} Pick a plan (from $${price}/mo) to send to everyone.`}
+      cta="Choose a plan"
     />
   );
 }
@@ -197,14 +238,14 @@ export function UsageSummary({ account }: { account: Account }) {
           {info.state === "over"
             ? "Limit reached"
             : sandbox
-              ? `${remaining.toLocaleString()} sandbox emails left`
+              ? `${remaining.toLocaleString()} test emails left`
               : `${remaining.toLocaleString()} left on ${planLabel(account.plan)}`}
         </span>
       </div>
       <UsageBar info={info} />
       {sandbox && (
         <p className="text-xs text-muted-foreground">
-          Sandbox sends go to your own team only.
+          Test sends go to your own team only.
         </p>
       )}
       {!sandbox && <RampNote account={account} />}

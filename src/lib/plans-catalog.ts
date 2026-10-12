@@ -244,8 +244,7 @@ export const MAX_AI_MONTHLY_CREDITS: number = Math.max(
 // Shown both server-side (403 from the AI routes) and client-side (composer
 // upgrade button) when an account on a non-AI tier reaches for AI. Only the free
 // tier lands here now that every paid tier includes an allowance.
-export const AI_UPGRADE_MESSAGE =
-  "The AI writing assistant is included on every paid plan. Subscribe to a paid plan to use AI.";
+export const AI_UPGRADE_MESSAGE = `The AI writing assistant is included on every paid plan, from $${PLANS[firstAiPlan()].monthlyPriceUsd}/mo. Pick a plan to use AI.`;
 
 // The subscriber cap for a tier (null = unlimited). Unknown/legacy values fall
 // back to the free-tier cap so an unrecognized plan can't hoard subscribers.
