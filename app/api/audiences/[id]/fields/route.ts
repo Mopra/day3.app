@@ -57,7 +57,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (req, { par
     throw new HttpError(400, "Field keys use lowercase letters, numbers, and underscores");
   }
   if (isReservedFieldKey(key)) {
-    throw new HttpError(400, `"${key}" is built in — it's already available as a merge tag`);
+    throw new HttpError(400, `"${key}" is built in. It's already available as a merge tag`);
   }
 
   const existing = await db

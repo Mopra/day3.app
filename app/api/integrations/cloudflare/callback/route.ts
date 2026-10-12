@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
   const code = url.searchParams.get("code");
   const stateParam = url.searchParams.get("state");
   if (!code || !stateParam || !saved) {
-    return redirectBack({ cf_error: "The Cloudflare connection expired — please try again" });
+    return redirectBack({ cf_error: "The Cloudflare connection expired. Please try again" });
   }
   if (saved.state !== stateParam) {
     return redirectBack({ cf_error: "Could not verify the Cloudflare connection (state mismatch)" });

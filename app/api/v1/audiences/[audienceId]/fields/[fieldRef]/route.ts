@@ -41,7 +41,7 @@ export const PATCH = apiRoute<Params>(async (req, { db, account }, { params }) =
     throw new ApiError(
       422,
       "immutable_field",
-      "A field's key is immutable — create a new field and migrate values instead",
+      "A field's key is immutable. Create a new field and migrate values instead",
       { param: "key" },
     );
   }

@@ -28,7 +28,7 @@ export default function LandingPage() {
           <p className="mx-auto max-w-lg text-lg text-muted-foreground">
             Simple product update emails for small SaaS teams.
             <br />
-            No marketing suite. No contact tax. Set up free — pay only to send.
+            No marketing suite. No contact tax. Set up free. Pay only to send.
           </p>
         </div>
 

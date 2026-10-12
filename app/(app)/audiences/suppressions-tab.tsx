@@ -165,7 +165,7 @@ export function SuppressionsTab({ tabs }: { tabs: React.ReactNode }) {
       if (res.invalid > 0) extra.push(`${res.invalid} not a valid address`);
       toast.success(
         `${res.added.toLocaleString()} address${res.added === 1 ? "" : "es"} blocked` +
-          (extra.length ? ` — ${extra.join(", ")}` : ""),
+          (extra.length ? ` (${extra.join(", ")})` : ""),
       );
       setAddOpen(false);
       setAddText("");
@@ -186,7 +186,7 @@ export function SuppressionsTab({ tabs }: { tabs: React.ReactNode }) {
       );
       toast.success(
         res.restoredContacts > 0
-          ? `${confirmRemove.email} can be mailed again — ${res.restoredContacts} contact${res.restoredContacts === 1 ? "" : "s"} restored`
+          ? `${confirmRemove.email} can be mailed again. ${res.restoredContacts} contact${res.restoredContacts === 1 ? "" : "s"} restored`
           : `${confirmRemove.email} is no longer blocked`,
       );
       setConfirmRemove(null);
@@ -209,14 +209,14 @@ export function SuppressionsTab({ tabs }: { tabs: React.ReactNode }) {
       </div>
 
       <p className="max-w-2xl text-sm text-muted-foreground">
-        Addresses Day3 will never send to for this account — everyone who unsubscribed,
+        Addresses Day3 will never send to for this account: everyone who unsubscribed,
         hard-bounced, or marked you as spam, plus anything you block by hand. The list applies
         across every audience and every send, campaign or{" "}
         <Link href="/activity?source=api" className="underline underline-offset-2 hover:text-foreground">
           transactional
         </Link>
         . Moving in from another platform? Add its bounce and complaint list here{" "}
-        <span className="font-medium text-foreground">before</span> importing contacts — those
+        <span className="font-medium text-foreground">before</span> importing contacts. Those
         addresses are then skipped on the way in automatically.
       </p>
 
@@ -248,7 +248,7 @@ export function SuppressionsTab({ tabs }: { tabs: React.ReactNode }) {
             <ListEmpty
               icon={ShieldCheck}
               title="Nobody is suppressed yet."
-              description="Unsubscribes, bounces and spam complaints land here automatically as you send. You can also block addresses yourself — or bring your old provider's bounce list over before you import contacts."
+              description="Unsubscribes, bounces and spam complaints land here automatically as you send. You can also block addresses yourself, or bring your old provider's bounce list over before you import contacts."
               action={<Button onClick={() => setAddOpen(true)}>Add addresses</Button>}
             />
           ) : rows.length === 0 ? (
@@ -322,7 +322,7 @@ export function SuppressionsTab({ tabs }: { tabs: React.ReactNode }) {
       {totalSuppressed > 0 && (
         <p className="text-xs text-muted-foreground">
           {totalSuppressed.toLocaleString()} address{totalSuppressed === 1 ? "" : "es"} suppressed
-          in total. Suppression protects your sending reputation — mailing someone who already
+          in total. Suppression protects your sending reputation: mailing someone who already
           bounced or complained is what gets a domain filtered.
         </p>
       )}
@@ -332,7 +332,7 @@ export function SuppressionsTab({ tabs }: { tabs: React.ReactNode }) {
           <DialogHeader>
             <DialogTitle>Block addresses</DialogTitle>
             <DialogDescription>
-              These addresses will never receive mail from your account again — no campaign, no
+              These addresses will never receive mail from your account again. No campaign, no
               transactional send.
             </DialogDescription>
           </DialogHeader>
@@ -350,7 +350,7 @@ export function SuppressionsTab({ tabs }: { tabs: React.ReactNode }) {
                 <SelectContent>
                   {ADDABLE_REASONS.map((r) => (
                     <SelectItem key={r.value} value={r.value}>
-                      {r.label} — {r.hint}
+                      {r.label}: {r.hint}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -400,7 +400,7 @@ export function SuppressionsTab({ tabs }: { tabs: React.ReactNode }) {
         title="Un-suppress this address?"
         description={
           confirmRemove
-            ? `${confirmRemove.email} will be able to receive mail from you again, and contacts marked bounced or spam will become mailable. People who unsubscribed themselves stay unsubscribed — only they can opt back in. Mailing an address that hard-bounced again can hurt your sending reputation.`
+            ? `${confirmRemove.email} will be able to receive mail from you again, and contacts marked bounced or spam will become mailable. People who unsubscribed themselves stay unsubscribed, because only they can opt back in. Mailing an address that hard-bounced again can hurt your sending reputation.`
             : undefined
         }
         confirmLabel="Un-suppress"

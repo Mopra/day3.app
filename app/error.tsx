@@ -36,8 +36,8 @@ export default function Error({
         <div className="space-y-2">
           <h1 className="font-display text-2xl sm:text-3xl">Something went wrong</h1>
           <p className="text-muted-foreground">
-            An unexpected error stopped this page from loading. It&apos;s usually temporary —
-            try again, and if it keeps happening, let us know.
+            An unexpected error stopped this page from loading. It&apos;s usually temporary.
+            Try again, and if it keeps happening, let us know.
           </p>
         </div>
         <div className="flex justify-center gap-3">

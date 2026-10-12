@@ -195,7 +195,7 @@ export function DomainsView({
         fromName: values.fromName.trim(),
         fromEmail,
       });
-      toast.success(`Domain added — ${values.fromName.trim()} <${fromEmail}> is now your default sender. Let's verify it.`);
+      toast.success(`Domain added. ${values.fromName.trim()} <${fromEmail}> is now your default sender. Let's verify it.`);
       openChange(false);
       // Take the user straight to the setup guide; that's where the work is.
       if (res?.domain?.id) router.push(`/domains/${res.domain.id}`);
@@ -319,7 +319,7 @@ export function DomainsView({
             <ListEmpty
               icon={Globe}
               title="Pick the domain your email comes from."
-              description="This is the domain your newsletters are sent from. After adding it, you'll add a few DNS records so inboxes trust your email — we guide you through it."
+              description="This is the domain your newsletters are sent from. After adding it, you'll add a few DNS records so inboxes trust your email, and we guide you through it."
               action={<Button onClick={() => setOpen(true)}>Add domain</Button>}
             />
           ) : list.isFilteredEmpty ? (

@@ -256,7 +256,7 @@ export function SendersView({
               title="Decide who this comes from."
               description={
                 noVerifiedDomain
-                  ? "First verify a sending domain — then you can add the From identities your campaigns send as."
+                  ? "First verify a sending domain. Then you can add the From identities your campaigns send as."
                   : "This is the From name and address your campaigns send as. You can keep several per domain."
               }
               action={

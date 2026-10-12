@@ -342,11 +342,11 @@ export default function AudienceDetailPage() {
       announcedImports.current.add(imp.id);
       if (imp.status === "completed") {
         toast.success(
-          `Import complete — ${imp.importedRows.toLocaleString()} added` +
+          `Import complete: ${imp.importedRows.toLocaleString()} added` +
             (imp.skippedRows > 0 ? ` · ${imp.skippedRows.toLocaleString()} skipped` : ""),
         );
       } else {
-        toast.error("Import failed — see the details below.");
+        toast.error("Import failed. See the details below.");
       }
     }
   }, [imports]);
@@ -703,7 +703,7 @@ export default function AudienceDetailPage() {
               carries opt-outs over (
               <code className="font-mono">unsubscribed</code>, with an optional{" "}
               <code className="font-mono">unsubscribed_at</code> date), and rows marked bounced or
-              spam are skipped — load those on{" "}
+              spam are skipped. Load those on{" "}
               <Link
                 href="/audiences?tab=suppressions"
                 className="underline underline-offset-2 hover:text-foreground"
@@ -896,7 +896,7 @@ export default function AudienceDetailPage() {
                   <>
                     Import a CSV with an <code>email</code> column (optional{" "}
                     <code>first_name</code>, <code>last_name</code>, and any extra columns become
-                    custom fields) — up to 5,000 rows — or add someone by hand.
+                    custom fields), up to 5,000 rows, or add someone by hand.
                   </>
                 }
                 action={

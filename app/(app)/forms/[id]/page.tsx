@@ -64,7 +64,7 @@ function AutosaveIndicator({ status }: { status: AutosaveStatus }) {
     return (
       <span className="flex items-center gap-1.5 text-xs text-destructive">
         <CloudOff className="size-3.5" />
-        Couldn&apos;t save — your changes are still here
+        Couldn&apos;t save. Your changes are still here
       </span>
     );
   }
@@ -99,7 +99,7 @@ function CopyButton({ value, label = "Copy" }: { value: string; label?: string }
           toast.success("Copied to clipboard");
           setTimeout(() => setCopied(false), 1500);
         } catch {
-          toast.error("Couldn't copy — select and copy manually");
+          toast.error("Couldn't copy. Select and copy manually");
         }
       }}
     >
@@ -515,7 +515,7 @@ export default function FormDetailPage() {
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
           <span>
             This form requires email confirmation, but you don&apos;t have a verified sending domain
-            yet — confirmation emails can&apos;t be sent, so signups will stay unconfirmed.{" "}
+            yet. Confirmation emails can&apos;t be sent, so signups will stay unconfirmed.{" "}
             <a href="/sending" className="font-medium underline">
               Verify a domain
             </a>{" "}
@@ -545,7 +545,7 @@ export default function FormDetailPage() {
                       onChange={(e) => patch({ name: e.target.value })}
                     />
                     <p className="text-xs text-muted-foreground">
-                      Only you see this — it labels the form in your dashboard.
+                      Only you see this. It labels the form in your dashboard.
                     </p>
                   </div>
 
@@ -576,7 +576,7 @@ export default function FormDetailPage() {
                     <Textarea
                       id="footerText"
                       rows={2}
-                      placeholder="Optional — a note below the form (privacy line, what to expect…)."
+                      placeholder="Optional: a note below the form (privacy line, what to expect…)."
                       value={form.footerText ?? ""}
                       onChange={(e) => patch({ footerText: e.target.value })}
                     />
@@ -658,7 +658,7 @@ export default function FormDetailPage() {
               {section === "fields" && (
                 <div className="space-y-4">
                   <p className="text-sm text-muted-foreground">
-                    Collect more than an email — add any fields you want. Each one becomes a
+                    Collect more than an email. Add any fields you want. Each one becomes a
                     personalization tag you can use in campaigns.
                   </p>
                   <FormFieldsEditor
@@ -736,7 +736,7 @@ export default function FormDetailPage() {
 
                   <TabsContent value="share" className="space-y-3 pt-4">
                     <p className="text-sm text-muted-foreground">
-                      Zero setup — paste this link in your bio, emails, or social. Works everywhere.
+                      Zero setup: paste this link in your bio, emails, or social. Works everywhere.
                     </p>
                     <div className="flex items-center gap-2">
                       <Input readOnly value={shareUrl} />
@@ -761,7 +761,7 @@ export default function FormDetailPage() {
 
                   <TabsContent value="popup" className="space-y-3 pt-4">
                     <p className="text-sm text-muted-foreground">
-                      A button that opens the form in a modal — or trigger it automatically on exit
+                      A button that opens the form in a modal, or trigger it automatically on exit
                       intent, a delay, or scroll depth. Needs JavaScript on the page.
                     </p>
                     <Snippet code={install.popupSnippet} />
@@ -770,7 +770,7 @@ export default function FormDetailPage() {
 
                   <TabsContent value="html" className="space-y-3 pt-4">
                     <p className="text-sm text-muted-foreground">
-                      Full control. A native form that posts straight to Day3 — no JavaScript
+                      Full control. A native form that posts straight to Day3, no JavaScript
                       required.
                     </p>
                     <Snippet code={install.htmlSnippet} />

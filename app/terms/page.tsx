@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { LegalShell } from "@/components/legal-shell";
 
 export const metadata: Metadata = {
-  title: "Terms of Service — Day3",
+  title: "Terms of Service | Day3",
   description: "The terms governing your use of Day3.",
 };
 
@@ -40,7 +40,7 @@ export default function TermsPage() {
         </li>
         <li>
           Comply with all applicable laws, including the <strong>CAN-SPAM Act</strong>, GDPR,
-          and CASL — including a valid physical postal address and a working unsubscribe
+          and CASL, including a valid physical postal address and a working unsubscribe
           mechanism in every campaign (Day3 appends these automatically).
         </li>
         <li>Honour unsubscribe requests promptly and not attempt to bypass suppression.</li>

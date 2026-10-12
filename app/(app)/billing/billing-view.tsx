@@ -35,7 +35,7 @@ function pastDueNotice(status: string) {
   if (status !== "past_due") return null;
   return {
     title: "Payment past due",
-    body: "Your last payment failed, so sending is paused. Update your payment method to resume — your plan and audience are untouched.",
+    body: "Your last payment failed, so sending is paused. Update your payment method to resume. Your plan and audience are untouched.",
   };
 }
 
@@ -120,7 +120,7 @@ export function BillingView({ initialAccount }: { initialAccount: Account }) {
         <h1 className="font-display text-2xl sm:text-3xl">Billing</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Every feature is included on every plan. You only pick how many emails you
-          send each month — upgrade or downgrade anytime.
+          send each month. Upgrade or downgrade anytime.
         </p>
       </div>
 

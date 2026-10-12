@@ -28,7 +28,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
     "domain_recheck",
     account.id,
     undefined,
-    "Still checking — DNS can take a while to propagate. We're watching this automatically, so you don't have to keep refreshing.",
+    "Still checking. DNS can take a while to propagate. We're watching this automatically, so you don't have to keep refreshing.",
   );
   const row = await findDomain(db, account.id, id);
   if (!row) throw new HttpError(404, "Not found");

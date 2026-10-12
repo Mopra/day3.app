@@ -102,7 +102,7 @@ export default function AdminReviewsPage() {
             <ListEmpty
               icon={CheckCircle2}
               title="Nothing to review"
-              description="You're all caught up — no campaigns are waiting for review right now."
+              description="You're all caught up. No campaigns are waiting for review right now."
             />
           </CardContent>
         </Card>

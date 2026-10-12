@@ -49,7 +49,7 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
     }
   }
   if (records.length === 0) {
-    throw new HttpError(400, "DNS records aren't ready yet — try again in a moment");
+    throw new HttpError(400, "DNS records aren't ready yet. Try again in a moment");
   }
 
   let token: string;

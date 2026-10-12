@@ -167,7 +167,7 @@ export const POST = apiRoute(async (req, ctx) => {
         throw new ApiError(
           400,
           "invalid_request",
-          `Header "${name}" is reserved — set it via the request body instead`,
+          `Header "${name}" is reserved. Set it via the request body instead`,
           { param: `headers.${name}` },
         );
       }
@@ -219,7 +219,7 @@ export const POST = apiRoute(async (req, ctx) => {
     throw new ApiError(
       403,
       "sending_disabled",
-      "Sending is disabled for this account — check your subscription in the dashboard.",
+      "Sending is disabled for this account. Check your subscription in the dashboard.",
     );
   }
 

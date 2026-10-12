@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { LegalShell } from "@/components/legal-shell";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — Day3",
+  title: "Privacy Policy | Day3",
   description: "How Day3 collects, uses, and protects personal data.",
 };
 
@@ -29,24 +29,24 @@ export default function PrivacyPage() {
       <h2>2. Data we collect</h2>
       <ul>
         <li>
-          <strong>Account data</strong> — name, email, organisation, and authentication
+          <strong>Account data</strong>:name, email, organisation, and authentication
           handled by our auth provider (Clerk).
         </li>
         <li>
-          <strong>Billing data</strong> — plan, subscription status, and payment metadata
+          <strong>Billing data</strong>:plan, subscription status, and payment metadata
           (we do not store full card numbers).
         </li>
         <li>
-          <strong>Subscriber data</strong> — the contact lists you import (email, optional
+          <strong>Subscriber data</strong>:the contact lists you import (email, optional
           first/last name) and consent metadata (e.g. signup timestamp and IP for
           double-opt-in).
         </li>
         <li>
-          <strong>Email engagement</strong> — deliveries, bounces, complaints, opens, and
+          <strong>Email engagement</strong>:deliveries, bounces, complaints, opens, and
           clicks, used to report campaign performance and protect deliverability.
         </li>
         <li>
-          <strong>Technical data</strong> — logs, IP addresses, and diagnostic information
+          <strong>Technical data</strong>:logs, IP addresses, and diagnostic information
           needed to operate and secure the Service.
         </li>
       </ul>
@@ -56,7 +56,7 @@ export default function PrivacyPage() {
         <li>To provide, maintain, and secure the Service.</li>
         <li>To send the campaigns you create, to the recipients you choose.</li>
         <li>
-          To protect sending reputation — e.g. suppressing addresses that hard-bounce or
+          To protect sending reputation, e.g. suppressing addresses that hard-bounce or
           mark mail as spam, and pausing sending when complaint rates are too high.
         </li>
         <li>To handle billing and provide support.</li>
@@ -67,25 +67,25 @@ export default function PrivacyPage() {
       <p>We rely on the following providers to deliver the Service:</p>
       <ul>
         <li>
-          <strong>Clerk</strong> — authentication and organisation/billing management.
+          <strong>Clerk</strong>:authentication and organisation/billing management.
         </li>
         <li>
-          <strong>Amazon Web Services (SES)</strong> — email delivery and sender identity
+          <strong>Amazon Web Services (SES)</strong>:email delivery and sender identity
           verification.
         </li>
         <li>
-          <strong>Supabase</strong> — managed Postgres database and file storage (region:{" "}
+          <strong>Supabase</strong>:managed Postgres database and file storage (region:{" "}
           <em>Central EU (Frankfurt)</em>).
         </li>
         <li>
-          <strong>Vercel</strong> — application hosting.
+          <strong>Vercel</strong>:application hosting.
         </li>
         <li>
-          <strong>OpenRouter</strong> — optional AI drafting features (only invoked when you
+          <strong>OpenRouter</strong>:optional AI drafting features (only invoked when you
           use them; email content you submit is processed to generate suggestions).
         </li>
         <li>
-          <strong>Hostinger VPS, Central EU (Frankfurt)</strong> — background job queue.
+          <strong>Hostinger VPS, Central EU (Frankfurt)</strong>:background job queue.
         </li>
       </ul>
       <p>
@@ -106,8 +106,8 @@ export default function PrivacyPage() {
         We retain account and subscriber data for as long as your account is active. Email
         engagement/event data is retained for <em>12 months</em>, after which it is deleted
         or aggregated. When you delete a subscriber, or your account, we permanently erase
-        the associated personal data — subscribers, campaigns, uploaded files, and account
-        records — promptly, and in any case within <em>30 days</em>. We retain only what we
+        the associated personal data (subscribers, campaigns, uploaded files, and account
+        records) promptly, and in any case within <em>30 days</em>. We retain only what we
         must to meet legal obligations, including a record of email addresses that have
         unsubscribed or reported a complaint, so that we continue to honor those opt-outs.
       </p>

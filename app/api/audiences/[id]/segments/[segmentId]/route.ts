@@ -90,7 +90,7 @@ export const DELETE = route<Params>(async (_req, { params }) => {
   if (active.length > 0) {
     throw new HttpError(
       409,
-      `"${active[0].name}" is scheduled or sending to this segment — pause or finish it first`,
+      `"${active[0].name}" is scheduled or sending to this segment. Pause or finish it first`,
     );
   }
 

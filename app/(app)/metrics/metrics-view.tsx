@@ -303,7 +303,7 @@ function ReputationCard({ rep }: { rep: ReputationSummary }) {
               automatically either way.
             </>
           )}{" "}
-          Campaigns, automations and API sends all count toward the same reputation — AWS sees one
+          Campaigns, automations and API sends all count toward the same reputation. AWS sees one
           sender.
         </p>
 
@@ -415,7 +415,7 @@ function MarketingDetail({ counts }: { counts: CampaignMetricCounts }) {
             Opens are measured with a tracking pixel; clicks via tracked links (a click also counts
             as an open). Each is counted once per recipient. Privacy features (e.g. Apple Mail
             Privacy Protection) pre-load images, so open rates can be overstated. Rates are against
-            delivered mail, and cover campaigns and automations only — transactional mail carries
+            delivered mail, and cover campaigns and automations only. Transactional mail carries
             no tracking.
           </p>
         </CardContent>
@@ -478,7 +478,7 @@ function TransactionalDelivery({ tx }: { tx: TransactionalMetrics }) {
           <div>
             <CardTitle>Delivery</CardTitle>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Counted in addresses — one API call can address up to 50 people
+              Counted in addresses: one API call can address up to 50 people
             </p>
           </div>
           <span className="text-sm text-muted-foreground tabular-nums">

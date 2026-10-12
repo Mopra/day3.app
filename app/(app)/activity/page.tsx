@@ -54,7 +54,7 @@ const STATUS_META: Record<string, { label: string; variant: BadgeVariant; explai
   queued: {
     label: "Queued",
     variant: "outline",
-    explain: "Accepted and waiting to be handed to the delivery provider — usually seconds.",
+    explain: "Accepted and waiting to be handed to the delivery provider. This usually takes seconds.",
   },
   sent: {
     label: "Sent",
@@ -96,7 +96,7 @@ const STATUS_META: Record<string, { label: string; variant: BadgeVariant; explai
     label: "Skipped",
     variant: "outline",
     explain:
-      "This recipient was left out at send time — suppressed, unsubscribed, or outside the campaign's segment by then.",
+      "This recipient was left out at send time: suppressed, unsubscribed, or outside the campaign's segment by then.",
   },
 };
 

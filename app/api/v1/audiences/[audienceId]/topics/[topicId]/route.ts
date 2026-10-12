@@ -47,7 +47,7 @@ export const PATCH = apiRoute<Params>(async (req, { db, account }, { params }) =
     throw new ApiError(
       422,
       "immutable_field",
-      "default_subscribed is immutable — it defines what existing subscription rows mean",
+      "default_subscribed is immutable: it defines what existing subscription rows mean",
       { param: "default_subscribed" },
     );
   }
@@ -82,7 +82,7 @@ export const DELETE = apiRoute<Params>(async (_req, { db, account }, { params })
     throw new ApiError(
       409,
       "invalid_request",
-      `Campaign "${active[0].name}" is scheduled or sending under this topic — pause or finish it first`,
+      `Campaign "${active[0].name}" is scheduled or sending under this topic. Pause or finish it first`,
     );
   }
 

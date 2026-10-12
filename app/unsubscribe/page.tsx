@@ -118,7 +118,7 @@ function UnsubscribeInner() {
             <p className="text-muted-foreground">
               {state.scope === "topic" ? (
                 <>
-                  You won&apos;t receive “{state.topicName}” emails anymore — other emails are
+                  You won&apos;t receive “{state.topicName}” emails anymore. Other emails are
                   unaffected. Closing this page is all you need to do.
                 </>
               ) : (

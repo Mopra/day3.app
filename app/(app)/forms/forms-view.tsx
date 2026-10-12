@@ -190,7 +190,7 @@ export function FormsView({
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                 />
-                <p className="text-xs text-muted-foreground">Just for you — subscribers won&apos;t see it.</p>
+                <p className="text-xs text-muted-foreground">Just for you. Subscribers won&apos;t see it.</p>
               </div>
               <div className="space-y-1.5">
                 <Label>Audience</Label>
@@ -232,8 +232,8 @@ export function FormsView({
                 <span>
                   <span className="font-medium">Require email confirmation</span>
                   <span className="block text-xs text-muted-foreground">
-                    Recommended. New signups confirm via email before they can be sent campaigns —
-                    protects your sender reputation from bots and typos.
+                    Recommended. New signups confirm via email before they can be sent campaigns,
+                    which protects your sender reputation from bots and typos.
                   </span>
                 </span>
               </label>
@@ -281,7 +281,7 @@ export function FormsView({
               title="Start collecting signups."
               description={
                 audiences.length === 0
-                  ? "First create an audience — signups need somewhere to land."
+                  ? "First create an audience. Signups need somewhere to land."
                   : "Share a link, embed it on your site, or drop in raw HTML. Signups flow straight into your audience."
               }
               action={
