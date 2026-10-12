@@ -7,9 +7,10 @@
 
 ## Lately
 
+- 2026-10-13 Round: log all done, no aim open. The human closed "Test AgentID sign-up end to end from an MCP client" (admin badge work landed in 65ff26a), so its Open line is gone. Nothing to do.
+- 2026-10-13 Look back: the day was clean, nothing went wrong twice.
 - 2026-10-12 "Test AgentID sign-up end to end from an MCP client" came back half done (browser AgentID sign-up verified, acc_fgfx40nc714xcpa6ydt5). Left the remaining two checks with the human: admin badge and the MCP OAuth path.
 - 2026-10-12 Handed "Test AgentID sign-up end to end from an MCP client" to the human: needs their AgentID login and makes a real prod workspace.
 
 ## Open
 
-- "Test AgentID sign-up end to end from an MCP client": waiting on the human for 1) /admin/accounts/acc_fgfx40nc714xcpa6ydt5 Agent sign-up badge + owner email, 2) MCP OAuth path (claude mcp remove day3 -s local, re-add without the key header, /mcp, run day3_context). When answered, mark it done or file a fix quest for whichever check failed.
