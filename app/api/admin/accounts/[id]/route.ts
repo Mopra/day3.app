@@ -10,6 +10,8 @@ import {
   TRUST_MIN_DELIVERED,
 } from "@/services/review-trust";
 import { safeParseTheme } from "@/lib/theme";
+import { clerkClient } from "@clerk/nextjs/server";
+import { readSignupOrigin } from "@/services/signup-origin";
 
 export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
   const { db } = await requireAdmin();
@@ -19,9 +21,11 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
 
   // getReviewTrust never throws: on failure it returns tier "new" with a
   // reason saying so, which the panel lists like any other reason.
-  const [health, reviewTrust] = await Promise.all([
+  // readSignupOrigin never throws either: without Clerk the page loads without it.
+  const [health, reviewTrust, signupOrigin] = await Promise.all([
     computeAccountHealth(db, account.id),
     getReviewTrust(db, account),
+    clerkClient().then((clerk) => readSignupOrigin(clerk, account.clerkOrgId)),
   ]);
   const campaignRows = await db
     .select()
@@ -85,6 +89,7 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
       aiClean: TRUST_MIN_AI_CLEAN,
       lookbackDays: TRUST_LOOKBACK_DAYS,
     },
+    signupOrigin,
     blockedContent,
     apiKeys: keys,
     campaigns: accountCampaigns,

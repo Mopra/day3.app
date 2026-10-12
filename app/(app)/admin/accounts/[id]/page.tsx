@@ -38,6 +38,7 @@ import type { Account, AccountHealth, Campaign, SendingDomain } from "@/lib/type
 // Type-only: the service module reaches the database, so the client never
 // imports its values. The thresholds arrive in the payload instead.
 import type { ReviewTrust, ReviewTrustTier } from "@/services/review-trust";
+import type { SignupOrigin } from "@/services/signup-origin";
 
 type BlockedContent = {
   id: string;
@@ -92,6 +93,7 @@ type Detail = {
   subscriberCount: number;
   blockedContent: BlockedContent[];
   apiKeys: AdminApiKey[];
+  signupOrigin: SignupOrigin | null;
 };
 
 export default function AdminAccountPage() {
@@ -174,7 +176,7 @@ export default function AdminAccountPage() {
   }
 
   if (!detail) return <OrbitLoaderScreen />;
-  const { account, health, subscriberCount, blockedContent, apiKeys, reviewTrust, reviewTrustTargets } =
+  const { account, health, subscriberCount, blockedContent, apiKeys, reviewTrust, reviewTrustTargets, signupOrigin } =
     detail;
 
   return (
@@ -185,6 +187,7 @@ export default function AdminAccountPage() {
           <Badge variant={account.riskStatus === "normal" ? "outline" : "destructive"}>
             {account.riskStatus}
           </Badge>
+          {signupOrigin?.agent && <Badge variant="outline">Agent sign-up</Badge>}
         </div>
         <div className="flex gap-2">
           <Button
@@ -235,6 +238,24 @@ export default function AdminAccountPage() {
           )}
         </div>
       </div>
+
+      {signupOrigin && (
+        // Who answers for this workspace. For an agent sign-up that is the
+        // AgentID owner, whose email Clerk holds when owner_email was granted.
+        <p className="text-sm text-muted-foreground">
+          Signed up with {signupOrigin.method}
+          {signupOrigin.name ? ` as ${signupOrigin.name}` : ""}
+          {signupOrigin.createdVia ? ", workspace created over MCP" : ""}
+          {signupOrigin.contactEmail && (
+            <>
+              . {signupOrigin.agent ? "Owner" : "Contact"}:{" "}
+              <a className="underline" href={`mailto:${signupOrigin.contactEmail}`}>
+                {signupOrigin.contactEmail}
+              </a>
+            </>
+          )}
+        </p>
+      )}
 
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
