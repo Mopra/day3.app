@@ -260,7 +260,7 @@ export function PublicFormView({ form, companyName, state, reason, embed = false
       <StatusCard
         accent={accent}
         design={design}
-        title="Almost there — check your inbox"
+        title="Almost there. Check your inbox"
         body={
           form.successMessage?.trim() ||
           `We sent a confirmation link to your email. Click it to finish subscribing to ${companyName}.`

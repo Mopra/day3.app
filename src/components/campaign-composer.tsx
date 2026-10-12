@@ -232,7 +232,7 @@ function AutosaveIndicator({ status }: { status: AutosaveStatus }) {
     return (
       <span className="flex items-center gap-1.5 text-xs text-destructive">
         <CloudOff className="size-3.5" />
-        Couldn&apos;t save — your changes are still here
+        Couldn&apos;t save. Your changes are still here
       </span>
     );
   }
@@ -870,7 +870,7 @@ export function CampaignComposer({
       if (!getValues("name")?.trim()) setValue("name", res.subject);
       setHasDrafted(true);
       setSubjectIdeas(null);
-      toast.success("Draft ready — tweak anything you like");
+      toast.success("Draft ready. Tweak anything you like");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't draft right now");
     } finally {
@@ -1324,7 +1324,7 @@ export function CampaignComposer({
             id="replyTo"
             type="email"
             className={headerInputClass}
-            placeholder="Where replies go — defaults to the From address"
+            placeholder="Where replies go. Defaults to the From address"
             {...register("replyTo")}
           />
         </HeaderRow>
@@ -1584,7 +1584,7 @@ export function CampaignComposer({
             {companyNameDefault ? (
               <p className="flex flex-wrap items-center gap-1.5 text-amber-600 dark:text-amber-500">
                 <AlertTriangle className="size-3 shrink-0" />
-                Emails show as &quot;My Organization&quot; — set your company name.
+                Emails show as &quot;My Organization&quot;. Set your company name.
                 <button
                   type="button"
                   onClick={openName}
@@ -1611,7 +1611,7 @@ export function CampaignComposer({
             {addressMissing ? (
               <p className="flex flex-wrap items-center gap-1.5 text-amber-600 dark:text-amber-500">
                 <AlertTriangle className="size-3 shrink-0" />
-                Add your business address — it&apos;s required by law in every email.
+                Add your business address. It&apos;s required by law in every email.
                 <button
                   type="button"
                   onClick={() => setAddressOpen(true)}
@@ -1649,7 +1649,7 @@ export function CampaignComposer({
         <p className="text-xs text-muted-foreground">
           {audiences.length === 0 && (
             <>
-              No audiences yet —{" "}
+              No audiences yet:{" "}
               <Link href="/audiences" className="underline underline-offset-2 hover:text-foreground">
                 import subscribers
               </Link>

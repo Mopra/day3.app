@@ -82,14 +82,14 @@ const ENDPOINT_GROUPS: Array<{ title: string; note: string; rows: [string, strin
   },
   {
     title: "Contacts",
-    note: "Addressable by id or by plain URL-encoded email — no lookup round-trip.",
+    note: "Addressable by id or by plain URL-encoded email, with no lookup round-trip.",
     rows: [
       ["GET /audiences/{aud}/contacts", "List; filter by status, email or segment_id"],
-      ["POST /audiences/{aud}/contacts", "Create — add ?upsert=true to update instead of conflict"],
+      ["POST /audiences/{aud}/contacts", "Create; add ?upsert=true to update instead of conflict"],
       ["POST /audiences/{aud}/contacts/batch", "Up to 1,000 per call, per-row results"],
-      ["GET /audiences/{aud}/contacts/{id|email}", "One contact — ?expand=topics for its topic map"],
+      ["GET /audiences/{aud}/contacts/{id|email}", "One contact; ?expand=topics for its topic map"],
       ["PATCH /audiences/{aud}/contacts/{id|email}", "Update fields, attributes or status"],
-      ["DELETE /audiences/{aud}/contacts/{id|email}", "Erase (GDPR) — unsubscribe instead to keep the record"],
+      ["DELETE /audiences/{aud}/contacts/{id|email}", "Erase (GDPR). Unsubscribe instead to keep the record"],
       ["GET|PATCH /audiences/{aud}/contacts/{id|email}/topics", "Per-topic subscription state"],
     ],
   },
@@ -98,12 +98,12 @@ const ENDPOINT_GROUPS: Array<{ title: string; note: string; rows: [string, strin
     note: "Custom attribute keys. They auto-register when contacts arrive with new ones.",
     rows: [
       ["GET|POST /audiences/{aud}/fields", "List or declare a field"],
-      ["GET|PATCH|DELETE /audiences/{aud}/fields/{id|key}", "By id or key — key itself is immutable"],
+      ["GET|PATCH|DELETE /audiences/{aud}/fields/{id|key}", "By id or key; the key itself is immutable"],
     ],
   },
   {
     title: "Segments",
-    note: "Saved filters, evaluated live — membership is never materialized.",
+    note: "Saved filters, evaluated live. Membership is never materialized.",
     rows: [
       ["GET|POST /audiences/{aud}/segments", "List or create"],
       ["GET|PATCH|DELETE /audiences/{aud}/segments/{id}", "Read, edit or remove"],
@@ -120,22 +120,22 @@ const ENDPOINT_GROUPS: Array<{ title: string; note: string; rows: [string, strin
   },
   {
     title: "Campaigns",
-    note: "Write a newsletter from your own code — or from an AI editor over MCP.",
+    note: "Write a newsletter from your own code, or from an AI editor over MCP.",
     rows: [
       ["GET /campaigns", "List; filter by status"],
       ["POST /campaigns", "Create a draft from markdown, sections or html"],
       ["GET /campaigns/{id}", "One campaign, body included as all three formats"],
-      ["PATCH /campaigns/{id}", "Edit a draft — only the fields you send change"],
+      ["PATCH /campaigns/{id}", "Edit a draft; only the fields you send change"],
       ["DELETE /campaigns/{id}", "Delete a draft"],
-      ["GET /campaigns/{id}/preview", "The rendered email — ?format=html to view it"],
+      ["GET /campaigns/{id}/preview", "The rendered email; ?format=html to view it"],
       ["POST /campaigns/{id}/test", "Send to addresses you name; never the audience"],
-      ["POST /campaigns/{id}/send", "Send to the audience — needs the campaigns:send scope"],
+      ["POST /campaigns/{id}/send", "Send to the audience; needs the campaigns:send scope"],
       ["POST|DELETE /campaigns/{id}/schedule", "Schedule or un-schedule a send"],
     ],
   },
   {
     title: "Suppressions",
-    note: "Account-wide, not per audience. Add-only over the API — un-suppress in the app.",
+    note: "Account-wide, not per audience. Add-only over the API; un-suppress in the app.",
     rows: [
       ["GET /suppressions", "List your suppressed addresses"],
       ["GET /suppressions/{email}", "200 with the reason, or 404"],
@@ -206,7 +206,7 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
         <div>
           <h2 className="text-base font-medium">Using the API</h2>
           <p className="text-sm text-muted-foreground">
-            Manage audiences, contacts, custom fields, segments and topics from your own code —
+            Manage audiences, contacts, custom fields, segments and topics from your own code,
             or move a list over from another provider.
           </p>
         </div>
@@ -256,8 +256,8 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
             <p>
               The Free plan is capped at {limit.cap.toLocaleString()} contacts and you have{" "}
               {limit.used.toLocaleString()}. An import that would take you past the cap is{" "}
-              <strong className="font-medium text-foreground">rejected in full</strong> — nothing
-              is partially written — so a bigger list needs a paid plan before you start, not
+              <strong className="font-medium text-foreground">rejected in full</strong> (nothing
+              is partially written), so a bigger list needs a paid plan before you start, not
               halfway through.
             </p>
             <p>
@@ -297,7 +297,7 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">
-                Create a key above and paste it in — stored keys can never be shown again.
+                Create a key above and paste it in. Stored keys can never be shown again.
               </p>
             )}
             <CopyLine value={exportKeyLine(freshKey)} muted={!freshKey} />
@@ -333,7 +333,7 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
           <p className="text-sm text-muted-foreground">
             Connect Day3 to Claude Code, Cursor or VS Code and write campaigns where you already
             work. Drafts show up in Day3 straight away, and you can keep editing them in the
-            composer — or hand one back to your assistant to revise.
+            composer, or hand one back to your assistant to revise.
           </p>
 
           <Tabs defaultValue={mcpSetups[0].id}>
@@ -387,8 +387,8 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
           </div>
           <p className="text-sm text-muted-foreground">
             These prompts carry the whole API reference with them, already filled in with your
-            audience id. Copy one, paste it into Claude, ChatGPT, Cursor, Copilot — anything that
-            writes code — and it can build against Day3 without looking anything up.
+            audience id. Copy one, paste it into Claude, ChatGPT, Cursor, Copilot (anything that
+            writes code) and it can build against Day3 without looking anything up.
           </p>
 
           <Tabs defaultValue={prompts[0].id}>
@@ -411,7 +411,7 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
           <div className="flex flex-wrap items-center gap-3 border-t border-border pt-4">
             <CopyButton value={reference} label="Copy the reference on its own" variant="outline" />
             <span className="text-xs text-muted-foreground">
-              Markdown — drop it into your repo (AGENTS.md, CLAUDE.md, .cursor/rules) so your
+              Markdown. Drop it into your repo (AGENTS.md, CLAUDE.md, .cursor/rules) so your
               assistant always has it.
             </span>
           </div>
@@ -490,7 +490,7 @@ export function ApiDocsSection({ freshKey }: { freshKey: string | null }) {
           ))}
 
           <p className="text-xs text-muted-foreground">
-            Campaigns and sending, and domains and senders, have no endpoints yet — they get their
+            Campaigns and sending, and domains and senders, have no endpoints yet. They get their
             own version. Webhooks are set up above rather than over the API. Rate limit: 600
             requests per minute per organization; batch calls count as one.
           </p>

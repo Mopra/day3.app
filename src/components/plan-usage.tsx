@@ -143,12 +143,12 @@ export function UpgradeNudge({ account }: { account: Account }) {
         headline={
           left === 0
             ? "You've used up this month's sandbox emails"
-            : "You're on the Free plan — sandbox sending"
+            : "You're on the Free plan: sandbox sending"
         }
         body={
           left === 0
             ? `Sandbox sends are capped at ${SANDBOX_MONTHLY_ALLOWANCE} emails a month. Subscribe (from $${target.monthlyPriceUsd}/mo) to send to your real audience.`
-            : `Send real campaigns to your own team — ${left} of ${SANDBOX_MONTHLY_ALLOWANCE} sandbox emails left this month. Subscribe (from $${target.monthlyPriceUsd}/mo) to send to everyone else.`
+            : `Send real campaigns to your own team. ${left} of ${SANDBOX_MONTHLY_ALLOWANCE} sandbox emails left this month. Subscribe (from $${target.monthlyPriceUsd}/mo) to send to everyone else.`
         }
         cta="Choose a plan"
       />
@@ -167,7 +167,7 @@ export function UpgradeNudge({ account }: { account: Account }) {
       headline={over ? "You've hit your monthly send limit" : `You've used ${info.pct}% of your monthly emails`}
       body={
         over
-          ? `Upgrade to the ${next.name} plan to keep sending — ${next.monthlyEmailLimit.toLocaleString()} emails/mo for $${next.monthlyPriceUsd}.`
+          ? `Upgrade to the ${next.name} plan to keep sending: ${next.monthlyEmailLimit.toLocaleString()} emails/mo for $${next.monthlyPriceUsd}.`
           : `Upgrade to the ${next.name} plan for ${next.monthlyEmailLimit.toLocaleString()} emails/mo ($${next.monthlyPriceUsd}) and never get blocked mid-send.`
       }
       cta="Upgrade plan"

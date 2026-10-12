@@ -107,7 +107,7 @@ export function SendTestButton({
             <p className="text-sm text-muted-foreground">
               We&apos;ll send a preview of this campaign with{" "}
               <span className="font-medium text-foreground">[Test]</span> in the
-              subject line — to up to {MAX_TEST_RECIPIENTS} addresses.
+              subject line to up to {MAX_TEST_RECIPIENTS} addresses.
             </p>
             <div className="space-y-2">
               {emails.map((email, i) => {

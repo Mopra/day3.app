@@ -106,7 +106,7 @@ export function DomainSetupGuide({
   // check), so the moment of success is unmistakable.
   useEffect(() => {
     if (prevState.current !== "verified" && state === "verified") {
-      toast.success(`${domain.domain} is verified — you can send from it now.`);
+      toast.success(`${domain.domain} is verified. You can send from it now.`);
     }
     prevState.current = state;
   }, [state, domain.domain]);
@@ -284,7 +284,7 @@ export function DomainSetupGuide({
                 <>
                   Add the records below wherever you manage{" "}
                   <span className="font-medium text-foreground">{root}</span>&apos;s DNS. We detect
-                  them automatically — there&apos;s nothing to submit here.
+                  them automatically, so there&apos;s nothing to submit here.
                 </>
               }
             />
@@ -536,14 +536,14 @@ function CloudflareAutoConfig({
       // claiming everything was configured.
       toast.success(
         written > 0
-          ? `Added ${written} DNS record${written === 1 ? "" : "s"} to Cloudflare — verifying now.`
+          ? `Added ${written} DNS record${written === 1 ? "" : "s"} to Cloudflare. Verifying now.`
           : left.length
             ? // "Already set up" would be misleading when we skipped something.
-              "Your DKIM records are already in place — verifying now."
-            : "Your Cloudflare DNS is already set up — verifying now.",
+              "Your DKIM records are already in place. Verifying now."
+            : "Your Cloudflare DNS is already set up. Verifying now.",
         left.length
           ? {
-              description: `We left ${left.length} existing record${left.length === 1 ? "" : "s"} untouched — see below.`,
+              description: `We left ${left.length} existing record${left.length === 1 ? "" : "s"} untouched. See below.`,
             }
           : undefined,
       );
@@ -610,7 +610,7 @@ function CloudflareAutoConfig({
       : "Configure DNS automatically";
 
   const description = !connection
-    ? "Connect your Cloudflare account and we'll add these DNS records for you — no manual entry."
+    ? "Connect your Cloudflare account and we'll add these DNS records for you. No manual entry."
     : expired
       ? "Your Cloudflare connection expired. Reconnect to let us add these DNS records for you again."
       : `Connected${connection.label ? ` as ${connection.label}` : ""}. We'll add every record below to your Cloudflare zone for you.`;
@@ -673,7 +673,7 @@ function DnsWriteErrorNotice({ error }: { error: string }) {
         <h3 className="font-medium">Automatic DNS setup didn&apos;t finish</h3>
         <p className="text-sm text-muted-foreground">
           We couldn&apos;t write every record to Cloudflare automatically
-          {error ? <> — {error}.</> : "."} You can retry the one-click setup below, or add the
+          {error ? <> ({error}).</> : "."} You can retry the one-click setup below, or add the
           records yourself using the values further down. Either path verifies the domain.
         </p>
       </div>
@@ -700,7 +700,7 @@ function DnsConflictNotice({ conflicts }: { conflicts: CfWriteResult[] }) {
           <p className="text-sm text-muted-foreground">
             Your DNS already had {conflicts.length === 1 ? "a value" : "values"} at{" "}
             {conflicts.length === 1 ? "this name" : "these names"}, so we didn&apos;t touch{" "}
-            {conflicts.length === 1 ? "it" : "them"} — overwriting could break another email
+            {conflicts.length === 1 ? "it" : "them"}. Overwriting could break another email
             provider or weaken a policy you set on purpose. These are optional deliverability
             records, so your domain still verifies either way. Change them yourself only if you
             want ours instead.
@@ -762,7 +762,7 @@ function StatusHero({
                 {domain.fromName ? `${domain.fromName} ` : ""}
                 &lt;{domain.fromEmail ?? domain.domain}&gt;
               </span>{" "}
-              as your default sender — you can add more or change it any time under{" "}
+              as your default sender. You can add more or change it any time under{" "}
               <Link href="/sending?tab=senders" className="underline underline-offset-4">
                 Senders
               </Link>
@@ -843,21 +843,21 @@ function StatusHero({
       indicator={indicator}
       title={
         windowClosed
-          ? "Verification timed out — ready to retry"
+          ? "Verification timed out. Ready to retry"
           : failed
             ? "We couldn't verify this domain yet"
             : confirmed
-              ? "DNS records confirmed — finalizing"
+              ? "DNS records confirmed, finalizing"
               : "Waiting for your DNS records"
       }
       body={
         windowClosed
           ? "Your DKIM records are live and correct. They just went up after our email provider's verification window had closed, so it stopped listening. Retry now to reopen it: your records stay exactly as they are, and verification usually completes within a minute."
           : failed
-            ? "We can't see your DKIM records in public DNS yet. Open step 1 to compare them against what's at your DNS host, then retry — automatic checks have stopped for this domain, so it won't recover on its own."
+            ? "We can't see your DKIM records in public DNS yet. Open step 1 to compare them against what's at your DNS host, then retry. Automatic checks have stopped for this domain, so it won't recover on its own."
             : confirmed
               ? "Your DKIM records are live. We're finalizing verification with our email provider. This usually takes a few minutes, and we're checking continuously."
-              : "Add the DNS records below at your domain host. We check automatically every few minutes — most domains verify within an hour, though DNS can take up to 48 hours."
+              : "Add the DNS records below at your domain host. We check automatically every few minutes. Most domains verify within an hour, though DNS can take up to 48 hours."
       }
       meta={meta}
       action={
@@ -1258,9 +1258,9 @@ function HelpSection({ root, registrar }: { root: string; registrar: RegistrarGu
             <li>Make sure the record Type matches (CNAME, TXT, or MX) and there are no extra spaces.</li>
             <li>
               The Return-Path uses a <span className="font-medium text-foreground">send</span> host
-              and an MX record — that&apos;s expected, and it&apos;s what improves deliverability.
+              and an MX record. That&apos;s expected, and it&apos;s what improves deliverability.
             </li>
-            <li>Don&apos;t add quotes around CNAME values — only some TXT records use them.</li>
+            <li>Don&apos;t add quotes around CNAME values. Only some TXT records use them.</li>
           </ul>
         </div>
         <div>

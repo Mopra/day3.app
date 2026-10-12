@@ -123,7 +123,7 @@ function PlanCta({
         disabled
         title={
           hasOrg
-            ? `This plan isn't available for checkout — no Clerk plan matches "${plan}".`
+            ? `This plan isn't available for checkout: no Clerk plan matches "${plan}".`
             : undefined
         }
       >
@@ -217,7 +217,7 @@ function ContactVolumeDialog() {
             </span>
             <p className="font-medium">Message sent</p>
             <p className="text-xs text-muted-foreground">
-              Thanks — we read every message and will get back to you by email.
+              Thanks. We read every message and will get back to you by email.
             </p>
           </div>
         ) : (
@@ -225,7 +225,7 @@ function ContactVolumeDialog() {
             <DialogHeader>
               <DialogTitle>Sending more than {TOP_LABEL} / month?</DialogTitle>
               <DialogDescription>
-                Tell us roughly how many emails you send and how often — we&apos;ll
+                Tell us roughly how many emails you send and how often, and we&apos;ll
                 size a plan for you and reply by email.
               </DialogDescription>
             </DialogHeader>
@@ -239,7 +239,7 @@ function ContactVolumeDialog() {
                   void handleSend();
                 }
               }}
-              placeholder="e.g. We send ~2,000,000 emails a month — mostly product notifications…"
+              placeholder="e.g. We send ~2,000,000 emails a month, mostly product notifications…"
               rows={5}
               className="min-h-28 resize-none text-sm"
             />

@@ -282,7 +282,7 @@ export function AudienceFieldsTab({
             <ListEmpty
               icon={Tags}
               title="Keep track of what else you know."
-              description="Fields hold extra information about your contacts — a company, a plan, a signup date. Each one becomes a {{merge_tag}} you can use in campaigns. They're also added automatically when a CSV import or signup form brings a new column."
+              description="Fields hold extra information about your contacts: a company, a plan, a signup date. Each one becomes a {{merge_tag}} you can use in campaigns. They're also added automatically when a CSV import or signup form brings a new column."
               action={
                 <Button onClick={openAdd}>
                   <Plus className="size-4" /> Add field

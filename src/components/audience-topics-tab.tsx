@@ -165,7 +165,7 @@ export function AudienceTopicsTab({
             <ListEmpty
               icon={Bell}
               title="Let people choose what to hear about."
-              description="Topics are subscription categories — “Product updates”, “Promotions” — contacts can leave without unsubscribing from everything. Send a campaign under a topic and anyone who opted out is skipped automatically."
+              description="Topics are subscription categories (“Product updates”, “Promotions”) that contacts can leave without unsubscribing from everything. Send a campaign under a topic and anyone who opted out is skipped automatically."
               action={
                 <Button onClick={openAdd}>
                   <Plus className="size-4" /> New topic
@@ -258,7 +258,7 @@ export function AudienceTopicsTab({
               <Label htmlFor="topicDescription">Description</Label>
               <Input
                 id="topicDescription"
-                placeholder="Optional — shown to your team, not to contacts"
+                placeholder="Optional. Shown to your team, not to contacts"
                 value={draft.description}
                 onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
               />
@@ -274,8 +274,8 @@ export function AudienceTopicsTab({
                 <Label>Who's subscribed to start with?</Label>
                 <Select
                   items={{
-                    in: "Everyone — contacts can opt out",
-                    out: "No one — contacts must opt in",
+                    in: "Everyone (contacts can opt out)",
+                    out: "No one (contacts must opt in)",
                   }}
                   value={draft.defaultSubscribed}
                   onValueChange={(v) =>
@@ -286,12 +286,12 @@ export function AudienceTopicsTab({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="in">Everyone — contacts can opt out</SelectItem>
-                    <SelectItem value="out">No one — contacts must opt in</SelectItem>
+                    <SelectItem value="in">Everyone (contacts can opt out)</SelectItem>
+                    <SelectItem value="out">No one (contacts must opt in)</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Can&apos;t be changed later — it decides what every stored preference means.
+                  Can&apos;t be changed later: it decides what every stored preference means.
                 </p>
               </div>
             )}
@@ -312,7 +312,7 @@ export function AudienceTopicsTab({
         open={!!confirmTopic}
         onOpenChange={(o) => !o && setConfirmTopic(null)}
         title={`Delete "${confirmTopic?.name}"?`}
-        description="Contacts stay subscribed to your emails — only this topic and its saved preferences are removed. Draft campaigns sent under it fall back to no topic."
+        description="Contacts stay subscribed to your emails. Only this topic and its saved preferences are removed. Draft campaigns sent under it fall back to no topic."
         confirmLabel="Delete topic"
         busy={deleting}
         onConfirm={removeTopic}

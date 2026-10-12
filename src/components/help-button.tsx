@@ -84,7 +84,7 @@ export function HelpButton() {
             </span>
             <p className="font-medium">Message sent</p>
             <p className="text-xs text-muted-foreground">
-              Thanks — we read every message and will get back to you by email.
+              Thanks. We read every message and will get back to you by email.
             </p>
           </div>
         ) : (
@@ -104,7 +104,7 @@ export function HelpButton() {
               <div>
                 <p className="text-sm font-medium">Still stuck?</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  Tell us what you were trying to do — we read every message.
+                  Tell us what you were trying to do. We read every message.
                 </p>
               </div>
               <Textarea

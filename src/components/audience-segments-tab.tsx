@@ -248,7 +248,7 @@ export function AudienceSegmentsTab({
             <ListEmpty
               icon={Filter}
               title="Save a filter you'll reuse."
-              description="A segment is a saved filter — “plan is pro”, “company has any value” — that always reflects your current contacts. Send a campaign to a segment instead of the whole audience."
+              description="A segment is a saved filter (“plan is pro”, “company has any value”) that always reflects your current contacts. Send a campaign to a segment instead of the whole audience."
               action={
                 <Button onClick={openAdd}>
                   <Plus className="size-4" /> New segment
@@ -449,7 +449,7 @@ export function AudienceSegmentsTab({
         open={!!confirmSegment}
         onOpenChange={(o) => !o && setConfirmSegment(null)}
         title={`Delete "${confirmSegment?.name}"?`}
-        description="Contacts are not affected — a segment is only a saved filter. Draft campaigns targeting it fall back to the whole audience."
+        description="Contacts are not affected. A segment is only a saved filter. Draft campaigns targeting it fall back to the whole audience."
         confirmLabel="Delete segment"
         busy={deleting}
         onConfirm={removeSegment}

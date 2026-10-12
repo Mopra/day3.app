@@ -185,7 +185,7 @@ export function FormFieldsEditor({
 
                 {duplicate && (
                   <p className="text-xs text-amber-600 dark:text-amber-500">
-                    Another field already uses {mergeTagFor(field)} — give this one a different label.
+                    Another field already uses {mergeTagFor(field)}. Give this one a different label.
                   </p>
                 )}
               </div>

@@ -108,7 +108,7 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
       ) : activeKeys.length === 0 ? (
         <div className="rounded-md border border-dashed px-4 py-6 text-center">
           <p className="text-sm text-muted-foreground">
-            No keys yet. Create one to start using the API — it takes a few seconds.
+            No keys yet. Create one to start using the API. It takes a few seconds.
           </p>
         </div>
       ) : (
@@ -168,7 +168,7 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
               <DialogHeader>
                 <DialogTitle>Copy your API key</DialogTitle>
                 <DialogDescription>
-                  This is the only time the full key is shown. Store it somewhere safe — if you
+                  This is the only time the full key is shown. Store it somewhere safe. If you
                   lose it, revoke it and create a new one.
                 </DialogDescription>
               </DialogHeader>
@@ -232,7 +232,7 @@ export function ApiKeysSection({ onKeyCreated }: { onKeyCreated?: (key: string) 
                     <span className="font-medium">Allow sending campaigns</span>
                     <span className="block text-muted-foreground">
                       Lets this key email a campaign to a whole audience without anyone confirming
-                      in Day3. Leave off for keys you hand to an AI assistant — it can still write,
+                      in Day3. Leave off for keys you hand to an AI assistant. It can still write,
                       preview and send test emails.
                     </span>
                   </span>

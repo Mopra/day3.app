@@ -120,7 +120,7 @@ export function ApiPanel({
                   <div className="min-w-0">
                     <p className="text-sm font-medium">No API key yet</p>
                     <p className="text-xs text-muted-foreground">
-                      Create one to authenticate — it takes a few seconds.
+                      Create one to authenticate. It takes a few seconds.
                     </p>
                   </div>
                   <Button size="sm" render={<Link href="/api-keys" />}>
@@ -131,7 +131,7 @@ export function ApiPanel({
               {keys.status === "known" && keys.active > 0 && (
                 <p className="text-xs text-muted-foreground">
                   Authenticated with{" "}
-                  <code className="font-mono">Authorization: Bearer day3_live_…</code> — you have{" "}
+                  <code className="font-mono">Authorization: Bearer day3_live_…</code>. You have{" "}
                   {keys.active} active key{keys.active === 1 ? "" : "s"}.{" "}
                   <Link href="/api-keys" className="underline underline-offset-2 hover:text-foreground">
                     Manage keys
@@ -142,7 +142,7 @@ export function ApiPanel({
                 <p className="text-xs text-muted-foreground">
                   Authenticated with{" "}
                   <code className="font-mono">Authorization: Bearer day3_live_…</code>. API keys
-                  are created by organization admins — ask yours for one.
+                  are created by organization admins, so ask yours for one.
                 </p>
               )}
             </section>
@@ -220,7 +220,7 @@ export function ApiPanel({
                   <p className="text-sm font-medium">Building with AI?</p>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Copy a context pack — the ids above plus the full API reference — and paste it
+                  Copy a context pack (the ids above plus the full API reference) and paste it
                   into Claude, Cursor, ChatGPT or Copilot before whatever you ask it to build. It
                   writes working Day3 code without asking you for ids.
                 </p>

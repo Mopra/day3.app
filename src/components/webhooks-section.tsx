@@ -38,7 +38,7 @@ const EVENT_GROUPS: Array<{ label: string; hint: string; events: Array<{ id: str
         hint: "It came back. `bounce_type` tells you whether it's permanent.",
       },
       { id: "email.complained", label: "Marked as spam", hint: "The recipient reported it." },
-      { id: "email.failed", label: "Failed", hint: "It never left — bad address, or blocked before sending." },
+      { id: "email.failed", label: "Failed", hint: "It never left: bad address, or blocked before sending." },
     ],
   },
   {
@@ -186,7 +186,7 @@ export function WebhooksSection() {
           <h2 className="text-base font-medium">Webhooks</h2>
           <p className="text-sm text-muted-foreground">
             Day3 POSTs an event to your server when a message is delivered, bounces, or an address
-            gets suppressed — so your app can keep its own records in step without polling.
+            gets suppressed, so your app can keep its own records in step without polling.
           </p>
           {/* A receiver has to verify the signature to be safe, and that
               algorithm is only written down in the reference. */}
@@ -296,7 +296,7 @@ export function WebhooksSection() {
                 <DialogTitle>{editing ? "Edit endpoint" : "Add endpoint"}</DialogTitle>
                 <DialogDescription>
                   We POST JSON here and expect any 2xx response. Answer fast and do the work
-                  afterwards — we retry for about seven hours, then stop.
+                  afterwards. We retry for about seven hours, then stop.
                 </DialogDescription>
               </DialogHeader>
 
