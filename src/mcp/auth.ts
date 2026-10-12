@@ -1,5 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { auth, clerkClient } from "@clerk/nextjs/server";
+import type { ClerkClient } from "@clerk/backend";
 import { requireApiKey } from "../api/v1/auth";
 import { ApiError } from "../api/v1/errors";
 import { isApiScope, serializeScopes, type ApiScope } from "../api/v1/scopes";
@@ -134,11 +135,7 @@ async function accountForOAuthUser(db: Db, userId: string, tokenOrgId: string | 
         "You belong to more than one Day3 workspace. Reconnect Day3 and pick the workspace on the consent screen.",
       );
     } else {
-      throw new ApiError(
-        403,
-        "workspace_required",
-        "This Day3 login has no workspace yet. Sign in at https://go.day3.app once to create one, then reconnect.",
-      );
+      orgId = await createFirstWorkspace(db, clerk, userId);
     }
   }
 
@@ -169,4 +166,42 @@ async function accountForOAuthUser(db: Db, userId: string, tokenOrgId: string | 
   const email = user.emailAddresses.find((e) => e.id === user.primaryEmailAddressId)?.emailAddress ?? "";
   await reconcileMembership(db, { accountId: account.id, clerkUserId: userId, email, role: roleFromClerk(membership.role) });
   return account;
+}
+
+// A login with no workspace gets one, named after it, instead of an error.
+//
+// This is how an agent onboards itself: it signs up through the OAuth flow
+// (with AgentID, or any sign-in the instance offers) and its first MCP call
+// lands in a fresh workspace on the free tier. Nothing about that tier is
+// special-cased for agents: sandbox sends to the workspace's own members, the
+// new-account ramp, content review, and a card through Clerk Billing before
+// mail reaches anyone else. A human signing up in the browser gets exactly the
+// same account; this only removes the one page an agent cannot click through.
+//
+// Serialized per user with an advisory lock and a re-read inside it, because an
+// MCP client fires several calls at once on connect, and two workspaces would
+// strand the user on the "more than one workspace" refusal above.
+async function createFirstWorkspace(db: Db, clerk: ClerkClient, userId: string): Promise<string> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`mcp-first-workspace:${userId}`}))`);
+    const again = await clerk.users.getOrganizationMembershipList({ userId, limit: 1 });
+    if (again.data.length > 0) return again.data[0].organization.id;
+
+    const user = await clerk.users.getUser(userId);
+    const viaAgent = user.externalAccounts.some((a) => /agentid/i.test(a.provider));
+    const label =
+      user.firstName?.trim() ||
+      user.username?.trim() ||
+      user.emailAddresses.find((e) => e.id === user.primaryEmailAddressId)?.emailAddress.split("@")[0] ||
+      "My";
+    const org = await clerk.organizations.createOrganization({
+      name: `${label}'s workspace`,
+      createdBy: userId,
+      // Where the workspace came from, for whoever later wonders why it has no
+      // browser sign-up behind it. Private: the tenant never sees it.
+      privateMetadata: { createdVia: viaAgent ? "agentid" : "mcp_oauth" },
+    });
+    console.info(`[mcp] created workspace ${org.id} for ${userId} (${viaAgent ? "agentid" : "oauth"})`);
+    return org.id;
+  });
 }

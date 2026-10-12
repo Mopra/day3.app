@@ -1296,6 +1296,14 @@ the app.
   consent screen. Nothing is pasted. **API key**: the same bearer key as the
   REST API, for scripts and editors without OAuth support. The API keys page
   carries the exact install snippet for each editor.
+- **An agent can sign itself up.** The OAuth sign-in is Day3's normal Clerk
+  sign-in, so an agent with its own identity (AgentID, enabled as a Clerk SSO
+  connection) can create a Day3 login from inside the connect flow. A login
+  with no workspace gets one on its first MCP call, named after it and marked
+  `createdVia` in the org's private metadata. There is no separate agent tier:
+  it is the same free workspace a browser sign-up gets (sandbox sends to its
+  own members, the new-account ramp, content review), and mailing real
+  subscribers still needs a paid plan through Clerk Billing.
 - **Day3 Markdown is what makes it work.** The composer's body is a structured
   list of blocks, which is not what a language model writes well. So the API
   takes a **small Markdown dialect** — ordinary Markdown plus block constructs

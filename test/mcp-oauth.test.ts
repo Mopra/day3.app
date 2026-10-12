@@ -14,6 +14,7 @@ let account: Account;
 type OAuthState = { userId: string; clientId: string; scopes: string[]; orgId: string | null } | null;
 let oauthState: OAuthState = null;
 let clerkMemberships: { orgId: string; role: string }[] = [];
+let createdOrgs: { name: string; createdBy: string; privateMetadata: Record<string, unknown> }[] = [];
 
 function fakeJwt(payload: Record<string, unknown>): string {
   const enc = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
@@ -39,12 +40,26 @@ vi.mock("@clerk/nextjs/server", () => ({
       }),
       getUser: async (id: string) => ({
         id,
+        firstName: "Scout",
+        username: null,
         primaryEmailAddressId: "e1",
         emailAddresses: [{ id: "e1", emailAddress: "agent@example.com" }],
+        externalAccounts: [{ provider: "oauth_agentid" }],
         unsafeMetadata: {},
       }),
     },
     organizations: {
+      createOrganization: async (params: { name: string; createdBy: string; privateMetadata: Record<string, unknown> }) => {
+        createdOrgs.push(params);
+        const id = `org_created_${createdOrgs.length}`;
+        clerkMemberships.push({ orgId: id, role: "org:admin" });
+        return { id, name: params.name };
+      },
+      getOrganization: async ({ organizationId }: { organizationId: string }) => ({
+        id: organizationId,
+        name: createdOrgs.at(-1)?.name ?? "Org",
+        publicMetadata: {},
+      }),
       getOrganizationMembershipList: async ({ organizationId, userId }: { organizationId: string; userId: string[] }) => ({
         data: clerkMemberships
           .filter((m) => m.orgId === organizationId)
@@ -97,6 +112,7 @@ beforeEach(async () => {
   account = await seedAccount(currentDb);
   oauthState = null;
   clerkMemberships = [];
+  createdOrgs = [];
   process.env.APP_URL = "https://go.day3.test";
   // pk_test_ + base64("clerk.day3.test$")
   process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = `pk_test_${Buffer.from("clerk.day3.test$").toString("base64")}`;
@@ -168,6 +184,24 @@ describe("MCP over OAuth", () => {
     const res = await rpc("tools/list");
     expect(res.status).toBe(403);
     expect(res.body.error.message).toMatch(/more than one/);
+  });
+
+  it("creates a first workspace for a login that has none, once", async () => {
+    oauthState = { userId: "user_agent", clientId: "client_1", scopes: [], orgId: null };
+    // An MCP client fires several calls on connect; they must share one workspace.
+    const results = await Promise.all([rpc("tools/list"), rpc("tools/list")]);
+    expect(results.map((r) => r.status)).toEqual([200, 200]);
+    expect(createdOrgs).toHaveLength(1);
+    expect(createdOrgs[0]).toMatchObject({
+      name: "Scout's workspace",
+      createdBy: "user_agent",
+      privateMetadata: { createdVia: "agentid" },
+    });
+    const ctx = await rpc("tools/call", { name: "day3_context", arguments: {} });
+    const data = JSON.parse(ctx.body.result.content[0].text);
+    expect(data.workspace.name).toBe("Scout's workspace");
+    // Same free tier a browser sign-up gets.
+    expect(data.workspace.plan).toBe("free_org");
   });
 
   it("challenges a send without the scope so the client can step up", async () => {
