@@ -224,12 +224,14 @@ page share a single account lookup instead of one per caller.
   introduce a `Date`-mode column without converting at the boundary.
 - `app/(app)/loading.tsx` is what the router shows during the server read. Without
   it, a navigation leaves the *previous* page on screen and reads as a dead click.
+- The `[id]` detail pages (campaign, audience, domain, form) read on the server
+  too, each through a shared reader in `src/api/` (`readCampaignDetail`,
+  `audience-detail.ts`, `readFormDetail`, `findDomain`) that its `/api` route
+  also calls. Their paginated lists render page 1 from the server and page in
+  the rest from the client.
 - Still on client fetch, deliberately: the server-paginated views (the Suppressions
-  tab, Activity) and most `[id]` detail pages, which own a `load(offset)` machine
-  that server-rendering page 1 would duplicate. The campaign page is the exception:
-  it is the first click after signup, so its campaign is read on the server
-  (`readCampaignDetail`, shared with `GET /api/campaigns/[id]`) and only its
-  recipient list pages in from the client.
+  tab, Activity), which own a `load(offset)` machine that server-rendering page 1
+  would duplicate.
 
 ## Gotchas
 

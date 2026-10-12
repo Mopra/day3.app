@@ -4,10 +4,10 @@ import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findAudience, findForm } from "@/api/finders";
-import { forms, sendingDomains } from "@/db/schema";
+import { readFormDetail } from "@/api/form-detail";
+import { forms } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
-import { ensureAccountSlug, uniqueFormSlug } from "@/lib/slug";
-import { buildFormInstall } from "@/services/form-install";
+import { uniqueFormSlug } from "@/lib/slug";
 import { publicFormTag } from "@/services/public-form";
 import { FORM_FIELD_TYPES, isReservedFieldKey, normalizeFields } from "@/lib/form-fields";
 import { FormDesignSchema, formDesignJson, resolveFormDesign } from "@/lib/form-design";
@@ -23,40 +23,13 @@ export const FormFieldSchema = z.object({
   required: z.boolean(),
 });
 
-async function accountHasVerifiedDomain(
-  db: Awaited<ReturnType<typeof requireAccount>>["db"],
-  accountId: string,
-): Promise<boolean> {
-  const rows = await db
-    .select()
-    .from(sendingDomains)
-    .where(eq(sendingDomains.accountId, accountId));
-  return rows.some(
-    (d) => d.fromEmail && (d.verificationStatus === "verified" || d.adminOverrideVerified),
-  );
-}
-
-// GET /api/forms/[id] — the form plus ready-to-paste install assets and whether
-// the account can actually send confirmation emails (double opt-in needs a
-// verified sending domain).
+// GET /api/forms/[id]: see readFormDetail.
 export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
   const { id } = await params;
   const { db, account } = await requireAccount();
   const form = await findForm(db, account.id, id);
   if (!form) throw new HttpError(404, "Not found");
-
-  const accountSlug = await ensureAccountSlug(db, account);
-  const install = buildFormInstall(form, accountSlug);
-  const hasVerifiedDomain = await accountHasVerifiedDomain(db, account.id);
-
-  // Hand the editor a complete, resolved design object (it edits it directly); the
-  // stored column is a partial JSON string.
-  return json({
-    form: { ...form, design: resolveFormDesign(form.design) },
-    install,
-    hasVerifiedDomain,
-    companyName: account.name ?? "this sender",
-  });
+  return json(await readFormDetail(db, account, form));
 });
 
 const UpdateFormSchema = z.object({

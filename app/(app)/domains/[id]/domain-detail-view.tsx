@@ -1,0 +1,117 @@
+"use client";
+
+import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Trash2 } from "lucide-react";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { RowActions } from "@/components/ui/data-list";
+import { MenuItem } from "@/components/ui/menu";
+import { ApiPanel } from "@/components/api-panel";
+import { DomainSetupGuide } from "@/components/domain-setup-guide";
+import { useApi } from "@/lib/api";
+import { buildDomainsPanelContent } from "@/lib/api-docs";
+import { domainState } from "@/lib/domain";
+import type { SendingDomain } from "@/lib/types";
+
+const STATUS_LABEL: Record<string, string> = {
+  verified: "Verified",
+  pending: "Verifying…",
+  failed: "Action needed",
+};
+
+// The domain is read on the server (./page.tsx); null means it is not in this
+// workspace. The setup guide owns the re-checks from here.
+export function DomainDetailView({ initialDomain }: { initialDomain: SendingDomain | null }) {
+  const api = useApi();
+  const router = useRouter();
+  const [domain, setDomain] = useState<SendingDomain | null>(initialDomain);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
+
+  async function remove() {
+    if (!domain) return;
+    setRemoving(true);
+    try {
+      await api.del(`/api/domains/${domain.id}`);
+      toast.success("Domain deleted");
+      router.push("/sending");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete domain");
+      setRemoving(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-6xl space-y-6">
+      <Link
+        href="/sending"
+        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <ArrowLeft className="size-4" />
+        Sending
+      </Link>
+
+      {domain === null ? (
+        <div className="rounded-xl border border-dashed p-10 text-center">
+          <p className="font-medium">Domain not found</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            It may have been removed. Go back to your sending domains.
+          </p>
+          <Button className="mt-4" render={<Link href="/sending">Back to domains</Link>} />
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 space-y-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <h1 className="min-w-0 break-all font-display text-2xl sm:text-3xl">
+                  {domain.domain}
+                </h1>
+                <Badge
+                  className="translate-y-[3px]"
+                  variant={domainState(domain) === "verified" ? "default" : "secondary"}
+                >
+                  {STATUS_LABEL[domainState(domain)]}
+                </Badge>
+                <ApiPanel
+                  build={(origin) =>
+                    buildDomainsPanelContent({
+                      origin,
+                      domains: [{ id: domain.id, domain: domain.domain }],
+                    })
+                  }
+                />
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Sending as {domain.fromName} &lt;{domain.fromEmail}&gt;
+              </p>
+            </div>
+
+            <RowActions>
+              <MenuItem variant="destructive" onClick={() => setDeleteOpen(true)}>
+                <Trash2 />
+                Delete
+              </MenuItem>
+            </RowActions>
+          </div>
+
+          <DomainSetupGuide domain={domain} onChange={setDomain} />
+
+          <ConfirmDialog
+            open={deleteOpen}
+            onOpenChange={setDeleteOpen}
+            title={`Delete "${domain.domain}"?`}
+            description="This removes the domain and its senders from Day3. Campaigns already sent are unaffected. You can add it again later, but you'll need to re-verify it (and re-add its DNS records) to send from it again."
+            confirmLabel="Delete domain"
+            busy={removing}
+            onConfirm={remove}
+          />
+        </>
+      )}
+    </div>
+  );
+}
