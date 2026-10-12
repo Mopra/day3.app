@@ -225,8 +225,11 @@ page share a single account lookup instead of one per caller.
 - `app/(app)/loading.tsx` is what the router shows during the server read. Without
   it, a navigation leaves the *previous* page on screen and reads as a dead click.
 - Still on client fetch, deliberately: the server-paginated views (the Suppressions
-  tab, Activity) and the `[id]` detail pages, which own a `load(offset)` machine
-  that server-rendering page 1 would duplicate.
+  tab, Activity) and most `[id]` detail pages, which own a `load(offset)` machine
+  that server-rendering page 1 would duplicate. The campaign page is the exception:
+  it is the first click after signup, so its campaign is read on the server
+  (`readCampaignDetail`, shared with `GET /api/campaigns/[id]`) and only its
+  recipient list pages in from the client.
 
 ## Gotchas
 

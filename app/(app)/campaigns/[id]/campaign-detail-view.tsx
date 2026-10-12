@@ -1,0 +1,1207 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { toast } from "sonner";
+import { CalendarClock, Trash2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { OrbitLoader } from "@/components/ui/orbit-loader";
+import { Skeleton } from "@/components/ui/skeleton";
+import { LaunchStream, SendDots } from "@/components/ui/send-loader";
+import { CollapsibleNotice } from "@/components/ui/notice";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  ListCount,
+  ListFilter,
+  ListNoResults,
+  ListSkeleton,
+  ListToolbar,
+  RowActions,
+} from "@/components/ui/data-list";
+import { MenuItem } from "@/components/ui/menu";
+import { ApiError, useApi } from "@/lib/api";
+import {
+  campaignStatusLabel,
+  formatDateTime,
+  recipientStatusLabel,
+  statusVariant,
+} from "@/lib/format";
+import { CampaignStatusBadge } from "@/components/ui/campaign-status-badge";
+import { sanitizeHtml, wrapEmailDocument } from "@/services/render";
+import { resolveTheme } from "@/lib/theme";
+import {
+  CampaignComposer,
+  useComposerSave,
+  type CampaignFormValues,
+} from "@/components/campaign-composer";
+import { SendTestButton } from "@/components/send-test-button";
+import { BusinessAddressDialog } from "@/components/business-address-dialog";
+import { SandboxBadge, SandboxBanner } from "@/components/sandbox-notice";
+import { SendReadiness } from "@/components/send-readiness";
+import type {
+  Campaign,
+  CampaignStats,
+  OnboardingState,
+  PersonalizationGap,
+  Recipient,
+  RiskReview,
+} from "@/lib/types";
+
+// What `readCampaignDetail` returns, as the client sees it (the server page and
+// `GET /api/campaigns/[id]` both hand over this shape).
+export type CampaignDetailPayload = {
+  campaign: Campaign;
+  stats: CampaignStats;
+  riskReview: RiskReview | null;
+  personalization: PersonalizationGap[];
+  sandboxRecipients: number | null;
+  rampRemaining: number | null;
+};
+
+// Turns a personalization gap into a one-line, sender-facing sentence. With a
+// fallback the slice still reads fine (just generic); without one it renders blank.
+function personalizationMessage(g: PersonalizationGap): string {
+  const label = g.field === "first_name" ? "first name" : "last name";
+  const pct = Math.round((g.missing / g.total) * 100);
+  const who = `${g.missing.toLocaleString()} of ${g.total.toLocaleString()} recipients (${pct}%) have no ${label}`;
+  return g.fallback
+    ? `${who}. They'll see "${g.fallback}" instead.`
+    : `${who}, so their ${label} will appear blank. Add a fallback like {{${g.field}|there}} so it reads well.`;
+}
+
+// The review's fix-it steps, parsed from the stored JSON array. Defensive: a
+// malformed value renders as "no guidance" rather than crashing the page.
+function riskGuidance(review: RiskReview | null): string[] {
+  if (!review?.guidanceJson) return [];
+  try {
+    const parsed: unknown = JSON.parse(review.guidanceJson);
+    return Array.isArray(parsed) ? parsed.filter((g): g is string => typeof g === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+// Maps a send-blocking condition to the page that fixes it, so the user gets a
+// link rather than a dead-end message. No entry for the missing mailing address on
+// purpose: that one is fixed in place by BusinessAddressDialog (see
+// `addressBlocked` below), so sending the user to Settings would be the worse of
+// the two paths.
+function fixLinkFor(reason: string): { href: string; label: string } | null {
+  const r = reason.toLowerCase();
+  if (
+    r.includes("subscription") ||
+    r.includes("limit") ||
+    r.includes("plan") ||
+    r.includes("payment") ||
+    r.includes("billing")
+  ) {
+    return { href: "/billing", label: "Go to billing" };
+  }
+  if (r.includes("domain")) {
+    return { href: "/sending", label: "Verify a domain" };
+  }
+  if (r.includes("subscriber") || r.includes("audience") || r.includes("recipient")) {
+    return { href: "/audiences", label: "Import subscribers" };
+  }
+  return null;
+}
+
+// Formats a Date as the value a <input type="datetime-local"> expects
+// ("YYYY-MM-DDTHH:mm") in the user's local timezone.
+function toLocalInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Numeric per-status keys only (excludes `total` and the `undeliverable` array).
+const STAT_KEYS = [
+  "pending",
+  "sending",
+  "sent",
+  "delivered",
+  "bounced",
+  "complained",
+  "unsubscribed",
+  "failed",
+  "skipped",
+] as const satisfies readonly (keyof CampaignStats)[];
+
+// The send-in-progress hero, shown while the pipeline works (review → build
+// recipients → sending). Copy and the live count follow the campaign status so
+// the user sees momentum rather than a static "please wait".
+function SendingBanner({
+  status,
+  stats,
+}: {
+  status: Campaign["status"];
+  stats: CampaignStats | null;
+}) {
+  const copy: Record<string, { title: string; subtitle: string }> = {
+    pending_review: {
+      title: "Reviewing your campaign",
+      subtitle: "Running a quick safety check before it goes out.",
+    },
+    approved: {
+      title: "Approved, preparing to send",
+      subtitle: "Getting everything ready.",
+    },
+    generating_recipients: {
+      title: "Building your send list",
+      subtitle: "Gathering the subscribers for this campaign.",
+    },
+    sending: {
+      title: "Sending your campaign",
+      subtitle:
+        stats && stats.total > 0
+          ? `${((stats.sent ?? 0) + (stats.delivered ?? 0)).toLocaleString()} of ${stats.total.toLocaleString()} sent · going out now`
+          : "Your emails are going out now.",
+    },
+  };
+  const { title, subtitle } = copy[status] ?? copy.sending;
+  return (
+    <div className="flex flex-col gap-4 rounded-xl border border-primary/20 bg-primary/5 p-5 sm:flex-row sm:items-center">
+      <LaunchStream scale={0.8} />
+      <div className="min-w-0">
+        <h2 className="font-medium">{title}</h2>
+        <p className="text-sm text-muted-foreground">{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
+// The payoff. Sending is the emotional peak of the product; when a campaign
+// reaches "sent" the page shouldn't just turn into a table of numbers. A warm
+// success banner names the win and points the user at the two things they'll
+// want next: engagement (Metrics) and per-recipient troubleshooting (Activity).
+//
+// A sandbox send is the user's test run, not their launch: it reached their own
+// team. Calling that "Sent to 1 subscriber" and offering opens & clicks leaves
+// them on a dead end at the exact moment they are most invested, so it says
+// where the email went and hands them the road to their real list instead.
+function SentBanner({
+  campaignId,
+  stats,
+  sentAt,
+  sandbox,
+}: {
+  campaignId: string;
+  stats: CampaignStats;
+  sentAt: string | null;
+  sandbox: boolean;
+}) {
+  const reached = (stats.sent ?? 0) + (stats.delivered ?? 0);
+  if (sandbox) {
+    return (
+      <div className="overflow-hidden rounded-xl border border-primary/20 bg-primary/5 p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-2xl">
+            🎉
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-medium">It worked. Check your inbox!</h2>
+            <p className="text-sm text-muted-foreground">
+              {reached > 0
+                ? `Sent to ${reached.toLocaleString()} ${reached === 1 ? "person" : "people"} on your team`
+                : "On its way to your team"}
+              {sentAt ? ` · ${formatDateTime(sentAt)}` : ""}. Next, get set up to reach your
+              real subscribers.
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+            <Button size="sm" render={<Link href="/dashboard" />}>
+              What&apos;s next
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              render={<Link href={`/metrics?campaign=${campaignId}`} />}
+            >
+              See opens &amp; clicks
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-hidden rounded-xl border border-primary/20 bg-primary/5 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-2xl">
+          🎉
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="font-medium">Your campaign is out!</h2>
+          <p className="text-sm text-muted-foreground">
+            {reached > 0
+              ? `Sent to ${reached.toLocaleString()} ${reached === 1 ? "subscriber" : "subscribers"}`
+              : "Your emails are on their way"}
+            {sentAt ? ` · ${formatDateTime(sentAt)}` : ""}.
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+          <Button size="sm" render={<Link href={`/metrics?campaign=${campaignId}`} />}>
+            See opens &amp; clicks
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            render={<Link href={`/activity?campaignId=${campaignId}`} />}
+          >
+            Troubleshoot a recipient
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The draft's action buttons are handed to the composer as `titleActions`, so they
+// render *inside* its save provider, but this page does not, which is why the
+// buttons receive the flush through a nested component rather than a hook call up
+// here. Flushing matters because Submit/Schedule act on the SAVED row: without it
+// an edit made in the last 800 ms would not be in the email that goes out.
+function WithComposerSave({
+  children,
+}: {
+  children: (flush: () => Promise<void>) => ReactNode;
+}) {
+  const { flush } = useComposerSave();
+  return <>{children(flush)}</>;
+}
+
+// Used where the buttons render outside the composer (every non-draft status, where
+// there is nothing to save).
+const noFlush = async () => {};
+
+export function CampaignDetailView({
+  initial,
+  initialOnboarding,
+}: {
+  initial: CampaignDetailPayload;
+  initialOnboarding: OnboardingState;
+}) {
+  const id = initial.campaign.id;
+  const api = useApi();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  // Dev-only: force the send banner onto a real campaign page without sending,
+  // e.g. /campaigns/<id>?send=sending. Ignored in production builds.
+  const previewSend =
+    process.env.NODE_ENV !== "production" ? searchParams.get("send") : null;
+  // Seeded from the server read, so the page paints the real campaign on its
+  // first frame. The live poll and the re-read after an action refresh it.
+  const [campaign, setCampaign] = useState<Campaign | null>(initial.campaign);
+  const [stats, setStats] = useState<CampaignStats | null>(initial.stats);
+  const [riskReview, setRiskReview] = useState<RiskReview | null>(initial.riskReview);
+  const [personalization, setPersonalization] = useState<PersonalizationGap[]>(
+    initial.personalization,
+  );
+  // How many people a sandbox (free-tier) send would actually reach: teammates
+  // in the audience, not the whole audience. null = not a sandbox account.
+  const [sandboxRecipients, setSandboxRecipients] = useState<number | null>(
+    initial.sandboxRecipients,
+  );
+  // Emails the new-account ramp still allows today; null when no ramp applies.
+  const [rampLeft, setRampLeft] = useState<number | null>(initial.rampRemaining);
+  const [recipients, setRecipients] = useState<Recipient[] | null>(null);
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(initialOnboarding);
+  const [busy, setBusy] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleAt, setScheduleAt] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [submitOpen, setSubmitOpen] = useState(false);
+  // The send dialog opens on its confirm button, not Cancel: the user pressed
+  // Send to get here, and Enter should finish what they started.
+  const sendButtonRef = useRef<HTMLButtonElement>(null);
+  // Audience name + subscribed count for the send-confirmation dialog. Fetched
+  // when the dialog opens (recipients aren't generated until after submit, so
+  // we can't use `stats`); null = still loading.
+  const [audienceSummary, setAudienceSummary] = useState<{
+    name: string;
+    subscribed: number;
+  } | null>(null);
+  const [recipientStatus, setRecipientStatus] = useState("all");
+  const [loadingMoreRec, setLoadingMoreRec] = useState(false);
+  // Inline fix for the one send gate that doesn't need a trip to Settings.
+  const [addressOpen, setAddressOpen] = useState(false);
+
+  // Resolves to the freshly-read campaign so callers that must not act on a stale
+  // copy (the send confirmation) can await it: the composer autosaves as the user
+  // types without re-running this, so `campaign` here is the row as it was when
+  // the page last loaded, not as it is now.
+  const load = useCallback(async (): Promise<Campaign | null> => {
+    api
+      .get<{ onboarding: OnboardingState }>("/api/account/onboarding")
+      .then((res) => setOnboarding(res.onboarding))
+      .catch(() => {});
+    try {
+      const res = await api.get<CampaignDetailPayload>(`/api/campaigns/${id}`);
+      setCampaign(res.campaign);
+      setStats(res.stats);
+      setRiskReview(res.riskReview);
+      setPersonalization(res.personalization ?? []);
+      setSandboxRecipients(res.sandboxRecipients ?? null);
+      setRampLeft(res.rampRemaining ?? null);
+      return res.campaign;
+    } catch (err) {
+      // A 404 means the campaign is not in the active workspace: it was deleted,
+      // or the user switched organization with this page open. Leave instead of
+      // letting the live-update poll repeat the 404 every few seconds.
+      if (err instanceof ApiError && err.status === 404) {
+        setCampaign(null);
+        toast.error("That campaign isn't in this workspace");
+        router.replace("/campaigns");
+        return null;
+      }
+      toast.error(err instanceof Error ? err.message : "Couldn't load campaign");
+      return null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  // Recipients are their own filterable, paginated list. The endpoint caps a
+  // request at 100, so we page in 50s; per-status totals come from `stats`.
+  const REC_PAGE = 50;
+  const recipientsUrl = useCallback(
+    (offset: number) => {
+      const params = new URLSearchParams({ limit: String(REC_PAGE), offset: String(offset) });
+      if (recipientStatus !== "all") params.set("status", recipientStatus);
+      return `/api/campaigns/${id}/recipients?${params}`;
+    },
+    [id, recipientStatus],
+  );
+
+  const loadRecipients = useCallback(() => {
+    api
+      .get<{ recipients: Recipient[] }>(recipientsUrl(0))
+      .then((res) => setRecipients(res.recipients))
+      .catch(() => {});
+  }, [api, recipientsUrl]);
+
+  useEffect(loadRecipients, [loadRecipients]);
+
+  async function loadMoreRecipients() {
+    if (!recipients || loadingMoreRec) return;
+    setLoadingMoreRec(true);
+    try {
+      const res = await api.get<{ recipients: Recipient[] }>(recipientsUrl(recipients.length));
+      setRecipients((cur) => [...(cur ?? []), ...res.recipients]);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't load more");
+    } finally {
+      setLoadingMoreRec(false);
+    }
+  }
+
+  // Live-update while the pipeline is working.
+  const inFlight =
+    campaign &&
+    ["pending_review", "approved", "generating_recipients", "sending"].includes(campaign.status);
+  useEffect(() => {
+    if (!inFlight) return;
+    const t = setInterval(() => {
+      void load();
+      loadRecipients();
+    }, 2500);
+    return () => clearInterval(t);
+  }, [inFlight, load, loadRecipients]);
+
+  async function action(path: string, body?: unknown, success?: string) {
+    setBusy(true);
+    try {
+      await api.post(`/api/campaigns/${id}/${path}`, body);
+      if (success) toast.success(success);
+      void load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Autosave is the only save path: a quiet PATCH with no toast or refetch so it
+  // doesn't disrupt the user mid-edit.
+  async function onAutosave(values: CampaignFormValues) {
+    await api.patch(`/api/campaigns/${id}`, values);
+  }
+
+  // Open the send-confirmation dialog and fetch the audience name + subscribed
+  // count so the user confirms exactly who they're about to email. Sending is
+  // irreversible, so this gate is deliberate. Never fire "submit" from a click.
+  async function openSubmit(flush: () => Promise<void>) {
+    setAudienceSummary(null);
+    setSubmitOpen(true);
+    // Push any unsaved edit first, then re-read. The dialog quotes the From
+    // address, the subject and the audience back to the user, and all three are
+    // autosaved from the composer after this page's last load. The send renders
+    // from that same saved row, so flushing is what makes "what I see is what
+    // goes out" true.
+    await flush();
+    const fresh = await load();
+    const audienceId = fresh?.audienceId;
+    if (!audienceId) return;
+    api
+      .get<{ audience: { name: string }; counts: Record<string, number> }>(
+        `/api/audiences/${audienceId}`,
+      )
+      .then((res) =>
+        setAudienceSummary({
+          name: res.audience.name,
+          subscribed: res.counts.subscribed ?? 0,
+        }),
+      )
+      .catch(() => {});
+  }
+
+  async function confirmSubmit() {
+    setSubmitOpen(false);
+    await action("submit", undefined, "Sending now");
+  }
+
+  // Open the schedule dialog seeded with the existing time, or a sensible
+  // default an hour out.
+  async function openSchedule(flush: () => Promise<void>) {
+    await flush();
+    setScheduleAt(
+      campaign?.scheduledAt
+        ? toLocalInput(new Date(campaign.scheduledAt))
+        : toLocalInput(new Date(Date.now() + 60 * 60 * 1000)),
+    );
+    setScheduleOpen(true);
+  }
+
+  async function submitSchedule() {
+    const when = new Date(scheduleAt);
+    if (Number.isNaN(when.getTime()) || when.getTime() < Date.now() + 60_000) {
+      toast.error("Pick a time at least a minute from now");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post(`/api/campaigns/${id}/schedule`, { scheduledAt: when.toISOString() });
+      toast.success("Send scheduled");
+      setScheduleOpen(false);
+      void load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't schedule");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // A blocked campaign can't be edited or resubmitted. The way forward is a
+  // fresh draft copy with the flagged content fixed.
+  const [duplicating, setDuplicating] = useState(false);
+  async function duplicateAndFix() {
+    setDuplicating(true);
+    try {
+      const res = await api.post<{ id: string }>(`/api/campaigns/${id}/duplicate`);
+      toast.success("Draft copy created. Make the changes there and send that");
+      router.push(`/campaigns/${res.id}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't create a copy");
+      setDuplicating(false);
+    }
+  }
+
+  async function remove() {
+    setDeleting(true);
+    try {
+      await api.del(`/api/campaigns/${id}`);
+      toast.success("Campaign deleted");
+      router.push("/campaigns");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't delete campaign");
+      setDeleting(false);
+    }
+  }
+
+  // Matched skeleton: keeps the page's shape (title row + a couple of cards) so
+  // the real content doesn't blank the panel and layout-shift in.
+  if (!campaign) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-8 w-56" />
+          <Skeleton className="h-9 w-40" />
+        </div>
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  // Mid-send campaigns can't be deleted. Pause first (mirrors the API guard).
+  const deletable =
+    campaign.status !== "sending" && campaign.status !== "generating_recipients";
+  const submittable = campaign.status === "draft" || campaign.status === "approved";
+  // Pre-flight: mirror the submit route's send gates so the user sees an
+  // actionable message (with a fix link) instead of clicking into a raw error.
+  const sendBlocked = submittable && onboarding && !onboarding.canSend ? onboarding : null;
+  const blockFix = sendBlocked?.sendBlockedReason
+    ? fixLinkFor(sendBlocked.sendBlockedReason)
+    : null;
+  // The missing mailing address is the only blocker with an in-place fix, so it
+  // gets a button (the shared dialog) instead of a link out to Settings.
+  const addressBlocked =
+    !!sendBlocked &&
+    !sendBlocked.hasMailingAddress &&
+    !!sendBlocked.sendBlockedReason?.toLowerCase().includes("address");
+
+  // Sandbox applies to this campaign once it's stamped (submitted onwards); for a
+  // draft it's the account's current mode that decides how the send will run.
+  const sandbox = campaign.sandbox || (submittable && !!onboarding?.sandbox);
+
+  const statusBadge = (
+    <div className="flex items-center gap-2">
+      <CampaignStatusBadge status={campaign.status} scheduledAt={campaign.scheduledAt} />
+      {campaign.sandbox && <SandboxBadge />}
+    </div>
+  );
+
+  const actionButtons = (flush: () => Promise<void>) => (
+    <>
+      <SendTestButton campaignId={id} disabled={busy} onBeforeSend={flush} />
+      {submittable && (
+        <Button
+          variant="outline"
+          disabled={busy || !!sendBlocked}
+          onClick={() => void openSchedule(flush)}
+        >
+          <CalendarClock className="size-4" />
+          Schedule
+        </Button>
+      )}
+      {submittable && (
+        <Button
+          disabled={busy || !!sendBlocked}
+          onClick={() => void openSubmit(flush)}
+        >
+          {busy || previewSend === "submitting" ? (
+            <>
+              <SendDots />
+              Sending…
+            </>
+          ) : (
+            "Send now"
+          )}
+        </Button>
+      )}
+      {campaign.status === "sending" && (
+        <Button variant="destructive" disabled={busy} onClick={() => action("pause")}>
+          Pause
+        </Button>
+      )}
+      {campaign.status === "paused" && (
+        <Button disabled={busy} onClick={() => action("resume", undefined, "Resumed")}>
+          Resume
+        </Button>
+      )}
+      {deletable && (
+        <RowActions>
+          <MenuItem
+            variant="destructive"
+            disabled={busy}
+            onClick={() => setDeleteOpen(true)}
+          >
+            <Trash2 />
+            Delete
+          </MenuItem>
+        </RowActions>
+      )}
+    </>
+  );
+
+  // Drafts get an editable title inside the composer, so the status badge and
+  // actions move into the composer's title row. Other statuses keep the static
+  // page heading.
+  const isDraft = campaign.status === "draft";
+
+  // Recipient filter options follow the per-status counts in `stats`, so we only
+  // surface statuses that actually have rows; totals come from the same source.
+  const recipientFilterTotal =
+    recipientStatus === "all"
+      ? stats?.total ?? 0
+      : ((stats?.[recipientStatus as keyof CampaignStats] as number | undefined) ?? 0);
+  const recipientStatusOptions = [
+    { value: "all", label: "All statuses" },
+    ...STAT_KEYS.filter((k) => (stats?.[k] ?? 0) > 0).map((k) => ({
+      value: k,
+      label: recipientStatusLabel(k),
+    })),
+  ];
+  const recShown = recipients?.length ?? 0;
+  const recHasMore = recShown < recipientFilterTotal;
+
+  return (
+    <div className="space-y-6">
+      {!isDraft && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {/* min-w-0 + break-words: a campaign name is user-supplied and can be
+              one long unbroken string, which would push the action buttons off
+              a phone screen and give the page a horizontal scrollbar. */}
+          <div className="flex min-w-0 items-center gap-3">
+            <h1 className="min-w-0 break-words font-display text-2xl sm:text-3xl">
+              {campaign.name}
+            </h1>
+            {statusBadge}
+          </div>
+          <div className="flex flex-wrap gap-2">{actionButtons(noFlush)}</div>
+        </div>
+      )}
+
+      {(inFlight || previewSend) && (
+        <SendingBanner
+          status={(previewSend as Campaign["status"]) ?? campaign.status}
+          stats={stats}
+        />
+      )}
+
+      {campaign.status === "sent" && stats && stats.total > 0 && (
+        <SentBanner
+          campaignId={id}
+          stats={stats}
+          sentAt={campaign.sentAt}
+          sandbox={campaign.sandbox}
+        />
+      )}
+
+      {campaign.status === "scheduled" && (
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-muted/30 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <CalendarClock className="size-5 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <h2 className="font-medium">Scheduled to send</h2>
+              <p className="text-sm text-muted-foreground">
+                Goes out {formatDateTime(campaign.scheduledAt)}. Sending starts within about 15
+                minutes of that time.
+              </p>
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => void openSchedule(noFlush)}
+            >
+              Reschedule
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={busy}
+              onClick={() => action("unschedule", undefined, "Moved back to draft")}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {campaign.pausedReason && campaign.status !== "sent" && (
+        <CollapsibleNotice
+          noticeKey="campaign-paused"
+          variant="destructive"
+          title={
+            campaign.status === "draft"
+              ? "Your scheduled send didn't go out"
+              : campaign.status === "paused"
+                ? campaign.pausedCode === "reputation"
+                  ? "We paused this send to protect your deliverability"
+                  : "Sending is paused"
+                : campaignStatusLabel(campaign.status)
+          }
+        >
+          {campaign.pausedReason}
+          {campaign.pausedCode === "reputation" && (
+            <>
+              {" "}
+              Inbox providers judge a sender by this number and start filtering everything above
+              it, so the rest of the list was held back. Every address that bounced or complained
+              is already suppressed and will not be mailed again, so it is safe to resume. Before
+              you do, check where this list came from: the rest of it will most likely behave the
+              same way.
+            </>
+          )}
+        </CollapsibleNotice>
+      )}
+
+      {sandbox && submittable && <SandboxBanner surface="campaign" />}
+
+      {sendBlocked && (
+        <CollapsibleNotice
+          noticeKey="campaign-send-blocked"
+          title="This campaign can't be sent yet"
+        >
+          {addressBlocked ? (
+            // The one send gate that's fixable without leaving the page, same
+            // dialog the composer's footer opens, so the fix is one click from
+            // where the problem is reported.
+            <div className="space-y-3">
+              <p>
+                Anti-spam laws require a physical mailing address in every email. Add
+                it once and it goes in the footer of everything you send.
+              </p>
+              <Button variant="outline" size="sm" onClick={() => setAddressOpen(true)}>
+                Add business address
+              </Button>
+            </div>
+          ) : (
+            <p>
+              {sendBlocked.sendBlockedReason}
+              {blockFix && (
+                <>
+                  {" "}
+                  <Link href={blockFix.href} className="font-medium underline underline-offset-4">
+                    {blockFix.label}
+                  </Link>
+                  .
+                </>
+              )}
+            </p>
+          )}
+        </CollapsibleNotice>
+      )}
+
+      {/* Not on a sandbox send: its recipients are the user's own team, and
+          "1 of 1 recipients have no first name" about yourself is noise on the
+          one screen where the email should have the room. */}
+      {submittable && !sandbox && personalization.length > 0 && (
+        <CollapsibleNotice
+          noticeKey="campaign-personalization"
+          title="Some recipients are missing personalization"
+        >
+          <ul className="list-disc space-y-1 pl-4">
+            {personalization.map((g) => (
+              <li key={g.field}>{personalizationMessage(g)}</li>
+            ))}
+          </ul>
+        </CollapsibleNotice>
+      )}
+
+      {campaign.status === "blocked" && (
+        <CollapsibleNotice
+          noticeKey="campaign-risk-blocked"
+          variant="destructive"
+          title="This campaign didn't pass the safety review"
+        >
+          <div className="space-y-3">
+            <p>
+              Our automated review flagged content that mailbox providers punish with
+              spam-folder placement, and that damages deliverability for every email
+              you send after this one. Here&apos;s what to change:
+            </p>
+            {riskGuidance(riskReview).length > 0 ? (
+              <ul className="list-disc space-y-1 pl-4">
+                {riskGuidance(riskReview).map((g) => (
+                  <li key={g}>{g}</li>
+                ))}
+              </ul>
+            ) : (
+              riskReview && <p>{riskReview.summary}</p>
+            )}
+            <p>
+              A blocked campaign can&apos;t be edited or sent again. Create a copy,
+              make the changes there, and send that instead. Flagged campaigns also get
+              a second look from our team, so a genuine false alarm can be released
+              without changes.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={duplicating}
+              onClick={duplicateAndFix}
+            >
+              {duplicating && <OrbitLoader size={16} />}
+              Duplicate &amp; fix
+            </Button>
+          </div>
+        </CollapsibleNotice>
+      )}
+
+      {riskReview && campaign.status !== "blocked" && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Safety review</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge
+                variant={
+                  riskReview.riskLevel === "low"
+                    ? "default"
+                    : riskReview.riskLevel === "medium"
+                      ? "secondary"
+                      : "destructive"
+                }
+              >
+                {riskReview.riskLevel} · {riskReview.riskScore}
+              </Badge>
+              <span className="text-muted-foreground">{riskReview.summary}</span>
+            </div>
+            {riskGuidance(riskReview).length > 0 && (
+              <div className="space-y-1">
+                <p className="font-medium">Suggestions for your next send</p>
+                <ul className="list-disc space-y-1 pl-4 text-muted-foreground">
+                  {riskGuidance(riskReview).map((g) => (
+                    <li key={g}>{g}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {stats && stats.total > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Stats</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-6">
+              <div>
+                <div className="text-2xl font-semibold">{stats.total}</div>
+                <div className="text-xs text-muted-foreground">recipients</div>
+              </div>
+              {STAT_KEYS.map((key) =>
+                stats[key] ? (
+                  <div key={key}>
+                    <div className="text-2xl font-semibold">{stats[key]}</div>
+                    <div className="text-xs text-muted-foreground">{recipientStatusLabel(key)}</div>
+                  </div>
+                ) : null,
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {stats && stats.undeliverable && stats.undeliverable.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Didn&apos;t receive</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3 text-sm">
+            <p className="text-muted-foreground">
+              Suppressed recipients were skipped on purpose (unsubscribed,
+              bounced, or complained before). Failed recipients hit a hard send
+              error.
+            </p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Reason</TableHead>
+                  <TableHead className="text-right">Count</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {stats.undeliverable.map((u) => (
+                  <TableRow key={`${u.status}:${u.reason}`}>
+                    <TableCell>
+                      <Badge variant={u.status === "skipped" ? "outline" : "destructive"}>
+                        {u.status === "skipped" ? "Suppressed" : "Failed"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{u.reason}</TableCell>
+                    <TableCell className="text-right font-medium">{u.count}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {isDraft ? (
+        <CampaignComposer
+          initial={campaign}
+          onAutosave={onAutosave}
+          titleBadge={statusBadge}
+          titleActions={<WithComposerSave>{actionButtons}</WithComposerSave>}
+        />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Content</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="text-sm">
+              <span className="text-muted-foreground">Subject: </span>
+              {campaign.subject}
+            </div>
+            <div className="text-sm">
+              <span className="text-muted-foreground">From: </span>
+              {campaign.fromName} &lt;{campaign.fromEmail}&gt;
+            </div>
+            <div className="max-h-96 overflow-auto rounded-lg border border-border bg-white">
+              <iframe
+                title="Email preview"
+                sandbox=""
+                // Run through the SAME wrapEmailDocument + sanitizeHtml the send
+                // pipeline uses, with the campaign's saved theme, so this is the
+                // email as it went out rather than its bare body markup. Without
+                // the wrapper the theme (page/content colors, typography, the
+                // 600px body column) was simply absent and a sent campaign looked
+                // nothing like what subscribers received. Merge tags still appear
+                // as-is and the unsubscribe footer is appended per recipient.
+                srcDoc={wrapEmailDocument(
+                  sanitizeHtml(campaign.htmlBody),
+                  resolveTheme(campaign.theme),
+                )}
+                className="h-80 w-full border-0"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Preview shows the email as it was sent. Merge tags appear as-is, and
+              the mailing address and unsubscribe link are added per recipient.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {stats && stats.total > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Recipients</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ListToolbar className="mb-4">
+              <ListFilter
+                value={recipientStatus}
+                onChange={setRecipientStatus}
+                options={recipientStatusOptions}
+                ariaLabel="Filter recipients by status"
+              />
+              <ListCount
+                shown={recShown}
+                total={recipientFilterTotal}
+                noun="recipient"
+                className="ml-auto"
+              />
+            </ListToolbar>
+            {recipients === null ? (
+              <ListSkeleton />
+            ) : recipients.length === 0 ? (
+              <ListNoResults
+                onClear={() => setRecipientStatus("all")}
+                message="No recipients match this status."
+              />
+            ) : (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Error</TableHead>
+                      <TableHead>Updated</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {recipients.map((r) => (
+                      <TableRow key={r.id}>
+                        <TableCell className="font-medium">{r.email}</TableCell>
+                        <TableCell>
+                          <Badge variant={statusVariant(r.status)}>
+                            {recipientStatusLabel(r.status)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="max-w-56 truncate text-muted-foreground">
+                          {r.error ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {formatDateTime(r.updatedAt)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {recHasMore && (
+                  <div className="flex justify-center pt-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={loadMoreRecipients}
+                      disabled={loadingMoreRec}
+                    >
+                      {loadingMoreRec && <OrbitLoader size={16} />}
+                      Load more
+                      <span className="text-muted-foreground tabular-nums">
+                        ({(recipientFilterTotal - recShown).toLocaleString()} more)
+                      </span>
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Opened from the "can't be sent yet" notice. Saving re-runs the send gates,
+          so the notice clears itself the moment the address lands. */}
+      <BusinessAddressDialog
+        open={addressOpen}
+        onOpenChange={setAddressOpen}
+        onSaved={() => void load()}
+      />
+
+      <Dialog open={submitOpen} onOpenChange={setSubmitOpen}>
+        <DialogContent className="sm:max-w-md" initialFocus={sendButtonRef}>
+          <DialogHeader>
+            <DialogTitle>Send this campaign?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              You&apos;re about to email{" "}
+              <strong className="text-foreground">
+                {sandboxRecipients !== null
+                  ? `${sandboxRecipients.toLocaleString()} ${
+                      sandboxRecipients === 1 ? "teammate" : "teammates"
+                    }`
+                  : audienceSummary
+                    ? `${audienceSummary.subscribed.toLocaleString()} ${
+                        audienceSummary.subscribed === 1 ? "subscriber" : "subscribers"
+                      }`
+                    : "your audience"}
+              </strong>
+              {audienceSummary ? (
+                <>
+                  {" "}
+                  in <strong className="text-foreground">{audienceSummary.name}</strong>
+                </>
+              ) : null}
+              . It goes out after a quick automatic check, usually within seconds. A sent email can&apos;t be
+              recalled.
+            </p>
+            {/* The count above is the whole confirmation on the free tier: the
+                audience may hold thousands, but a sandbox send reaches only the
+                teammates in it. Say so rather than letting the number puzzle. */}
+            {sandboxRecipients !== null && (
+              <p className="text-sm text-muted-foreground">
+                Test mode: only people on your team get this, even if the list is
+                bigger.
+              </p>
+            )}
+            {/* The new-account ramp would otherwise pause this send part-way
+                through with no warning. Say it before the click. */}
+            {sandboxRecipients === null &&
+              rampLeft !== null &&
+              audienceSummary &&
+              audienceSummary.subscribed > rampLeft && (
+                <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-muted-foreground">
+                  New workspaces warm up their sending over the first two weeks. About{" "}
+                  <strong className="text-foreground">{rampLeft.toLocaleString()}</strong> of these
+                  go out today, and the campaign picks up again on its own each day until the
+                  rest are sent.
+                </p>
+              )}
+            <dl className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
+              <div className="flex gap-2">
+                <dt className="w-16 shrink-0 text-muted-foreground">From</dt>
+                <dd className="min-w-0 break-words font-medium">
+                  {campaign.fromName} &lt;{campaign.fromEmail}&gt;
+                </dd>
+              </div>
+              <div className="flex gap-2">
+                <dt className="w-16 shrink-0 text-muted-foreground">Subject</dt>
+                <dd className="min-w-0 break-words font-medium">{campaign.subject}</dd>
+              </div>
+            </dl>
+            {/* Same readiness reassurance as the CampaignActions dialog on the
+                new-campaign page, so both send-confirmation moments match. */}
+            {onboarding && <SendReadiness onboarding={onboarding} />}
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="ghost" disabled={busy} onClick={() => setSubmitOpen(false)}>
+                Cancel
+              </Button>
+              <Button ref={sendButtonRef} disabled={busy} onClick={confirmSubmit}>
+                {busy ? (
+                  <>
+                    <SendDots />
+                    Sending…
+                  </>
+                ) : sandboxRecipients !== null ? (
+                  `Send to ${sandboxRecipients.toLocaleString()}`
+                ) : audienceSummary ? (
+                  `Send to ${audienceSummary.subscribed.toLocaleString()}`
+                ) : (
+                  "Send now"
+                )}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Schedule send</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Pick when this campaign should go out. We&apos;ll run the safety review and start
+              sending at that time (within ~15 minutes).
+            </p>
+            <div className="space-y-1.5">
+              <label htmlFor="scheduleAt" className="text-sm font-medium">
+                Date &amp; time
+              </label>
+              <input
+                id="scheduleAt"
+                type="datetime-local"
+                value={scheduleAt}
+                min={toLocalInput(new Date())}
+                onChange={(e) => setScheduleAt(e.target.value)}
+                className="h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none [color-scheme:light] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30 dark:[color-scheme:dark]"
+              />
+              <p className="text-xs text-muted-foreground">
+                Uses your computer&apos;s timezone.
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="ghost" disabled={busy} onClick={() => setScheduleOpen(false)}>
+                Cancel
+              </Button>
+              <Button disabled={busy} onClick={submitSchedule}>
+                {busy ? "Scheduling…" : "Schedule send"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title={`Delete "${campaign.name}"?`}
+        description="This permanently removes the campaign and its recipient records. If it's already been sent, it's removed from your history too. This can't be undone."
+        confirmLabel="Delete campaign"
+        busy={deleting}
+        onConfirm={remove}
+      />
+    </div>
+  );
+}

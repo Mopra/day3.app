@@ -5,56 +5,19 @@ import { findCampaign } from "@/api/finders";
 import {
   CampaignDraftSchema,
   campaignBodyFields,
-  campaignPersonalizationGaps,
-  campaignStats,
   campaignThemeJson,
-  sandboxRecipientCount,
   validateDraftOwnership,
 } from "@/api/campaigns";
+import { readCampaignDetail } from "@/api/campaign-detail";
 import { campaignRecipients, campaigns, riskReviews } from "@/db/schema";
-import { safeParseSections } from "@/lib/sections";
-import { safeParseTheme } from "@/lib/theme";
 import { nowIso } from "@/lib/ids";
-import { accountSandboxMode } from "@/services/sandbox";
-import { rampRemaining } from "@/services/send-ramp";
 
 export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
   const { id } = await params;
   const { db, account } = await requireAccount();
   const campaign = await findCampaign(db, account.id, id);
   if (!campaign) throw new HttpError(404, "Not found");
-  const review = await db.query.riskReviews.findFirst({
-    where: and(eq(riskReviews.campaignId, campaign.id), eq(riskReviews.accountId, account.id)),
-  });
-  // Personalization gaps only matter pre-send (draft/approved); skip the extra
-  // count query once the campaign is in flight or done.
-  const submittable = campaign.status === "draft" || campaign.status === "approved";
-  return json({
-    // Surface the structured sections + theme (parsed from the stored JSON) so the
-    // composer can rehydrate the builder and styling panel; htmlBody remains the
-    // canonical serialized body.
-    campaign: {
-      ...campaign,
-      sections: safeParseSections(campaign.sectionsJson),
-      theme: safeParseTheme(campaign.themeJson),
-    },
-    riskReview: review ?? null,
-    stats: await campaignStats(db, campaign.id),
-    personalization: submittable
-      ? await campaignPersonalizationGaps(db, account.id, campaign)
-      : [],
-    // How many people this send would actually reach in sandbox mode, so the
-    // confirmation dialog can name the real number. null = not a sandbox account
-    // (or nothing left to confirm), and the audience count applies as usual.
-    sandboxRecipients:
-      submittable && accountSandboxMode(account)
-        ? await sandboxRecipientCount(db, account.id, campaign)
-        : null,
-    // Emails the new-account ramp still allows today (null = no ramp). The send
-    // dialog uses it to say "about N go out today, the rest tomorrow" before a
-    // young account's first big send, instead of the campaign pausing on it.
-    rampRemaining: submittable ? rampRemaining(account) : null,
-  });
+  return json(await readCampaignDetail(db, account, campaign));
 });
 
 export const PATCH = route<{ params: Promise<{ id: string }> }>(async (req, { params }) => {

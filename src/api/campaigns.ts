@@ -410,7 +410,8 @@ export async function campaignStats(db: Db, campaignId: string) {
     )
     .groupBy(campaignRecipients.status, campaignRecipients.error);
   const undeliverable = reasonRows.map((r) => ({
-    status: r.status,
+    // The WHERE above admits only these two.
+    status: r.status as "skipped" | "failed",
     reason: r.reason ?? "unknown",
     count: Number(r.count),
   }));

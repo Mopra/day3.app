@@ -12,6 +12,7 @@
 // add/duplicate/remove, reorder).
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -1421,6 +1422,9 @@ export function SectionEditor({
   const { sections, latest, commit, patch: patchSection, insertAfter, remove } =
     useSectionList(value, onChange);
   const activeSection = activeId ? sections.find((s) => s.id === activeId) ?? null : null;
+  // dnd-kit numbers its aria ids from a module counter, which differs between the
+  // server render and hydration now that the campaign page renders on the server.
+  const dndId = useId();
 
   function handleDragStart(event: DragStartEvent) {
     setActiveId(String(event.active.id));
@@ -1440,6 +1444,7 @@ export function SectionEditor({
     <RichTextEditorGroup>
       <div className={cn("space-y-2", className)}>
         <DndContext
+          id={dndId}
           sensors={sensors}
           collisionDetection={closestCenter}
           onDragStart={handleDragStart}
