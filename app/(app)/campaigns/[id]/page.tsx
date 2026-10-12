@@ -36,7 +36,7 @@ import {
   RowActions,
 } from "@/components/ui/data-list";
 import { MenuItem } from "@/components/ui/menu";
-import { useApi } from "@/lib/api";
+import { ApiError, useApi } from "@/lib/api";
 import {
   campaignStatusLabel,
   formatDateTime,
@@ -299,6 +299,15 @@ export default function CampaignDetailPage() {
       setSandboxRecipients(res.sandboxRecipients ?? null);
       return res.campaign;
     } catch (err) {
+      // A 404 means the campaign is not in the active workspace: it was deleted,
+      // or the user switched organization with this page open. Leave instead of
+      // letting the live-update poll repeat the 404 every few seconds.
+      if (err instanceof ApiError && err.status === 404) {
+        setCampaign(null);
+        toast.error("That campaign isn't in this workspace");
+        router.replace("/campaigns");
+        return null;
+      }
       toast.error(err instanceof Error ? err.message : "Couldn't load campaign");
       return null;
     }
