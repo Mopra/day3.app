@@ -212,11 +212,28 @@ export async function submitCampaign(
     })
     .where(eq(campaigns.id, campaign.id));
 
-  await getQueue().send({
-    type: "review_campaign",
-    campaignId: campaign.id,
-    accountId: account.id,
-  });
+  try {
+    await getQueue().send({
+      type: "review_campaign",
+      campaignId: campaign.id,
+      accountId: account.id,
+    });
+  } catch (err) {
+    // The review job is what moves the campaign on, so a campaign left in
+    // pending_review without one looks sent to the user and 409s their retry.
+    // Hand it back (guarded, in case the job did land and already ran) so the
+    // error they see is one they can act on. A job that landed despite the
+    // error finds the campaign back in draft and skips; one that already ran
+    // has moved the status on, nothing is reverted, and the submit succeeded.
+    const reverted = await db
+      .update(campaigns)
+      .set({ status: campaign.status, sandbox: campaign.sandbox, updatedAt: nowIso() })
+      .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "pending_review")))
+      .returning({ id: campaigns.id });
+    if (reverted.length === 0) return;
+    console.error(`[submit] review enqueue failed for ${campaign.id}:`, err);
+    throw new HttpError(503, "Couldn't start the send. Nothing went out. Please try again.");
+  }
 }
 
 export const MIN_SCHEDULE_LEAD_MS = 60_000;

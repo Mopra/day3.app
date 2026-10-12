@@ -138,9 +138,13 @@ few seconds. Nothing is failed.
   the enqueue, so the caller gets a 200 and the sweep enqueues the job within
   15 min. Delayed, never lost, never duplicated.
 - Campaign submit: the status flip to `pending_review` commits, then the
-  enqueue fails and the route 5xxs. The campaign is rescued by the sweep's
-  pipeline stage after 30 min of sitting in `pending_review`; the user sees it
-  "in review" until then and cannot double-submit (409).
+  enqueue is retried once on a fresh Redis connection (a serverless instance can
+  thaw holding a dead socket). If that fails too, `submitCampaign` puts the
+  campaign back to `draft` and returns 503, so the user can simply send again.
+  A campaign that still ends up in `pending_review` or `approved` without its
+  job is rescued by the sweep after 5 min (the next 15-min sweep past that);
+  `generating_recipients` keeps a 30 min window because it can legitimately
+  run that long.
 - Webhook emission is best-effort by design; `webhook_deliveries` is the outbox
   and the sweep drains it.
 

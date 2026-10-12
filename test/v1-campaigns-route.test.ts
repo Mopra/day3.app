@@ -48,8 +48,13 @@ vi.mock("../src/email/factory", () => ({
   }),
 }));
 
+let enqueueFails = false;
 vi.mock("../src/queue/producer", () => ({
-  getQueue: () => ({ send: async () => {} }),
+  getQueue: () => ({
+    send: async () => {
+      if (enqueueFails) throw new Error("Command timed out");
+    },
+  }),
 }));
 
 const listRoute = await import("../app/api/v1/campaigns/route");
@@ -252,6 +257,32 @@ describe("send scope", () => {
     );
     expect(status).toBe(200);
     expect(body.status).toBe("pending_review");
+  });
+
+  it("hands the campaign back to draft when the review job cannot be enqueued", async () => {
+    currentKey = await seedKey(["campaigns:send"]);
+    const created = await create({ subject: "Hi", markdown: "Body." });
+    enqueueFails = true;
+    try {
+      const res = await sendRoute.POST(
+        request(`/api/v1/campaigns/${created.body.id}/send`, "POST"),
+        params(created.body.id),
+      );
+      expect(res.status).toBe(503);
+    } finally {
+      enqueueFails = false;
+    }
+    const row = await currentDb.query.campaigns.findFirst({
+      where: eq(campaigns.id, created.body.id),
+    });
+    expect(row?.status).toBe("draft");
+
+    // And the retry the error asks for goes through.
+    const retry = await sendRoute.POST(
+      request(`/api/v1/campaigns/${created.body.id}/send`, "POST"),
+      params(created.body.id),
+    );
+    expect(retry.status).toBe(200);
   });
 
   it("un-schedules without needing the scope", async () => {

@@ -619,21 +619,33 @@ export async function resumePausedCampaigns(
 // minutes-long outage, Redis data loss — the campaign would sit there forever
 // with the user believing it went out, and the submit route 409s a re-submit.
 // Both downstream handlers are idempotent on status and dedupe-safe, so
-// re-enqueueing after a generous staleness window is free.
+// re-enqueueing after a staleness window is free.
+//
+// The window depends on the state. Review and the hand-off to recipient
+// generation take seconds (the AI pass times out at 30 s), so a campaign still
+// in pending_review / approved after 5 minutes has lost its job, and waiting
+// half an hour left a customer's campaign visibly stuck long enough for someone
+// to approve it by hand (2026-10-12). generating_recipients can legitimately run
+// for minutes on a large audience, so it keeps the long window.
 const PIPELINE_RESCUE_MS = 30 * 60 * 1000;
+const PIPELINE_RESCUE_FAST_MS = 5 * 60 * 1000;
 export async function rescueStuckPipelineCampaigns(
   db: Db,
   jobsQueue: JobQueue,
   now: Date,
 ): Promise<number> {
   const cutoff = new Date(now.getTime() - PIPELINE_RESCUE_MS).toISOString();
+  const fastCutoff = new Date(now.getTime() - PIPELINE_RESCUE_FAST_MS).toISOString();
   const stuck = await db
     .select()
     .from(campaigns)
     .where(
-      and(
-        inArray(campaigns.status, ["pending_review", "approved", "generating_recipients"]),
-        lt(campaigns.updatedAt, cutoff),
+      or(
+        and(
+          inArray(campaigns.status, ["pending_review", "approved"]),
+          lt(campaigns.updatedAt, fastCutoff),
+        ),
+        and(eq(campaigns.status, "generating_recipients"), lt(campaigns.updatedAt, cutoff)),
       ),
     )
     .orderBy(asc(campaigns.updatedAt))

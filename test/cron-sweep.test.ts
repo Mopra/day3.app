@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   JOB_LOG_RETENTION_DAYS,
   failStuckRecipients,
@@ -379,6 +379,32 @@ describe("stuck pipeline rescue", () => {
     // double-enqueue while the rescue job waits its turn.
     const queue2 = new FakeQueue();
     expect(await rescueStuckPipelineCampaigns(db, asQueue(queue2), new Date())).toBe(0);
+  });
+
+  it("rescues a lost review after minutes, but gives recipient generation its long window", async () => {
+    const { db, account, domain, audience } = await setup();
+    const lostReview = await seedCampaign(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      sendingDomainId: domain.id,
+      status: "pending_review",
+    });
+    const generating = await seedCampaign(db, {
+      accountId: account.id,
+      audienceId: audience.id,
+      sendingDomainId: domain.id,
+      status: "generating_recipients",
+    });
+    await db
+      .update(campaigns)
+      .set({ updatedAt: minutesAgo(10) })
+      .where(inArray(campaigns.id, [lostReview.id, generating.id]));
+
+    const queue = new FakeQueue();
+    expect(await rescueStuckPipelineCampaigns(db, asQueue(queue), new Date())).toBe(1);
+    expect(queue.messages).toEqual([
+      { type: "review_campaign", campaignId: lostReview.id, accountId: account.id },
+    ]);
   });
 });
 

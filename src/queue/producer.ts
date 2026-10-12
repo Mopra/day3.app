@@ -63,14 +63,41 @@ function getBullQueue(): Queue {
   return queue;
 }
 
+// Drop the cached socket so the next caller dials a fresh one. A serverless
+// instance frozen overnight thaws holding a half-open Redis socket: ioredis still
+// reports it "ready", every command written to it times out, and nothing ever
+// closes it, so without this the instance could not enqueue for the rest of its
+// life. This is the likeliest reason two campaigns sat in pending_review on
+// 2026-10-12: the morning's first submits flipped the status, and the worker log
+// shows their review job never reached Redis.
+function resetConnection(): void {
+  const q = queue;
+  const c = connection;
+  queue = undefined;
+  connection = undefined;
+  void q?.close().catch(() => {});
+  c?.disconnect();
+}
+
 // The JobQueue the route handlers enqueue through (same interface the test
 // FakeQueue implements). Job name = message.type; the worker routes on it.
-// Handlers are idempotent on DB status, so no enqueue-level dedup is needed.
+// Handlers are idempotent on DB status, so no enqueue-level dedup is needed,
+// and that is also what makes the one retry below safe: if the first add did
+// reach Redis and only its reply was lost, the duplicate job is a no-op.
 export function getQueue(): JobQueue {
-  const q = getBullQueue();
   return {
     async send(message: QueueMessage, opts?: { delayMs?: number }) {
-      await q.add(message.type, message, jobOptionsFor(message.type, opts));
+      const jobOpts = jobOptionsFor(message.type, opts);
+      try {
+        await getBullQueue().add(message.type, message, jobOpts);
+      } catch (err) {
+        logger.warn("enqueue failed; retrying on a fresh redis connection", {
+          jobType: message.type,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        resetConnection();
+        await getBullQueue().add(message.type, message, jobOpts);
+      }
     },
   };
 }
