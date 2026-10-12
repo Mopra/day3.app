@@ -9,6 +9,28 @@ import "./globals.css";
 // doesn't change typeface: Geist carries all UI and body text, Instrument
 // Serif is the display face (see `.font-display` in globals.css). Both are
 // wired to the `--font-*` variables the design tokens read from.
+// Clerk calls the tenant an "organization"; the app calls it a workspace (the
+// select-org screen, the plan copy). A new user's first act is naming it, in
+// Clerk's own dialog, so its wording is overridden to match rather than the
+// first screen and the second disagreeing about what they are creating.
+const WORKSPACE_WORDING = {
+  formFieldLabel__organizationName: "Workspace name",
+  formFieldInputPlaceholder__organizationName: "Your company",
+  organizationSwitcher: {
+    action__createOrganization: "Create workspace",
+    action__manageOrganization: "Manage workspace",
+  },
+  createOrganization: {
+    title: "Create your workspace",
+    formButtonSubmit: "Create workspace",
+  },
+  organizationList: {
+    createOrganization: "Create workspace",
+    action__createOrganization: "Create workspace",
+    titleWithoutPersonal: "Choose a workspace",
+  },
+};
+
 const geist = Geist({
   subsets: ["latin"],
   variable: "--font-geist",
@@ -43,6 +65,7 @@ export default function RootLayout({
   return (
     <ClerkProvider
       afterSignOutUrl="/"
+      localization={WORKSPACE_WORDING}
       // Clerk's shadcn theme reads the app's own design tokens (--card, --primary,
       // --border, --radius, --font-sans, ...) instead of shipping a palette of its
       // own, so the org switcher, user menu, sign-in and the organization profile

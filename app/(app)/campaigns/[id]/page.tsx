@@ -295,6 +295,8 @@ export default function CampaignDetailPage() {
   // How many people a sandbox (free-tier) send would actually reach — teammates
   // in the audience, not the whole audience. null = not a sandbox account.
   const [sandboxRecipients, setSandboxRecipients] = useState<number | null>(null);
+  // Emails the new-account ramp still allows today; null when no ramp applies.
+  const [rampLeft, setRampLeft] = useState<number | null>(null);
   const [recipients, setRecipients] = useState<Recipient[] | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [busy, setBusy] = useState(false);
@@ -334,12 +336,14 @@ export default function CampaignDetailPage() {
         riskReview: RiskReview | null;
         personalization: PersonalizationGap[];
         sandboxRecipients: number | null;
+        rampRemaining: number | null;
       }>(`/api/campaigns/${id}`);
       setCampaign(res.campaign);
       setStats(res.stats);
       setRiskReview(res.riskReview);
       setPersonalization(res.personalization ?? []);
       setSandboxRecipients(res.sandboxRecipients ?? null);
+      setRampLeft(res.rampRemaining ?? null);
       return res.campaign;
     } catch (err) {
       // A 404 means the campaign is not in the active workspace: it was deleted,
@@ -1088,6 +1092,19 @@ export default function CampaignDetailPage() {
                 bigger.
               </p>
             )}
+            {/* The new-account ramp would otherwise pause this send part-way
+                through with no warning. Say it before the click. */}
+            {sandboxRecipients === null &&
+              rampLeft !== null &&
+              audienceSummary &&
+              audienceSummary.subscribed > rampLeft && (
+                <p className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-muted-foreground">
+                  New workspaces warm up their sending over the first two weeks. About{" "}
+                  <strong className="text-foreground">{rampLeft.toLocaleString()}</strong> of these
+                  go out today, and the campaign picks up again on its own each day until the
+                  rest are sent.
+                </p>
+              )}
             <dl className="space-y-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
               <div className="flex gap-2">
                 <dt className="w-16 shrink-0 text-muted-foreground">From</dt>

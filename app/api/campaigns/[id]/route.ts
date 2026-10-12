@@ -16,6 +16,7 @@ import { safeParseSections } from "@/lib/sections";
 import { safeParseTheme } from "@/lib/theme";
 import { nowIso } from "@/lib/ids";
 import { accountSandboxMode } from "@/services/sandbox";
+import { rampRemaining } from "@/services/send-ramp";
 
 export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
   const { id } = await params;
@@ -49,6 +50,10 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
       submittable && accountSandboxMode(account)
         ? await sandboxRecipientCount(db, account.id, campaign)
         : null,
+    // Emails the new-account ramp still allows today (null = no ramp). The send
+    // dialog uses it to say "about N go out today, the rest tomorrow" before a
+    // young account's first big send, instead of the campaign pausing on it.
+    rampRemaining: submittable ? rampRemaining(account) : null,
   });
 });
 

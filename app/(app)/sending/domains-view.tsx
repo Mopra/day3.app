@@ -241,16 +241,6 @@ export function DomainsView({
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={onSubmit} className="space-y-4">
-              {/* Migration guidance: reusing the exact subdomain you sent from at
-                  a previous ESP carries your sending reputation over; a fresh
-                  subdomain starts from zero. Cheapest, highest-value nudge. */}
-              <div className="rounded-lg border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
-                Coming from another email platform? Use the{" "}
-                <span className="font-medium text-foreground">same subdomain</span> you sent from
-                there (e.g. <span className="font-medium">news.yourcompany.com</span>). Reputation is
-                tracked per subdomain, so reusing it carries your history over — a brand-new one
-                starts from zero with inbox providers.
-              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="domain">Domain</Label>
                 <Input
@@ -261,8 +251,23 @@ export function DomainsView({
                 />
                 <p className="text-xs text-muted-foreground">
                   A subdomain like <span className="font-medium">news.yourcompany.com</span> is
-                  recommended — it keeps newsletter sending separate from your main email.
+                  recommended. It keeps newsletter sending separate from your main email.
                 </p>
+                {/* Migration guidance: reusing the exact subdomain you sent from at
+                    a previous ESP carries your sending reputation over; a fresh
+                    subdomain starts from zero. Folded away so a first-time sender
+                    meets the one field they need, not a paragraph about
+                    reputation before they have typed anything. */}
+                <details className="text-xs text-muted-foreground">
+                  <summary className="cursor-pointer hover:text-foreground">
+                    Moving from another email platform?
+                  </summary>
+                  <p className="mt-1">
+                    Use the same subdomain you sent from there. Inboxes remember how a
+                    subdomain has behaved, so reusing it keeps that history. A brand-new one
+                    starts from zero.
+                  </p>
+                </details>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="fromName">From name</Label>

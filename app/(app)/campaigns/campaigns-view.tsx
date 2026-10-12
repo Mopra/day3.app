@@ -171,7 +171,11 @@ export function CampaignsView({ initialCampaigns }: { initialCampaigns: Campaign
                         className="font-medium hover:underline"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        {c.name}
+                        {/* A draft saved before it had a name or subject would
+                            otherwise be a blank, unclickable-looking row. */}
+                        {c.name.trim() || c.subject.trim() || (
+                          <span className="text-muted-foreground">Untitled draft</span>
+                        )}
                       </Link>
                     </TableCell>
                     <TableCell className="max-w-56 truncate text-muted-foreground">

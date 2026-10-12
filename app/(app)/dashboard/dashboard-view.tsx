@@ -299,7 +299,9 @@ export function DashboardView({
                           className="font-medium hover:underline"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          {c.name}
+                          {c.name.trim() || c.subject.trim() || (
+                            <span className="text-muted-foreground">Untitled draft</span>
+                          )}
                         </Link>
                       </TableCell>
                       <TableCell>

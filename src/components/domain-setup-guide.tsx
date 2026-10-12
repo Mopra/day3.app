@@ -261,8 +261,8 @@ export function DomainSetupGuide({
       ? [
           {
             n: 3 as const,
-            title: "Improve deliverability",
-            hint: domain.mailFromStatus === "success" ? "Return-Path active" : "Optional",
+            title: "Extra inbox protection",
+            hint: domain.mailFromStatus === "success" ? "Active" : "Optional",
             status: (domain.mailFromStatus === "success" ? "complete" : "upcoming") as StepStatus,
           },
         ]
@@ -342,8 +342,8 @@ export function DomainSetupGuide({
               n={3}
               total={totalSteps}
               optional
-              title="Improve deliverability"
-              description="A custom Return-Path and DMARC strengthen SPF/DMARC alignment, so more of your mail lands in the inbox. Entirely optional — add these whenever you like."
+              title="Extra inbox protection"
+              description="Two more records that help more of your mail land in the inbox instead of spam. Optional: your domain works without them, so add them whenever you like."
             />
             <DeliverabilitySection
               returnPath={returnPathRecords}
@@ -852,11 +852,11 @@ function StatusHero({
       }
       body={
         windowClosed
-          ? "Your DKIM records are live and correct — they just went up after your email provider's verification window had closed, so it stopped listening. Retry now to reopen it: your records stay exactly as they are, and verification usually completes within a minute."
+          ? "Your DKIM records are live and correct. They just went up after our email provider's verification window had closed, so it stopped listening. Retry now to reopen it: your records stay exactly as they are, and verification usually completes within a minute."
           : failed
             ? "We can't see your DKIM records in public DNS yet. Open step 1 to compare them against what's at your DNS host, then retry — automatic checks have stopped for this domain, so it won't recover on its own."
             : confirmed
-              ? "Your DKIM records are live. We're finalizing verification with your email provider — this usually takes a few minutes, and we're checking continuously."
+              ? "Your DKIM records are live. We're finalizing verification with our email provider. This usually takes a few minutes, and we're checking continuously."
               : "Add the DNS records below at your domain host. We check automatically every few minutes — most domains verify within an hour, though DNS can take up to 48 hours."
       }
       meta={meta}

@@ -46,7 +46,7 @@ export default function SelectOrgPage() {
           <>
             <h1 className="font-display text-2xl sm:text-3xl">One last step</h1>
             <p className="text-sm text-muted-foreground">
-              Name your workspace — it&apos;s your company&apos;s Day3 account, where your
+              Name your workspace. It&apos;s your company&apos;s Day3 account, where your
               domains, audiences and campaigns live. You can rename it later.
             </p>
           </>
