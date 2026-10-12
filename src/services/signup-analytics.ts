@@ -15,6 +15,10 @@
 // channel and page that earned it. Without one (a direct visit) the event is
 // still counted, under a fresh id.
 //
+// This is the app's one sign_up. Do not add a client-side GA tag to fire another:
+// it would set the cookies the privacy policy says the app does not, and GA4
+// would count each signup twice.
+//
 // Off unless GA4_MEASUREMENT_ID and GA4_API_SECRET are both set, and never
 // throws: a signup is never held up or broken by analytics.
 
@@ -79,15 +83,27 @@ export function attributionFromMetadata(metadata: unknown): SignupAttribution {
   return pick((key) => obj[key]) ?? {};
 }
 
+/**
+ * How the person signed up, as GA4's `method`: the social provider they came
+ * through ("google", "github", "agentid"), or "email". Clerk names providers
+ * "google" or "oauth_google" depending on version, and a custom one
+ * "oauth_custom_agentid", so the prefixes are stripped.
+ */
+export function signupMethod(user: { externalAccounts?: { provider: string }[] }): string {
+  const provider = user.externalAccounts?.[0]?.provider;
+  if (!provider) return "email";
+  return provider.replace(/^oauth_/, "").replace(/^custom_/, "").slice(0, MAX_VALUE) || "email";
+}
+
 function freshClientId(): string {
   const random = Math.floor(Math.random() * 2_000_000_000);
   return `${random}.${Math.floor(Date.now() / 1000)}`;
 }
 
 /** The Measurement Protocol body for one sign_up. Exported for the test. */
-export function signupPayload(attribution: SignupAttribution) {
+export function signupPayload(attribution: SignupAttribution, method = "email") {
   const params: Record<string, string | number> = {
-    method: "app",
+    method,
     // Required for the event to count as engaged in GA4 reports.
     engagement_time_msec: 1,
   };
@@ -104,6 +120,7 @@ export function signupPayload(attribution: SignupAttribution) {
 
 export async function reportSignup(
   attribution: SignupAttribution,
+  method = "email",
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
   const measurementId = process.env.GA4_MEASUREMENT_ID;
@@ -116,7 +133,7 @@ export async function reportSignup(
   try {
     const res = await fetchImpl(url, {
       method: "POST",
-      body: JSON.stringify(signupPayload(attribution)),
+      body: JSON.stringify(signupPayload(attribution, method)),
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) console.error(`[signup-analytics] GA4 answered ${res.status}`);

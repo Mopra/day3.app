@@ -6,7 +6,7 @@ import type { JobQueue } from "../queue/messages";
 import { newId, nowIso } from "../lib/ids";
 import { restampAutomationSandbox } from "./automation-sandbox";
 import { ensureSharedDomain } from "./shared-domain";
-import { attributionFromMetadata, reportSignup } from "./signup-analytics";
+import { attributionFromMetadata, reportSignup, signupMethod } from "./signup-analytics";
 import { addMemberToTeamAudience, ensureTeamAudience } from "./team-audience";
 import {
   FREE_PLAN,
@@ -309,7 +309,7 @@ export async function syncCurrentOrganization(
   // A new workspace is a signup: tell the marketing site's GA4 (see
   // signup-analytics.ts). Never throws.
   if (created) {
-    await reportSignup(attributionFromMetadata(user.unsafeMetadata));
+    await reportSignup(attributionFromMetadata(user.unsafeMetadata), signupMethod(user));
   }
 
   // Day-one provisioning: a pre-verified Day3 sending domain and an audience
