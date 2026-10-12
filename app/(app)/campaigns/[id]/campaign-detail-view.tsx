@@ -50,6 +50,7 @@ import {
   CampaignComposer,
   useComposerSave,
   type CampaignFormValues,
+  type ComposerLookups,
 } from "@/components/campaign-composer";
 import { SendTestButton } from "@/components/send-test-button";
 import { BusinessAddressDialog } from "@/components/business-address-dialog";
@@ -293,9 +294,13 @@ const noFlush = async () => {};
 export function CampaignDetailView({
   initial,
   initialOnboarding,
+  composerLookups,
 }: {
   initial: CampaignDetailPayload;
   initialOnboarding: OnboardingState;
+  // Read on the server for drafts, so the composer's pickers are filled on the
+  // first frame. null for a campaign that is past editing.
+  composerLookups: ComposerLookups | null;
 }) {
   const id = initial.campaign.id;
   const api = useApi();
@@ -936,6 +941,7 @@ export function CampaignDetailView({
       {isDraft ? (
         <CampaignComposer
           initial={campaign}
+          lookups={composerLookups ?? undefined}
           onAutosave={onAutosave}
           titleBadge={statusBadge}
           titleActions={<WithComposerSave>{actionButtons}</WithComposerSave>}

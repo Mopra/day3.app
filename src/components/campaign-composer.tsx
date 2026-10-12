@@ -318,6 +318,13 @@ export type CampaignFormValues = {
 // that mode those header rows are hidden rather than shown as dead controls.
 export type ComposerVariant = "campaign" | "automation-node";
 
+export type ComposerLookups = {
+  audiences: Audience[];
+  domains: SendingDomain[];
+  senders: Sender[];
+  account: Account;
+};
+
 export function CampaignComposer({
   initial,
   initialValues,
@@ -325,6 +332,7 @@ export function CampaignComposer({
   onAutosave,
   titleBadge,
   titleActions,
+  lookups,
 }: {
   initial?: Campaign;
   // Seed values for a composer that is not editing a campaign row (an automation
@@ -339,6 +347,10 @@ export function CampaignComposer({
   // and page-level action buttons on the campaign detail page).
   titleBadge?: ReactNode;
   titleActions?: ReactNode;
+  // The pickers' data, when the page already read it on the server. Without it
+  // the composer fetches on mount and the To field shows a bare audience id
+  // until the list arrives.
+  lookups?: ComposerLookups;
 }) {
   const api = useApi();
   const nodeMode = variant === "automation-node";
@@ -352,12 +364,12 @@ export function CampaignComposer({
     budget: aiBudget,
     refresh: refreshAiBudget,
   } = useAiBudget();
-  const [audiences, setAudiences] = useState<Audience[]>([]);
-  const [domains, setDomains] = useState<SendingDomain[]>([]);
-  const [senders, setSenders] = useState<Sender[]>([]);
+  const [audiences, setAudiences] = useState<Audience[]>(lookups?.audiences ?? []);
+  const [domains, setDomains] = useState<SendingDomain[]>(lookups?.domains ?? []);
+  const [senders, setSenders] = useState<Sender[]>(lookups?.senders ?? []);
   // The org account — its name and mailing address fill the footer (the address
   // is legally required). Loaded so the preview shows real values, not samples.
-  const [account, setAccount] = useState<Account | null>(null);
+  const [account, setAccount] = useState<Account | null>(lookups?.account ?? null);
 
   // Inline "add your business address" dialog, so a missing address can be fixed
   // without leaving the composer.
@@ -534,6 +546,7 @@ export function CampaignComposer({
     });
 
   useEffect(() => {
+    if (lookups) return;
     api
       .get<{ audiences: Audience[] }>("/api/audiences")
       .then((res) => setAudiences(res.audiences))
