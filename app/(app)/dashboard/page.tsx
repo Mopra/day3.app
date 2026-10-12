@@ -1,7 +1,6 @@
-import { requireAccount } from "@/api/context";
+import { requireAccount, requireOnboardingState } from "@/api/context";
 import { listCampaigns } from "@/api/lists";
 import { computeAccountHealth } from "@/services/health";
-import { computeOnboardingState } from "@/services/onboarding";
 import { DashboardView } from "./dashboard-view";
 
 // The dashboard was the worst case of the fetch-on-mount pattern: three requests
@@ -14,7 +13,7 @@ export default async function DashboardPage() {
   const { db, account } = await requireAccount();
   const [health, onboarding, campaigns] = await Promise.all([
     computeAccountHealth(db, account.id),
-    computeOnboardingState(db, account),
+    requireOnboardingState(),
     listCampaigns(db, account.id),
   ]);
   return (

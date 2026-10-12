@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
-import { requireAccount } from "@/api/context";
-import { computeOnboardingState } from "@/services/onboarding";
+import { requireAccount, requireOnboardingState } from "@/api/context";
 import { AppShell } from "@/components/app-shell";
 
 // Server-side gate for the whole dashboard. Replaces the SPA's <Protected> +
@@ -21,8 +20,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // resolving it here (rather than per page, or as a mount fetch) is what lets the
   // "what's next" thread follow the user onto /sending and /audiences instead of
   // living only on the dashboard.
-  const { db, account } = await requireAccount();
-  const onboarding = await computeOnboardingState(db, account);
+  const { account } = await requireAccount();
+  const onboarding = await requireOnboardingState();
   return (
     <AppShell plan={account.plan} onboarding={onboarding}>
       {children}

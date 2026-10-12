@@ -344,7 +344,7 @@ function MarketingTiles({ counts }: { counts: CampaignMetricCounts }) {
   ];
 
   return (
-    <Reveal delay={60} className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-7">
+    <Reveal delay={30} className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-7">
       {tiles.map((t) => (
         <MetricTile key={t.label} {...t} />
       ))}
@@ -359,7 +359,7 @@ function MarketingDetail({ counts }: { counts: CampaignMetricCounts }) {
   const unsubRate = ratio(counts.unsubscribed, engagementBase(counts));
 
   return (
-    <Reveal delay={180} className="grid gap-4 md:grid-cols-2">
+    <Reveal delay={90} className="grid gap-4 md:grid-cols-2">
       {/* Deliverability funnel */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">
@@ -460,7 +460,7 @@ function TransactionalTiles({ tx }: { tx: TransactionalMetrics }) {
   ];
 
   return (
-    <Reveal delay={60} className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+    <Reveal delay={30} className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
       {tiles.map((t) => (
         <MetricTile key={t.label} {...t} />
       ))}
@@ -472,7 +472,7 @@ function TransactionalDelivery({ tx }: { tx: TransactionalMetrics }) {
   const c = tx.totals;
   const deliveryRate = ratio(c.delivered, c.sent);
   return (
-    <Reveal delay={180}>
+    <Reveal delay={90}>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
@@ -535,7 +535,7 @@ function TransactionalSenders({ tx }: { tx: TransactionalMetrics }) {
   });
 
   return (
-    <Reveal delay={240}>
+    <Reveal delay={120}>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
@@ -619,7 +619,7 @@ function TransactionalSummary({ tx, onOpen }: { tx: TransactionalMetrics; onOpen
     { label: "Never sent", value: n(never), tone: never > 0 ? "bad" : undefined },
   ];
   return (
-    <Reveal delay={210}>
+    <Reveal delay={105}>
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
           <div>
@@ -669,7 +669,7 @@ function CampaignTable({ rows }: { rows: CampaignMetricsRow[] }) {
   });
 
   return (
-    <Reveal delay={240}>
+    <Reveal delay={120}>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle>By campaign</CardTitle>
@@ -773,7 +773,7 @@ function AutomationTable({ rows }: { rows: AutomationMetricsRow[] }) {
   });
 
   return (
-    <Reveal delay={300}>
+    <Reveal delay={150}>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle>By automation</CardTitle>
@@ -999,7 +999,7 @@ export function MetricsView({
         ) : (
           <>
             <TransactionalTiles tx={transactional} />
-            <Reveal delay={120}>
+            <Reveal delay={60}>
               <ReputationCard rep={reputation} />
             </Reveal>
             <TransactionalDelivery tx={transactional} />
@@ -1047,7 +1047,7 @@ export function MetricsView({
         <MarketingTiles counts={counts} />
       )}
 
-      <Reveal delay={120}>
+      <Reveal delay={60}>
         <ReputationCard rep={reputation} />
       </Reveal>
 

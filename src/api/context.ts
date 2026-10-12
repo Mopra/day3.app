@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { computeOnboardingState, type OnboardingState } from "../services/onboarding";
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { getDb, type Db } from "../db/client";
 import type { Account } from "../db/schema";
@@ -49,6 +50,16 @@ export const requireAccount = cache(async function requireAccount(): Promise<Acc
     account = await syncCurrentOrganization(db, clerk, authState);
   }
   return { db, account, auth: authState };
+});
+
+// The current account's onboarding state, once per request. The (app) layout
+// reads it for the setup strip and the dashboard page reads it for the day-zero
+// view; without this every dashboard load ran the same handful of queries twice.
+// Same per-request scope as requireAccount, so a change is visible on the very
+// next request (router.refresh() after a mutation included).
+export const requireOnboardingState = cache(async function requireOnboardingState(): Promise<OnboardingState> {
+  const { db, account } = await requireAccount();
+  return computeOnboardingState(db, account);
 });
 
 export type AdminContext = { db: Db; auth: AuthState; userEmail: string };

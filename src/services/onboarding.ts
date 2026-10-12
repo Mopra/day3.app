@@ -63,7 +63,7 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
     [{ subscriberCount, ownCount }],
     [campaignCounts],
     sharedDomain,
-    teamAudienceId,
+    [teamAudienceId, teamSize],
   ] = await Promise.all([
     db
       .select({ id: sendingDomains.id })
@@ -107,7 +107,11 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
       .from(campaigns)
       .where(eq(campaigns.accountId, account.id)),
     findSharedDomain(db, account.id),
-    findTeamAudience(db, account.id),
+    // Chained inside the batch rather than after it, so the team count does not
+    // add a second round trip in series on every page load.
+    findTeamAudience(db, account.id).then(
+      async (id) => [id, id ? await teamAudienceSize(db, account.id, id) : 0] as const,
+    ),
   ]);
 
   const eligibility = checkSendEligibility(account);
@@ -125,7 +129,6 @@ export async function computeOnboardingState(db: Db, account: Account): Promise<
   // account has no path to any email, shared domain or not. Offering one would
   // be a button that fails when pressed.
   const hasSharedDomain = sharedDomain !== null;
-  const teamSize = teamAudienceId ? await teamAudienceSize(db, account.id, teamAudienceId) : 0;
   const canSendFirstEmail = hasSharedDomain && teamSize > 0 && eligibility.allowed;
 
   // The first concrete thing stopping a send, in the order a user must fix them.

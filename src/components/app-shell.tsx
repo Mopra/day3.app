@@ -4,7 +4,7 @@ import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ComponentType, Ref, RefAttributes } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { OrganizationSwitcher, UserButton, useAuth } from "@clerk/nextjs";
+import { ClerkLoading, OrganizationSwitcher, UserButton, useAuth } from "@clerk/nextjs";
 import { Menu, Sparkles, Workflow } from "lucide-react";
 import { Day3Mark } from "@/components/day3-mark";
 import { cn } from "@/lib/utils";
@@ -417,26 +417,37 @@ function SidebarBody({
           its avatar sits flush at that gutter rather than a few px right.
           min-w-0 lets a long org name truncate (ellipsis) instead of
           pushing the chevron out of the fixed-width sidebar. */}
+      {/* Fixed at the trigger's loaded height (28px), with a placeholder while
+          Clerk loads: it renders nothing until then, and the whole nav below
+          used to jump down when it arrived. */}
       <div className="min-w-0 px-5 pb-3">
-        <OrganizationSwitcher
-          hidePersonal
-          appearance={{
-            elements: {
-              organizationSwitcherTrigger: {
-                paddingLeft: 0,
-                maxWidth: "100%",
-                minWidth: 0,
+        <div className="relative flex h-7 min-w-0 items-center">
+          <ClerkLoading>
+            <div className="absolute inset-0 flex items-center gap-2" aria-hidden>
+              <span className="size-5 rounded-md bg-muted" />
+              <span className="h-3 w-24 rounded bg-muted" />
+            </div>
+          </ClerkLoading>
+          <OrganizationSwitcher
+            hidePersonal
+            appearance={{
+              elements: {
+                organizationSwitcherTrigger: {
+                  paddingLeft: 0,
+                  maxWidth: "100%",
+                  minWidth: 0,
+                },
+                organizationPreview: { minWidth: 0 },
+                organizationPreviewTextContainer: { minWidth: 0 },
+                organizationPreviewMainIdentifier: {
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                },
               },
-              organizationPreview: { minWidth: 0 },
-              organizationPreviewTextContainer: { minWidth: 0 },
-              organizationPreviewMainIdentifier: {
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              },
-            },
-          }}
-        />
+            }}
+          />
+        </div>
       </div>
       <nav className="flex flex-1 flex-col gap-1 px-2">
         {groups.map((group, i) => (
@@ -494,7 +505,9 @@ function SidebarBody({
           placement for the personal profile/sign-out menu. px-5 (20px)
           matches the nav/Help/AI gutter, and the trigger's own padding is
           zeroed so the avatar sits flush at that gutter. */}
-      <div className="flex items-center px-5 py-3 mb-5">
+      {/* min-h holds the loaded avatar's height so the sidebar above it does
+          not shift when Clerk arrives. */}
+      <div className="flex min-h-[52px] items-center px-5 py-3 mb-5">
         <UserButton appearance={{ elements: { userButtonTrigger: { padding: 0 } } }} />
       </div>
     </div>
