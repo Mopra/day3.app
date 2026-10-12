@@ -4,10 +4,15 @@ import { listSendersWithDomain } from "@/api/senders";
 import { findSharedDomain } from "@/services/shared-domain";
 import { SendingView } from "./sending-view";
 
-// Server-rendered — see the note in ../campaigns/page.tsx. Domains and senders
+// Server-rendered: see the note in ../campaigns/page.tsx. Domains and senders
 // are one setup job (a sender is an address on a verified domain), so they share
 // a page; both reads go out together and the view switches between them.
-export default async function SendingPage() {
+export default async function SendingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const { tab } = await searchParams;
   const { db, account } = await requireAccount();
   const [domains, senders, shared] = await Promise.all([
     listDomains(db, account.id),
@@ -21,6 +26,7 @@ export default async function SendingPage() {
       initialDomains={domains}
       initialSenders={senders}
       sharedFromEmail={shared?.fromEmail ?? null}
+      initialTab={tab === "senders" ? "senders" : "domains"}
     />
   );
 }

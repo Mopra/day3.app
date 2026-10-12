@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,10 +12,11 @@ import { useApi } from "@/lib/api";
 import type { Account } from "@/lib/types";
 import { OrganizationSection } from "./organization-section";
 
-// The account row comes from the server render (./page.tsx) — requireAccount has
+// The account row comes from the server render (./page.tsx). requireAccount has
 // already resolved it there, so this page costs no query of its own.
 export function SettingsView({ account }: { account: Account }) {
   const api = useApi();
+  const router = useRouter();
   const [address, setAddress] = useState(account.companyAddress ?? "");
   const [saving, setSaving] = useState(false);
 
@@ -44,6 +46,9 @@ export function SettingsView({ account }: { account: Account }) {
             try {
               await api.patch("/api/account", { companyAddress: address });
               toast.success("Saved");
+              // The setup strip in the layout counts the address as a step, so
+              // re-run the server render or it keeps asking for one.
+              router.refresh();
             } catch (err) {
               toast.error(err instanceof Error ? err.message : "Failed");
             } finally {
@@ -56,7 +61,7 @@ export function SettingsView({ account }: { account: Account }) {
         </Button>
       </section>
 
-      {/* API keys moved to their own page — they come with the docs that make
+      {/* API keys moved to their own page: they come with the docs that make
           them usable, which is more than a settings section can carry. */}
       <section className="space-y-2">
         <h2 className="text-base font-medium">API keys</h2>

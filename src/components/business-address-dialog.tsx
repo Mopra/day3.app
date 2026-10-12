@@ -1,12 +1,13 @@
 "use client";
 
 // The "add your business address" dialog. A physical mailing address is legally
-// required in every email footer, so a missing one blocks sending — and it's the
+// required in every email footer, so a missing one blocks sending, and it's the
 // one send gate a user can clear without leaving what they're doing. Shared by the
 // composer's footer preview and the campaign page's "can't be sent yet" notice so
 // both fix it in place, with the same wording, instead of sending people to
 // Settings and back.
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -43,6 +44,7 @@ export function BusinessAddressDialog({
   onSaved?: (address: string) => void;
 }) {
   const api = useApi();
+  const router = useRouter();
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -68,6 +70,8 @@ export function BusinessAddressDialog({
       );
       onSaved?.(value);
       toast.success("Address saved");
+      // The layout's setup strip and the page's send gates are server-rendered.
+      router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't save address");
     } finally {

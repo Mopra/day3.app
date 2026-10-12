@@ -49,19 +49,23 @@ import { formatDate } from "@/lib/format";
 import type { Audience } from "@/lib/types";
 import { SuppressionsTab } from "./suppressions-tab";
 
-type TabKey = "audiences" | "suppressions";
+export type TabKey = "audiences" | "suppressions";
 
-export function AudiencesView({ initialAudiences }: { initialAudiences: Audience[] }) {
+export function AudiencesView({
+  initialAudiences,
+  initialTab,
+}: {
+  initialAudiences: Audience[];
+  // From ?tab=, read on the server so a deep link paints the right tab first.
+  initialTab: TabKey;
+}) {
   const api = useApi();
   const router = useRouter();
   // Audiences | Suppressions. Reflected in ?tab= so the blocklist is deep-linkable
   // (the old /suppressions URL redirects to it) and survives a refresh.
-  const [tab, setTab] = useState<TabKey>("audiences");
-  useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("tab") === "suppressions") {
-      setTab("suppressions");
-    }
-  }, []);
+  const [tab, setTab] = useState<TabKey>(initialTab);
+  // A link to another ?tab= on this same page re-renders without remounting.
+  useEffect(() => setTab(initialTab), [initialTab]);
   function changeTab(next: TabKey) {
     setTab(next);
     const url = new URL(window.location.href);

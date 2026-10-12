@@ -7,7 +7,7 @@ import { SharedDomainCard } from "@/components/shared-domain-card";
 import { DomainsView } from "./domains-view";
 import { SendersView } from "./senders-view";
 
-type TabKey = "domains" | "senders";
+export type TabKey = "domains" | "senders";
 
 // Domains | Senders under one "Sending" heading. The tab is reflected in ?tab=
 // so a deep link (the composer's "set up a domain", the domain guide's "add a
@@ -16,21 +16,25 @@ export function SendingView({
   initialDomains,
   initialSenders,
   sharedFromEmail,
+  initialTab,
 }: {
+  // From ?tab=, read on the server so a deep link paints the right tab first.
+  initialTab: TabKey;
   initialDomains: SendingDomain[];
   initialSenders: Sender[];
   // The Day3 test address, when the account has a usable one. Null turns the
   // card off entirely (feature unconfigured, or cut off by an operator).
   sharedFromEmail: string | null;
 }) {
-  const [tab, setTab] = useState<TabKey>("domains");
+  const [tab, setTab] = useState<TabKey>(initialTab);
+  // A link to another ?tab= on this same page re-renders without remounting.
+  useEffect(() => setTab(initialTab), [initialTab]);
   // Opens the Add domain dialog. Onboarding links arrive with ?add=domain so
   // "Set up my domain" lands in the form rather than on a page with a button
   // for it; the param is dropped so a refresh doesn't reopen the dialog.
   const [addDomainRequest, setAddDomainRequest] = useState(0);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("tab") === "senders") setTab("senders");
     if (params.get("add") === "domain") {
       setAddDomainRequest((n) => n + 1);
       const url = new URL(window.location.href);
