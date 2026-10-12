@@ -370,3 +370,49 @@ describe("MCP tenancy", () => {
     expect(text).not.toContain("secret");
   });
 });
+
+describe("MCP setup tools", () => {
+  it("takes a workspace through setup without the app", async () => {
+    const status = await tool("day3_setup_status");
+    expect(status.isError).toBe(false);
+    expect(Array.isArray(status.data.next_steps)).toBe(true);
+
+    const address = await tool("day3_set_mailing_address", { address: "1 Main St, Springfield" });
+    expect(address.data.mailing_address).toBe("1 Main St, Springfield");
+
+    const domain = await tool("day3_add_domain", {
+      domain: "mail.newco.test",
+      from_name: "NewCo",
+      from_email: "hi@mail.newco.test",
+    });
+    expect(domain.isError).toBe(false);
+    expect(domain.data.domain).toBe("mail.newco.test");
+    expect(domain.data.verified).toBe(false);
+
+    const wrongDomain = await tool("day3_add_domain", {
+      domain: "mail.other.test",
+      from_name: "X",
+      from_email: "hi@elsewhere.test",
+    });
+    expect(wrongDomain.isError).toBe(true);
+
+    const audience = await tool("day3_create_audience", { name: "Newsletter" });
+    const added = await tool("day3_add_contacts", {
+      audience_id: audience.data.id,
+      contacts: [{ email: "a@reader.test" }, { email: "not-an-email" }, { email: "b@reader.test", status: "unsubscribed" }],
+    });
+    expect(added.data.created).toBe(2);
+    expect((added.data.failed as unknown[]).length).toBe(1);
+
+    const form = await tool("day3_create_form", { audience_id: audience.data.id, name: "Site signup" });
+    expect(String(form.data.url)).toBe(`https://app.day3.test/f/${form.data.id}`);
+  });
+
+  it("cannot add contacts to another account's audience", async () => {
+    const other = await seedAccount(currentDb);
+    const foreign = await seedAudience(currentDb, other.id);
+    const res = await tool("day3_add_contacts", { audience_id: foreign.id, contacts: [{ email: "x@y.test" }] });
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/not found/i);
+  });
+});

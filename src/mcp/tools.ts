@@ -28,6 +28,7 @@ import {
 import { MARKDOWN_DIALECT_REFERENCE } from "../lib/campaign-markdown-docs";
 import { scopeFix, type McpContext, type McpCredential } from "./auth";
 import type { Tool } from "./protocol";
+import { SETUP_TOOLS } from "./setup-tools";
 
 // The tool surface an AI editor sees. Each tool is a thin adapter over the same
 // functions the REST API calls — the MCP server is a second front door onto v1,
@@ -96,7 +97,7 @@ function parseCampaignInput(args: Record<string, unknown>) {
   return parsed.data;
 }
 
-export const TOOLS: Tool<Ctx>[] = [
+const CAMPAIGN_TOOLS: Tool<Ctx>[] = [
   {
     name: "day3_context",
     title: "Get Day3 workspace context",
@@ -445,6 +446,8 @@ export const TOOLS: Tool<Ctx>[] = [
   },
 ];
 
+export const TOOLS: Tool<Ctx>[] = [...CAMPAIGN_TOOLS, ...SETUP_TOOLS];
+
 // Sent once at initialize rather than repeated across nine tool descriptions:
 // the dialect is the thing a model has to get right, and it would otherwise cost
 // tokens on every tools/list.
@@ -453,6 +456,14 @@ here and have them appear as editable drafts in the user's Day3 workspace.
 
 Start with day3_context to learn the workspace's audiences, senders and whether
 sending is possible at all.
+
+SETUP. A new workspace (including one created the moment you connected) starts
+on the free plan with a Day3 test domain and a team audience, so a test email to
+the workspace's own members works straight away. day3_setup_status lists what is
+left before it can mail real subscribers, with the tool for each step: mailing
+address, sending domain (its DNS records are added by the human at their DNS
+host), contacts or a signup form. Choosing a paid plan is the human's step, at
+https://go.day3.app/billing. Only add contacts who opted in to this sender.
 
 Campaign bodies are written in Day3 Markdown:
 

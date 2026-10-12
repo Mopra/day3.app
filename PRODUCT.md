@@ -1315,8 +1315,17 @@ the app.
   Anything the dialect can't express round-trips through a raw-HTML escape
   hatch rather than being silently dropped.
 - **Tools:** read the workspace (audiences, senders, plan and sending status),
-  list/read/create/update campaigns, render a preview, send a test email, and —
-  scope permitting — send or schedule to the audience.
+  list/read/create/update campaigns, render a preview, send a test email, and,
+  scope permitting, send or schedule to the audience.
+- **Setup tools, so an agent can finish onboarding without the app:** setup
+  status (what is left, in order, with the tool for each step), mailing
+  address, add a sending domain (returns the DNS records for the human to
+  publish) and re-check it, create an audience, add up to 500 contacts at a
+  time (subscribed or unsubscribed only), and create a hosted signup form
+  (returns its public URL). None sends mail, so none is scoped. Each calls the
+  same service as the app's own route (`services/domain-setup.ts`,
+  `services/form-setup.ts`, `api/v1/contacts.ts`). Picking a paid plan stays a
+  human step in the billing page.
 - **The safety line runs at "who receives it".** Writing, previewing and test
   sending are unrestricted: a test reaches only addresses the user names, and
   iterating on an email is the point. Sending to a real audience needs the

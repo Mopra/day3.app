@@ -1,4 +1,5 @@
 import type { ApiScope } from "../api/v1/scopes";
+import { docsUrl } from "../lib/docs-links";
 
 // OAuth discovery for the MCP endpoint.
 //
@@ -56,7 +57,7 @@ export function protectedResourceMetadata(origin: string) {
     authorization_servers: issuer ? [issuer] : [],
     scopes_supported: [...BASE_OAUTH_SCOPES],
     bearer_methods_supported: ["header"],
-    resource_documentation: "https://docs.day3.app",
+    resource_documentation: docsUrl(),
   };
 }
 

@@ -1,107 +1,11 @@
-import { eq } from "drizzle-orm";
-import { route, json, HttpError } from "@/api/http";
+import { route, json } from "@/api/http";
 import { requireAccount } from "@/api/context";
-import { findDomain } from "@/api/finders";
-import { sendingDomains } from "@/db/schema";
-import { nowIso } from "@/lib/ids";
-import { dkimWindowClosed, parseDnsRecords, registrableRoot } from "@/lib/domain";
-import { detectRegistrar } from "@/services/dns-registrar";
-import { publishToCloudflare } from "@/services/dns-publish";
-import { resolveRecords } from "@/services/dns-resolve";
-import { ensureMailFrom, getDomainIdentity, restartDkim } from "@/services/ses-identity";
-import { enforceRateLimit } from "@/lib/rate-limit";
+import { recheckSendingDomain } from "@/services/domain-setup";
 
-// Per-record live status via DoH (independent of SES) so the UI can show each
-// record as "Found"/"Waiting". `requiredResolved` covers only the DKIM (verify)
-// records; deliverability rows (Return-Path/DMARC) report their own status.
-function dnsFor(domain: { dnsRecordsJson: string | null }) {
-  return resolveRecords(parseDnsRecords(domain.dnsRecordsJson));
-}
-
-// Re-check verification with SES (GetEmailIdentity). When VerifiedForSendingStatus
-// is true the domain flips to "verified" — SES's own status is authoritative. The
-// admin override path remains the testing fallback.
+// Re-check verification with SES. See services/domain-setup.ts, shared with the
+// MCP setup tools.
 export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
   const { id } = await params;
   const { db, account } = await requireAccount();
-  await enforceRateLimit(
-    "domain_recheck",
-    account.id,
-    undefined,
-    "Still checking. DNS can take a while to propagate. We're watching this automatically, so you don't have to keep refreshing.",
-  );
-  const row = await findDomain(db, account.id, id);
-  if (!row) throw new HttpError(404, "Not found");
-
-  const region = process.env.AWS_REGION;
-  if (region && row.provider === "ses") {
-    try {
-      let state = await getDomainIdentity(row.domain, region);
-      // Retrofit identities created before custom MAIL FROM existed. Guard on the
-      // "not_started" sentinel so we don't issue a write on every poll.
-      if (state.mailFromStatus === "not_started") {
-        try {
-          await ensureMailFrom(row.domain, region);
-          state = await getDomainIdentity(row.domain, region);
-        } catch (err) {
-          console.error("[domains] ensureMailFrom failed:", err);
-        }
-      }
-      // Recover a domain SES has permanently given up on. SES stops polling for
-      // the DKIM CNAMEs 72h after the identity is created and parks the status at
-      // FAILED; if the records only went live afterwards, re-reading it (which is
-      // all this route otherwise does) returns FAILED forever. When the published
-      // records provably resolve, DNS isn't the problem — so reopen SES's window.
-      //
-      // requiredResolved gates this to the genuinely recoverable case, so a domain
-      // whose records were never added doesn't get poked on every poll. The
-      // restart normally clears the condition on its own (SES re-polls the
-      // already-live CNAMEs and flips to SUCCESS within about a minute); beyond
-      // that, cron never sweeps failed domains, so this only runs on an explicit
-      // user re-check, which enforceRateLimit above already throttles.
-      const live = await resolveRecords(state.records);
-      if (dkimWindowClosed(state.dkimStatus, live.requiredResolved)) {
-        try {
-          state = await restartDkim(row.domain, region);
-          // SES keeps the existing tokens when the signing config is unchanged, so
-          // this is usually a no-op — but if it ever does rotate them, a domain we
-          // manage the DNS for would stall again waiting on records nobody
-          // published. Best-effort: never let this fail the re-check.
-          if (row.dnsAutoConfigured && row.dnsZoneId) {
-            try {
-              await publishToCloudflare(db, account.id, row.dnsZoneId, state.records);
-            } catch (err) {
-              console.error("[domains] DKIM restart: Cloudflare re-publish failed:", err);
-            }
-          }
-        } catch (err) {
-          console.error("[domains] restartDkim failed:", err);
-        }
-      }
-      await db
-        .update(sendingDomains)
-        .set({
-          verificationStatus: state.verificationStatus,
-          dkimStatus: state.dkimStatus,
-          mailFromDomain: state.mailFromDomain,
-          mailFromStatus: state.mailFromStatus,
-          dnsRecordsJson: JSON.stringify(state.records),
-          updatedAt: nowIso(),
-        })
-        .where(eq(sendingDomains.id, row.id));
-      const fresh = await findDomain(db, account.id, row.id);
-      return json({
-        domain: fresh,
-        dns: fresh ? await dnsFor(fresh) : { records: [], requiredResolved: false },
-        registrar: await detectRegistrar(registrableRoot(row.domain)),
-      });
-    } catch (err) {
-      console.error("[domains] SES GetEmailIdentity failed:", err);
-    }
-  }
-  return json({
-    domain: row,
-    dns: await dnsFor(row),
-    registrar: await detectRegistrar(registrableRoot(row.domain)),
-  });
+  return json(await recheckSendingDomain(db, account.id, id));
 });
