@@ -4,6 +4,7 @@ import { createContext, useContext, useEffect, useImperativeHandle, useRef, useS
 import type { ComponentType, Ref, RefAttributes } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { LazyMotion } from "motion/react";
 import { ClerkLoading, OrganizationSwitcher, UserButton, useAuth } from "@clerk/nextjs";
 import { Menu, Sparkles, Workflow } from "lucide-react";
 import { Day3Mark } from "@/components/day3-mark";
@@ -200,6 +201,9 @@ export function usePlan(): string | null {
   return useContext(PlanContext);
 }
 
+const loadMotionFeatures = () =>
+  import("@/components/ui/animated-icons/motion-features").then((mod) => mod.default);
+
 export function AppShell({
   children,
   plan,
@@ -273,6 +277,9 @@ export function AppShell({
     : NAV_GROUPS;
 
   return (
+    // The animated nav icons render with `m`, so their animation features load
+    // here after first paint instead of with the shell.
+    <LazyMotion features={loadMotionFeatures} strict>
     <PlanContext.Provider value={plan}>
     <AiBudgetProvider>
       {/* h-dvh, not h-screen: on iOS Safari `100vh` is the *largest* viewport
@@ -390,6 +397,7 @@ export function AppShell({
       <CommandPalette />
     </AiBudgetProvider>
     </PlanContext.Provider>
+    </LazyMotion>
   );
 }
 

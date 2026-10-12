@@ -1,7 +1,7 @@
 "use client";
 
 import type { Variants } from "motion/react";
-import { motion, useAnimation } from "motion/react";
+import { m, useAnimation } from "motion/react";
 import type { HTMLAttributes } from "react";
 import { forwardRef, useCallback, useImperativeHandle, useRef } from "react";
 
@@ -66,7 +66,7 @@ const LifeBuoyIcon = forwardRef<LifeBuoyIconHandle, LifeBuoyIconProps>(
         onMouseLeave={handleMouseLeave}
         {...props}
       >
-        <motion.svg
+        <m.svg
           animate={controls}
           fill="none"
           height={size}
@@ -87,7 +87,7 @@ const LifeBuoyIcon = forwardRef<LifeBuoyIconHandle, LifeBuoyIconProps>(
           <path d="m14.83 14.83 4.24 4.24" />
           <path d="m9.17 14.83-4.24 4.24" />
           <circle cx="12" cy="12" r="4" />
-        </motion.svg>
+        </m.svg>
       </div>
     );
   }

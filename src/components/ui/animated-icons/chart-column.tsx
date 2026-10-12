@@ -1,7 +1,7 @@
 "use client";
 
 import type { Variants } from "motion/react";
-import { motion, useAnimation } from "motion/react";
+import { m, useAnimation } from "motion/react";
 import type { HTMLAttributes } from "react";
 import { forwardRef, useCallback, useImperativeHandle, useRef } from "react";
 
@@ -84,21 +84,21 @@ const ChartColumnIcon = forwardRef<ChartColumnIconHandle, ChartColumnIconProps>(
           xmlns="http://www.w3.org/2000/svg"
         >
           <path d="M3 3v16a2 2 0 0 0 2 2h16" />
-          <motion.path
+          <m.path
             animate={controls}
             custom={0}
             d="M8 17v-3"
             initial="normal"
             variants={BAR_VARIANTS}
           />
-          <motion.path
+          <m.path
             animate={controls}
             custom={1}
             d="M13 17V9"
             initial="normal"
             variants={BAR_VARIANTS}
           />
-          <motion.path
+          <m.path
             animate={controls}
             custom={2}
             d="M18 17v-5"

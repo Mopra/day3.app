@@ -1,7 +1,7 @@
 "use client";
 
 import type { Variants } from "motion/react";
-import { motion, useAnimation } from "motion/react";
+import { m, useAnimation } from "motion/react";
 import type { HTMLAttributes } from "react";
 import { forwardRef, useCallback, useImperativeHandle, useRef } from "react";
 
@@ -106,7 +106,7 @@ const LayoutGridIcon = forwardRef<LayoutGridIconHandle, LayoutGridIconProps>(
           width={size}
           xmlns="http://www.w3.org/2000/svg"
         >
-          <motion.rect
+          <m.rect
             animate={controls}
             height="7"
             initial="normal"
@@ -116,7 +116,7 @@ const LayoutGridIcon = forwardRef<LayoutGridIconHandle, LayoutGridIconProps>(
             x="3"
             y="3"
           />
-          <motion.rect
+          <m.rect
             animate={controls}
             height="7"
             initial="normal"
@@ -126,7 +126,7 @@ const LayoutGridIcon = forwardRef<LayoutGridIconHandle, LayoutGridIconProps>(
             x="14"
             y="3"
           />
-          <motion.rect
+          <m.rect
             animate={controls}
             height="7"
             initial="normal"
@@ -136,7 +136,7 @@ const LayoutGridIcon = forwardRef<LayoutGridIconHandle, LayoutGridIconProps>(
             x="14"
             y="14"
           />
-          <motion.rect
+          <m.rect
             animate={controls}
             height="7"
             initial="normal"

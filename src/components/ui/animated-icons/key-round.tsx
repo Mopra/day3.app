@@ -1,7 +1,7 @@
 "use client";
 
 import type { Variants } from "motion/react";
-import { motion, useAnimation } from "motion/react";
+import { m, useAnimation } from "motion/react";
 import type { HTMLAttributes } from "react";
 import { forwardRef, useCallback, useImperativeHandle, useRef } from "react";
 
@@ -80,7 +80,7 @@ const KeyRoundIcon = forwardRef<KeyRoundIconHandle, KeyRoundIconProps>(
           width={size}
           xmlns="http://www.w3.org/2000/svg"
         >
-          <motion.g
+          <m.g
             animate={controls}
             initial="normal"
             style={{ transformOrigin: "16.5px 7.5px" }}
@@ -88,7 +88,7 @@ const KeyRoundIcon = forwardRef<KeyRoundIconHandle, KeyRoundIconProps>(
           >
             <path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" />
             <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" />
-          </motion.g>
+          </m.g>
         </svg>
       </div>
     );

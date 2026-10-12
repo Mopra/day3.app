@@ -1,7 +1,7 @@
 "use client";
 
 import type { Variants } from "motion/react";
-import { motion, useAnimation } from "motion/react";
+import { m, useAnimation } from "motion/react";
 import type { HTMLAttributes } from "react";
 import { forwardRef, useCallback, useImperativeHandle, useRef } from "react";
 
@@ -91,7 +91,7 @@ const BanIcon = forwardRef<BanIconHandle, BanIconProps>(
           xmlns="http://www.w3.org/2000/svg"
         >
           <circle cx="12" cy="12" r="10" />
-          <motion.path
+          <m.path
             animate={controls}
             d="m4.9 4.9 14.2 14.2"
             initial="normal"
