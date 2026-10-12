@@ -1,8 +1,9 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
+import { listTopicRows } from "@/api/audience-detail";
 import { topics } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 
@@ -18,31 +19,7 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
   const audience = await findAudience(db, account.id, id);
   if (!audience) throw new HttpError(404, "Not found");
 
-  const rows = await db
-    .select({
-      id: topics.id,
-      name: topics.name,
-      description: topics.description,
-      defaultSubscribed: topics.defaultSubscribed,
-      createdAt: topics.createdAt,
-      // Outer column written literally in the raw subquery — an interpolated
-      // Drizzle column renders unqualified there and would lose the correlation.
-      optedOut: sql<number>`(
-        select count(*)::int from topic_subscriptions ts
-        where ts.topic_id = topics.id and ts.subscribed = false
-      )`.as("optedOut"),
-      optedIn: sql<number>`(
-        select count(*)::int from topic_subscriptions ts
-        where ts.topic_id = topics.id and ts.subscribed = true
-      )`.as("optedIn"),
-    })
-    .from(topics)
-    .where(and(eq(topics.accountId, account.id), eq(topics.audienceId, audience.id)))
-    .orderBy(asc(topics.createdAt));
-
-  return json({
-    topics: rows.map((t) => ({ ...t, optedOut: Number(t.optedOut), optedIn: Number(t.optedIn) })),
-  });
+  return json({ topics: await listTopicRows(db, account.id, audience.id) });
 });
 
 const CreateTopicSchema = z.object({

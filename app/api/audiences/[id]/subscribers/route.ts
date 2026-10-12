@@ -1,8 +1,9 @@
-import { and, desc, eq, like, sql } from "drizzle-orm";
+import { and, eq, like, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
+import { listSubscriberPage } from "@/api/audience-detail";
 import { segments, subscribers } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { isValidEmail } from "@/lib/csv";
@@ -33,7 +34,7 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (req, { para
   if (!query.success) throw new HttpError(400, "Invalid query");
   const { status, search, segment: segmentId, limit, offset } = query.data;
 
-  const filters = [eq(subscribers.audienceId, audience.id)];
+  const filters: SQL[] = [];
   if (status) filters.push(eq(subscribers.status, status as never));
   if (search) filters.push(like(subscribers.email, `%${search.toLowerCase()}%`));
   if (segmentId) {
@@ -49,20 +50,7 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (req, { para
     filters.push(segmentFilterCondition(filter));
   }
 
-  const rows = await db
-    .select()
-    .from(subscribers)
-    .where(and(...filters))
-    .orderBy(desc(subscribers.createdAt))
-    .limit(limit)
-    .offset(offset);
-
-  const [{ total }] = await db
-    .select({ total: sql<number>`count(*)`.as("total") })
-    .from(subscribers)
-    .where(and(...filters));
-
-  return json({ subscribers: rows, total: Number(total) });
+  return json(await listSubscriberPage(db, audience.id, filters, limit, offset));
 });
 
 const AddSubscriberSchema = z.object({

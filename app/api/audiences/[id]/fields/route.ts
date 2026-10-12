@@ -3,10 +3,11 @@ import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
+import { listAudienceFieldRows } from "@/api/audience-detail";
 import { audienceFields, AUDIENCE_FIELD_TYPES } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
 import { FIELD_KEY_RE, isReservedFieldKey, slugifyFieldKey } from "@/lib/form-fields";
-import { listAudienceFields, MAX_AUDIENCE_FIELDS } from "@/services/audience-fields";
+import { MAX_AUDIENCE_FIELDS } from "@/services/audience-fields";
 
 // GET /api/audiences/[id]/fields — the audience's custom-field registry: every
 // field its subscribers can carry, whatever the origin (signup form, CSV import,
@@ -20,17 +21,7 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
   const audience = await findAudience(db, account.id, id);
   if (!audience) throw new HttpError(404, "Not found");
 
-  const fields = await listAudienceFields(db, account.id, audience.id);
-  return json({
-    fields: fields.map((f) => ({
-      id: f.id,
-      key: f.key,
-      label: f.label,
-      type: f.type,
-      fallback: f.fallback,
-      createdAt: f.createdAt,
-    })),
-  });
+  return json({ fields: await listAudienceFieldRows(db, account.id, audience.id) });
 });
 
 const CreateFieldSchema = z.object({

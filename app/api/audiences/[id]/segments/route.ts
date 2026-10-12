@@ -1,42 +1,17 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
-import { segments, subscribers } from "@/db/schema";
+import { listSegmentRows, segmentCount } from "@/api/audience-detail";
+import { segments } from "@/db/schema";
 import { newId, nowIso } from "@/lib/ids";
-import {
-  SegmentFilterSchema,
-  safeParseSegmentFilter,
-  segmentFilterCondition,
-} from "@/lib/segment-filter";
+import { SegmentFilterSchema } from "@/lib/segment-filter";
 
 // A generous backstop, well above any real setup.
 const MAX_SEGMENTS = 25;
 
-// Live membership count: subscribed contacts matching the filter — the number a
-// campaign sent to this segment would target (before suppression).
-async function segmentCount(
-  db: Awaited<ReturnType<typeof requireAccount>>["db"],
-  audienceId: string,
-  filterJson: string,
-): Promise<number | null> {
-  const filter = safeParseSegmentFilter(filterJson);
-  if (!filter) return null;
-  const [{ count }] = await db
-    .select({ count: sql<number>`count(*)`.as("count") })
-    .from(subscribers)
-    .where(
-      and(
-        eq(subscribers.audienceId, audienceId),
-        eq(subscribers.status, "subscribed"),
-        segmentFilterCondition(filter),
-      ),
-    );
-  return Number(count);
-}
-
-// GET /api/audiences/[id]/segments — the audience's saved segments with live
+// GET /api/audiences/[id]/segments: the audience's saved segments with live
 // contact counts (segments are dynamic filters; membership is never stored).
 export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { params }) => {
   const { id } = await params;
@@ -44,23 +19,7 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
   const audience = await findAudience(db, account.id, id);
   if (!audience) throw new HttpError(404, "Not found");
 
-  const rows = await db
-    .select()
-    .from(segments)
-    .where(and(eq(segments.accountId, account.id), eq(segments.audienceId, audience.id)))
-    .orderBy(asc(segments.createdAt));
-
-  return json({
-    segments: await Promise.all(
-      rows.map(async (s) => ({
-        id: s.id,
-        name: s.name,
-        filter: safeParseSegmentFilter(s.filterJson),
-        count: await segmentCount(db, audience.id, s.filterJson),
-        createdAt: s.createdAt,
-      })),
-    ),
-  });
+  return json({ segments: await listSegmentRows(db, account.id, audience.id) });
 });
 
 const CreateSegmentSchema = z.object({

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { Pencil, Plus, Trash2, UserMinus, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -61,6 +61,22 @@ import type {
   SubscriberTopic,
   TopicRow,
 } from "@/lib/types";
+
+export type AudienceTabKey = "contacts" | "fields" | "segments" | "topics";
+
+// Everything the page shows on its first frame, read on the server (./page.tsx)
+// through the same functions the `/api/audiences/[id]/*` routes use.
+export type AudienceDetailPayload = {
+  audience: Audience;
+  counts: Record<string, number>;
+  subscribers: Subscriber[];
+  total: number;
+  imports: ImportRow[];
+  fields: AudienceField[];
+  segments: SegmentRow[];
+  topics: TopicRow[];
+  tab: AudienceTabKey;
+};
 
 const STATUS_FILTERS = [
   { value: "all", label: "All statuses" },
@@ -162,8 +178,8 @@ function AttributeRows({ pairs, onChange }: { pairs: Pair[]; onChange: (p: Pair[
   );
 }
 
-export default function AudienceDetailPage() {
-  const { id } = useParams<{ id: string }>();
+export function AudienceDetailView({ initial }: { initial: AudienceDetailPayload }) {
+  const id = initial.audience.id;
   const api = useApi();
   const router = useRouter();
   // Surface an API error, and when it's the plan/subscriber-limit error, attach a
@@ -179,21 +195,17 @@ export default function AudienceDetailPage() {
       toast.error(msg);
     }
   }
-  const [audience, setAudience] = useState<Audience | null>(null);
+  const [audience, setAudience] = useState<Audience | null>(initial.audience);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const plan = usePlan();
   const subscriberCap = plan ? maxSubscribersForPlan(plan) : null;
-  const [counts, setCounts] = useState<Record<string, number>>({});
-  const [subscribers, setSubscribers] = useState<Subscriber[] | null>(null);
+  const [counts, setCounts] = useState<Record<string, number>>(initial.counts);
+  const [subscribers, setSubscribers] = useState<Subscriber[] | null>(initial.subscribers);
   // Contacts | Fields | Segments | Topics. Reflected in ?tab= so each view is
-  // linkable; read once on mount (client page — window exists only then).
-  type TabKey = "contacts" | "fields" | "segments" | "topics";
-  const [tab, setTab] = useState<TabKey>("contacts");
-  useEffect(() => {
-    const t = new URLSearchParams(window.location.search).get("tab");
-    if (t === "fields" || t === "segments" || t === "topics") setTab(t);
-  }, []);
+  // linkable; read on the server so a deep link paints the right tab first.
+  type TabKey = AudienceTabKey;
+  const [tab, setTab] = useState<TabKey>(initial.tab);
   function changeTab(next: TabKey) {
     setTab(next);
     const url = new URL(window.location.href);
@@ -203,18 +215,18 @@ export default function AudienceDetailPage() {
   }
   // The audience's custom-field registry — drives the Fields tab and the custom
   // columns on the contacts table.
-  const [fields, setFields] = useState<AudienceField[] | null>(null);
+  const [fields, setFields] = useState<AudienceField[] | null>(initial.fields);
   // Saved segments — the Segments tab plus the contacts table's segment filter.
-  const [segments, setSegments] = useState<SegmentRow[] | null>(null);
+  const [segments, setSegments] = useState<SegmentRow[] | null>(initial.segments);
   // Which segment the contacts table is narrowed to ("all" = everyone).
   const [segmentFilter, setSegmentFilter] = useState("all");
   // Topics — the Topics tab plus the edit dialog's preference checkboxes.
-  const [topics, setTopics] = useState<TopicRow[] | null>(null);
+  const [topics, setTopics] = useState<TopicRow[] | null>(initial.topics);
   // The open edit dialog's topic preferences (null = still loading / no topics).
   const [editTopics, setEditTopics] = useState<SubscriberTopic[] | null>(null);
-  const [total, setTotal] = useState(0);
+  const [total, setTotal] = useState(initial.total);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [imports, setImports] = useState<ImportRow[]>([]);
+  const [imports, setImports] = useState<ImportRow[]>(initial.imports);
   // `searchInput` is what the user types; `search` is the debounced value we
   // actually query with, so we don't hit the API on every keystroke.
   const [searchInput, setSearchInput] = useState("");
@@ -317,12 +329,16 @@ export default function AudienceDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  useEffect(loadAudience, [loadAudience]);
-  useEffect(loadSubscribers, [loadSubscribers]);
-  useEffect(loadImports, [loadImports]);
-  useEffect(loadFields, [loadFields]);
-  useEffect(loadSegments, [loadSegments]);
-  useEffect(loadTopics, [loadTopics]);
+  // The first page arrived with the server render; re-read only once a filter
+  // or the search actually changes it.
+  const firstSubscriberLoad = useRef(true);
+  useEffect(() => {
+    if (firstSubscriberLoad.current) {
+      firstSubscriberLoad.current = false;
+      return;
+    }
+    loadSubscribers();
+  }, [loadSubscribers]);
 
   // Toast when an import finishes — the upload only said "started", so without
   // this the completion is a silent badge flip on the next poll. On first load we

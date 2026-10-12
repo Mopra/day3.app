@@ -1,8 +1,9 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { route, json, parseJson, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findAudience } from "@/api/finders";
+import { audienceStatusCounts } from "@/api/audience-detail";
 import { audiences, subscribers } from "@/db/schema";
 import { nowIso } from "@/lib/ids";
 
@@ -12,16 +13,7 @@ export const GET = route<{ params: Promise<{ id: string }> }>(async (_req, { par
   const audience = await findAudience(db, account.id, id);
   if (!audience) throw new HttpError(404, "Not found");
 
-  const counts = await db
-    .select({ status: subscribers.status, count: sql<number>`count(*)`.as("count") })
-    .from(subscribers)
-    .where(eq(subscribers.audienceId, audience.id))
-    .groupBy(subscribers.status);
-
-  return json({
-    audience,
-    counts: Object.fromEntries(counts.map((r) => [r.status, Number(r.count)])),
-  });
+  return json({ audience, counts: await audienceStatusCounts(db, audience.id) });
 });
 
 const UpdateAudienceSchema = z.object({ name: z.string().trim().min(1).max(100) });
