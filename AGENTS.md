@@ -433,6 +433,15 @@ page share a single account lookup instead of one per caller.
   `process_import` (dedup-safe via `onConflictDoNothing`). Operators see recent
   failed/dead-lettered work on the admin overview, or query directly:
   `SELECT * FROM job_logs WHERE status IN ('failed','dead_letter') ORDER BY created_at DESC;`
+- **Provider imports (beehiiv, Kit, Mailchimp, MailerLite) are `process_import` jobs
+  with `imports.source` set to the provider id** (`src/importers/`,
+  `queue/handlers/process-provider-import.ts`). The pasted API key sits on the row
+  AES-GCM encrypted (`imports.source_credential`) only while the job runs: every
+  terminal write NULLs it, `expireImportCredentials` (cron) erases any that stall
+  for 24 h, and `listAudienceImports` never selects it. Keep all three when you
+  touch imports. A provider status Day3 does not recognise maps to skip, never to
+  `subscribed` (the opposite of the CSV `status` column, which is free-form).
+  Tests run the real job against a local mock of each API (`test/importers/`).
 - The web tier (Vercel) and the worker share the same Postgres; the worker is the
   only process that consumes the BullMQ queue and runs cron. Keep queue messages
   ID-only so the worker re-reads content from Postgres.

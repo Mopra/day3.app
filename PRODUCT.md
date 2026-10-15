@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-10-12**.
+> Last verified against the codebase: **2026-10-15**.
 
 ---
 
@@ -62,8 +62,11 @@ default path is the deliverable one.
   audiences support **segments** (saved filters) and **topics** (subscription
   categories) — see §6.3.
 - **Switching to Day3 is a supported path, not an afterthought.** Moving a list off
-  Mailchimp / ConvertKit / Substack / Resend / Brevo is a CSV upload, a short batch
-  script, or a prompt handed to an AI assistant — and Day3 deliberately asks for
+  **beehiiv, Kit (ConvertKit), Mailchimp or MailerLite is one click: paste an API
+  key**, pick the publication or audience, and the whole list comes over in the
+  background, unsubscribes included (§10.0). From anywhere else (Substack, Resend,
+  Brevo, ...) it is a CSV upload, a short batch script, or a prompt handed to an AI
+  assistant — and Day3 deliberately asks for
   your **opt-outs and bounces**, not just your active contacts, because re-mailing
   people who left elsewhere is the fastest way to wreck a new domain's reputation.
   The same doors open outward: everything you put in comes back out as CSV or JSON,
@@ -529,9 +532,23 @@ themselves, and manual writing continues unaffected.
     silently swallow an import.
   - **Already-suppressed addresses are filtered out on the way in** and reported in the
     import's skip breakdown, so a suppression list loaded first is automatically honored.
-  - The import history lists every upload with added/skipped counts and the reason for
-    each skip (invalid, duplicate, suppressed, marked bounced/spam/unconfirmed in the
-    file, over the plan's subscriber cap).
+  - The import history lists every upload with added/skipped counts (and how many of
+    the added came in as unsubscribed) and the reason for each skip (invalid,
+    duplicate, suppressed, marked bounced/spam/unconfirmed in the file, over the
+    plan's subscriber cap).
+  - **Provider exports import as they come.** The parser recognises the real export
+    files of beehiiv (its `status` column, tiers as fields), Mailchimp (the
+    separate subscribed / unsubscribed / cleaned files: `UNSUB_TIME` makes every row
+    an opt-out, `CLEAN_TIME` skips it, and Mailchimp's bookkeeping columns such as
+    `LEID`/`MEMBER_RATING` are dropped), Kit (`Confirmed` / `Unsubscribed` /
+    `Cold` / ... status words) and MailerLite (`Subscriber` is its email column).
+    A `created_at`-style column (`created_at`, `subscribed_at`, Mailchimp's
+    `OPTIN_TIME`/`CONFIRM_TIME`) keeps the contact's original signup date.
+- **Import from another provider** (beehiiv, Kit, Mailchimp, MailerLite): the
+  **Import from beehiiv & more** button beside Import CSV (and in an empty
+  audience) opens a dialog: pick the provider, paste an API key, pick the
+  publication / audience, start. Details in §10.0. The same import history, progress
+  bar and skip breakdown as a CSV import.
 - **CSV export** of an audience's subscribers (all statuses, their opt-out dates, and
   their custom-field values) in the same column shape the importer reads, so an export
   round-trips: edit it and re-import it, or take it elsewhere (§10.7).
@@ -1783,10 +1800,11 @@ as a first-class flow rather than a support ticket: everything needed is in the
 product, and the parts that *can't* transfer are stated plainly instead of glossed
 over.
 
-There are three routes in, all landing on the same data:
+There are four routes in, all landing on the same data:
 
 | Route | Best for | Where |
 |-------|----------|-------|
+| **0 — Import from another provider** | beehiiv, Kit, Mailchimp, MailerLite: the whole list, one click | Audience page → **Import from beehiiv & more** (§10.0) |
 | **A — CSV export/import** | Non-technical users, one-off moves, lists up to 5,000 per file | Audience page → **Import CSV**, plus the **Suppressions** tab for the bounce list (§10.2) |
 | **B — the v1 API** | Anything scripted, big lists, repeatable runs, topic preferences | `POST /api/v1/...` (§10.3) |
 | **C — hand it to an AI assistant** | "I have an export and a coding assistant, do it for me" | **API keys** page → *Migrate from another provider* prompt (§10.4) |
@@ -1809,12 +1827,57 @@ data is worse than one that says what it dropped.
 | **Hard bounces & spam complaints** | ✅ | Paste or upload them on the **Suppressions** tab of Audiences (§6.7), or `POST /v1/suppressions` with an explicit `reason` |
 | Topic / group / interest preferences | ✅ **API only** | Create topics (§6.3), then `PATCH /v1/audiences/{id}/contacts/{ref}/topics` |
 | Segments / saved filters | ⚠️ Re-created | Segments are live filters over your fields — recreate them once the fields are in (usually a minute per segment, and they then stay current) |
-| **Original signup dates** | ❌ | `created_at` in a payload is ignored; there is no backdating. Keep the original date as a custom field (e.g. `signed_up_at`) if you need it — it's then usable in segments and merge tags |
+| **Original signup dates** | ✅ / ❌ | ✅ Provider imports (§10.0) and CSV files with a `created_at`-style column keep it. ❌ Over the API, `created_at` in a payload is ignored; keep it as a custom field (e.g. `signed_up_at`) if you need it |
 | Per-contact engagement history (opens/clicks) | ❌ | Starts fresh. Metrics (§6.10) measures Day3 sends only |
 | Past campaign archives & their stats | ❌ | Stay with the old provider; export anything you want to keep before closing that account |
 | Email templates / HTML | ⚠️ Manual | Rebuild from Day3's five built-in templates (§6.1), or paste HTML into a `:::html` block over the API / MCP (§6.17) — Day3's builder is section-based, so a foreign HTML template imported wholesale would not stay editable |
 | Automations / drip flows | ⚠️ Rebuilt | Day3 has automations (§6.19), but no provider exports a flow in an importable form. Rebuild from the four templates or on the canvas with the Phase 1 nodes (trigger, send, wait, branch, end); wait-for-event, A/B split and set-field steps are planned, not shipped |
 | **Domain sending reputation** | ⚠️ Partly | Domain-level reputation and recipient engagement history follow the **subdomain** — reuse it and it comes with you. IP reputation does not: Day3 sends on AWS SES shared IPs (§10.6) |
+
+### 10.0 Route 0 — Import from another provider (one click)
+
+For beehiiv, Kit (ConvertKit), Mailchimp and MailerLite the user never touches a
+file. On an audience: **Import from beehiiv & more** → pick the provider → paste
+an API key (the dialog says where to make one) → **Connect** lists what the key
+can see (beehiiv publications, Mailchimp audiences; Kit and MailerLite have one
+account-wide list) with their sizes → pick one → **Start import**. `?import=beehiiv`
+(or `kit`, `mailchimp`, `mailerlite`) on an audience URL opens the dialog preset.
+
+- **Runs on the worker** as the same `process_import` job a CSV import uses, so it has
+  the same rules: suppressed addresses are filtered, an address already in the
+  audience is a duplicate (never updated, so nobody who unsubscribed in Day3 is
+  re-subscribed by the old provider's "active"), and the Free plan's 500 cap applies
+  (checked up front against the provider's own count, and again per page). There is
+  no 5,000-row limit: it pages through the provider's API, 100 to 1,000 contacts a
+  request, committing each page with its counts and cursor, so a redeployed or
+  crashed worker resumes at the next page.
+- **Status mapping, per provider.** Only the provider's own active state becomes
+  `subscribed`. Opt-outs become `unsubscribed` (beehiiv `inactive` and `paused`,
+  Kit `cancelled`, Mailchimp `unsubscribed`, MailerLite `unsubscribed`), with the
+  opt-out date where the API gives one. Everything else is **skipped and counted**:
+  bounced, complained, cleaned, unconfirmed/pending/validating, needs-approval,
+  transactional-only, archived, and any status Day3 does not know (a structured API
+  status is never guessed into `subscribed`). Names come from the provider's
+  first/last name fields, other custom fields become audience fields, and the
+  original signup date is kept.
+- **The API key is never kept.** It is checked when the user clicks Connect, then
+  stored **AES-GCM encrypted** (the DNS-token keyring) on the import row only while
+  the job runs; every finish or failure erases it, and a cron sweep erases any key
+  on an import that has not moved for 24 hours (and fails that import). The import
+  list sent to the browser never includes it.
+- **Errors say what to do.** A wrong key, a key without API access (not every beehiiv
+  plan includes the API), or a missing list each get a plain message, and the dialog
+  then shows the provider's **CSV export steps** with an **Import CSV** button, since
+  the CSV importer reads those exports as they come (§6.3). Rate limits (HTTP 429)
+  are waited out using the provider's Retry-After / RateLimit-Reset (up to about two
+  minutes a wait, six tries a request) before the import fails with "wait a few
+  minutes and start again". A failed provider import is retried with **Try again**
+  (a new import with the key; dedup makes it safe).
+- **Checkable after the fact.** The import row carries total, imported, imported as
+  unsubscribed, and each skip reason; the `process_import` job log's payload carries
+  the same counts plus the provider (`source`).
+- Adding a provider is one file in `src/importers/` implementing `listSources`,
+  `fetchPage` and `mapStatus`, plus fixtures and tests.
 
 ### 10.2 Route A — CSV export/import (no code)
 
