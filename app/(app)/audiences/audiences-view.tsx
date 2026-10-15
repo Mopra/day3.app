@@ -193,8 +193,8 @@ export function AudiencesView({
             <DialogHeader>
               <DialogTitle>Create audience</DialogTitle>
               <DialogDescription>
-                A list of people you email. Name it, then import a CSV or add people on the
-                next screen.
+                A list of people you email. Name it, then import a CSV, import from beehiiv, Kit,
+                Mailchimp or MailerLite with an API key, or add people on the next screen.
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={onSubmit} className="space-y-4">

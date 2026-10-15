@@ -48,6 +48,8 @@ import { ApiPanel } from "@/components/api-panel";
 import { AudienceFieldsTab } from "@/components/audience-fields-tab";
 import { AudienceSegmentsTab } from "@/components/audience-segments-tab";
 import { AudienceTopicsTab } from "@/components/audience-topics-tab";
+import { ProviderImportDialog } from "@/components/provider-import-dialog";
+import { isProviderId, type ProviderId } from "@/importers/catalog";
 import { useApi } from "@/lib/api";
 import { buildAudiencePanelContent } from "@/lib/api-docs";
 import { SUBSCRIBER_CSV_TEMPLATE } from "@/lib/csv";
@@ -255,6 +257,24 @@ export function AudienceDetailView({ initial }: { initial: AudienceDetailPayload
   // on a failed import; the same hidden picker is reused for the corrected file.
   const retryRef = useRef<HTMLInputElement>(null);
   const [retryImportId, setRetryImportId] = useState<string | null>(null);
+  // "Import from another provider" (beehiiv, Kit, Mailchimp, MailerLite).
+  const [providerOpen, setProviderOpen] = useState(false);
+  const [providerPreset, setProviderPreset] = useState<ProviderId>("beehiiv");
+  function openProviderImport(provider: ProviderId = "beehiiv") {
+    setProviderPreset(provider);
+    setProviderOpen(true);
+  }
+  // `?import=beehiiv` (onboarding, the marketing site's migration links) opens
+  // the dialog on arrival, preset to that provider.
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const preset = url.searchParams.get("import");
+    if (!preset) return;
+    if (isProviderId(preset)) openProviderImport(preset);
+    url.searchParams.delete("import");
+    window.history.replaceState(null, "", url);
+    // Once, on arrival.
+  }, []);
   const { register, handleSubmit, reset, formState } = useForm<AddForm>();
 
   const loadAudience = useCallback(() => {
@@ -664,6 +684,9 @@ export function AudienceDetailView({ initial }: { initial: AudienceDetailPayload
               {uploading && <OrbitLoader size={16} />}
               {uploading ? "Uploading" : "Import CSV"}
             </Button>
+            <Button variant="outline" onClick={() => openProviderImport()}>
+              Import from beehiiv &amp; more
+            </Button>
             <Dialog open={addOpen} onOpenChange={setAddOpen}>
               <DialogTrigger render={<Button>Add subscriber</Button>} />
               <DialogContent>
@@ -711,6 +734,17 @@ export function AudienceDetailView({ initial }: { initial: AudienceDetailPayload
                 </Link>
               </p>
             )}
+            <p>
+              Moving from beehiiv, Kit, Mailchimp or MailerLite?{" "}
+              <button
+                type="button"
+                onClick={() => openProviderImport()}
+                className="underline underline-offset-2 hover:text-foreground"
+              >
+                Paste an API key
+              </button>{" "}
+              and we bring the whole list over, unsubscribes included.
+            </p>
             {/* Migration guidance where the migration actually happens. A `status`
                 column now carries opt-outs, and the suppression list has to be
                 loaded first for bounces to be filtered on the way in. */}
@@ -792,6 +826,15 @@ export function AudienceDetailView({ initial }: { initial: AudienceDetailPayload
 
       {tab === "contacts" && (
       <>
+      <ProviderImportDialog
+        audienceId={id}
+        open={providerOpen}
+        onOpenChange={setProviderOpen}
+        initialProvider={providerPreset}
+        onStarted={loadImports}
+        onUseCsv={() => fileRef.current?.click()}
+      />
+
       {/* Hidden picker reused for re-uploading a corrected CSV on retry. */}
       <input
         ref={retryRef}
@@ -821,7 +864,7 @@ export function AudienceDetailView({ initial }: { initial: AudienceDetailPayload
                       {imp.status === "processing" && imp.totalRows > 0
                         ? `${imp.importedRows.toLocaleString()} added…`
                         : imp.status === "completed"
-                          ? `${imp.importedRows.toLocaleString()} imported · ${imp.skippedRows.toLocaleString()} skipped · ${imp.totalRows.toLocaleString()} total`
+                          ? `${imp.importedRows.toLocaleString()} imported${imp.unsubscribedRows > 0 ? ` (${imp.unsubscribedRows.toLocaleString()} as unsubscribed)` : ""} · ${imp.skippedRows.toLocaleString()} skipped · ${imp.totalRows.toLocaleString()} total`
                           : null}
                     </span>
                     <Badge variant={statusVariant(imp.status)}>{imp.status}</Badge>
@@ -830,7 +873,10 @@ export function AudienceDetailView({ initial }: { initial: AudienceDetailPayload
                 {imp.status === "processing" && imp.totalRows > 0 ? (
                   // Honest progress: how far through the file's rows we are.
                   <Progress
-                    value={Math.min(100, Math.round((imp.importedRows / imp.totalRows) * 100))}
+                    value={Math.min(
+                      100,
+                      Math.round(((imp.importedRows + imp.skippedRows) / imp.totalRows) * 100),
+                    )}
                   />
                 ) : imp.status === "pending" || imp.status === "processing" ? (
                   // No denominator yet — indeterminate rather than a fake number.
@@ -845,16 +891,28 @@ export function AudienceDetailView({ initial }: { initial: AudienceDetailPayload
                   <Alert variant="destructive">
                     <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
                       <span>{imp.error ?? "The import failed."}</span>
-                      <Button
-                        variant="outline"
-                        size="xs"
-                        onClick={() => {
-                          setRetryImportId(imp.id);
-                          retryRef.current?.click();
-                        }}
-                      >
-                        Re-upload &amp; retry
-                      </Button>
+                      {isProviderId(imp.source) ? (
+                        // A provider import has no file to re-upload, and its key
+                        // was deleted when it failed: try again with the key.
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() => openProviderImport(imp.source as ProviderId)}
+                        >
+                          Try again
+                        </Button>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          onClick={() => {
+                            setRetryImportId(imp.id);
+                            retryRef.current?.click();
+                          }}
+                        >
+                          Re-upload &amp; retry
+                        </Button>
+                      )}
                     </AlertDescription>
                   </Alert>
                 )}
@@ -916,9 +974,14 @@ export function AudienceDetailView({ initial }: { initial: AudienceDetailPayload
                   </>
                 }
                 action={
-                  <Button variant="outline" onClick={() => fileRef.current?.click()}>
-                    Import CSV
-                  </Button>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button variant="outline" onClick={() => fileRef.current?.click()}>
+                      Import CSV
+                    </Button>
+                    <Button variant="outline" onClick={() => openProviderImport()}>
+                      Import from beehiiv &amp; more
+                    </Button>
+                  </div>
                 }
               />
             )

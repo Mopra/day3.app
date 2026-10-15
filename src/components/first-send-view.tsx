@@ -114,7 +114,8 @@ export function FirstSendView({
     : {
         key: "audience",
         title: "Bring your subscribers in",
-        description: "Upload a CSV of the people who already said yes to hearing from you.",
+        description:
+          "Upload a CSV of the people who already said yes to hearing from you, or paste a beehiiv, Kit, Mailchimp or MailerLite API key and bring the whole list over.",
         done: onboarding.hasOwnSubscribers,
         href: "/audiences?new=1",
         cta: "Import a CSV",

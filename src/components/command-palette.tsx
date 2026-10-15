@@ -39,7 +39,7 @@ const COMMANDS: Command[] = [
   { label: "Campaigns", icon: Mail, href: "/campaigns" },
   { label: "Automations", icon: Workflow, href: "/automations", keywords: "welcome series drip flow onboarding" },
   { label: "Audiences", icon: Users, href: "/audiences", keywords: "subscribers list contacts" },
-  { label: "Import subscribers", hint: "Audiences", icon: FileInput, href: "/audiences", keywords: "csv upload migrate" },
+  { label: "Import subscribers", hint: "Audiences", icon: FileInput, href: "/audiences", keywords: "csv upload migrate beehiiv kit convertkit mailchimp mailerlite api key" },
   { label: "Suppressions", hint: "Audiences", icon: Ban, href: "/audiences?tab=suppressions", keywords: "unsubscribed bounced blocked spam complaints blocklist unsuppress migrate" },
   { label: "Sending domains", hint: "Sending", icon: Globe, href: "/sending", keywords: "dns dkim verify domain" },
   { label: "Senders", hint: "Sending", icon: AtSign, href: "/sending?tab=senders", keywords: "from identity address" },

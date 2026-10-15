@@ -29,7 +29,7 @@ export function OnboardingChecklist({ onboarding }: { onboarding: OnboardingStat
     },
     {
       title: "Import an audience",
-      description: "Create a list, then bring your subscribers in from a CSV.",
+      description: "Create a list, then bring your subscribers in from a CSV or straight from beehiiv, Kit, Mailchimp or MailerLite.",
       // Not hasSubscribers: that counts the seeded team audience, which would
       // tick this step on day one for a list the user never built.
       done: onboarding.hasOwnSubscribers,
