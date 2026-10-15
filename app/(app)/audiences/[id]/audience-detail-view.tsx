@@ -104,7 +104,7 @@ function importSkipBreakdown(imp: ImportRow): string {
     parts.push(`${imp.suppressedRows.toLocaleString()} on your suppression list`);
   if (imp.statusSkippedRows > 0)
     parts.push(
-      `${imp.statusSkippedRows.toLocaleString()} marked bounced, spam or unconfirmed in your file`,
+      `${imp.statusSkippedRows.toLocaleString()} marked bounced, spam, unconfirmed or with an unknown status at the source`,
     );
   if (imp.overCapRows > 0)
     parts.push(`${imp.overCapRows.toLocaleString()} over your plan's subscriber limit`);

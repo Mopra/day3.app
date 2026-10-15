@@ -256,3 +256,78 @@ describe("CSV import reads each provider's export as it comes", () => {
     ]);
   });
 });
+
+// One row per status word: what a CSV `status` column value turns into. The
+// rule: only words that mean "subscribed" are subscribed; opt-outs are
+// unsubscribed; bounced, complained, cleaned, unconfirmed and any word we do not
+// know are skipped (never guessed into subscribed).
+describe("CSV status words, one by one", () => {
+  const cases: Array<[string, "subscribed" | "unsubscribed" | "skipped"]> = [
+    // subscribed
+    ["subscribed", "subscribed"],
+    ["active", "subscribed"], // beehiiv, MailerLite, Kit API
+    ["Confirmed", "subscribed"], // Kit app
+    ["Cold", "subscribed"], // Kit: subscribed, just unengaged
+    ["yes", "subscribed"],
+    // unsubscribed
+    ["unsubscribed", "unsubscribed"], // Mailchimp, MailerLite, Kit app
+    ["Unsubscribed", "unsubscribed"],
+    ["inactive", "unsubscribed"], // beehiiv
+    ["paused", "unsubscribed"], // beehiiv
+    ["cancelled", "unsubscribed"], // Kit API
+    ["canceled", "unsubscribed"],
+    ["opted out", "unsubscribed"],
+    ["opt-out", "unsubscribed"],
+    ["non-subscribed", "unsubscribed"], // Mailchimp
+    ["removed", "unsubscribed"],
+    ["no", "unsubscribed"],
+    // skipped: delivery failures, complaints, no consent, unknown
+    ["bounced", "skipped"], // Kit, MailerLite
+    ["hard_bounce", "skipped"],
+    ["cleaned", "skipped"], // Mailchimp
+    ["complained", "skipped"], // Kit
+    ["spam", "skipped"],
+    ["junk", "skipped"], // MailerLite
+    ["blocked", "skipped"], // Kit
+    ["pending", "skipped"], // Mailchimp, beehiiv
+    ["unconfirmed", "skipped"], // Kit, MailerLite
+    ["validating", "skipped"], // beehiiv
+    ["invalid", "skipped"], // beehiiv
+    ["needs_attention", "skipped"], // beehiiv
+    ["transactional", "skipped"], // Mailchimp
+    ["archived", "skipped"], // Mailchimp
+    ["some_new_state", "skipped"], // unknown: never subscribed
+  ];
+
+  for (const [word, expected] of cases) {
+    it(`"${word}" → ${expected}`, () => {
+      // The second row anchors the column as a real status column.
+      const parsed = parseSubscriberCsv(`email,status\nx@example.com,${word}\nanchor@example.com,subscribed`);
+      const row = parsed.rows.find((r) => r.email === "x@example.com");
+      if (expected === "skipped") {
+        expect(row).toBeUndefined();
+        expect(parsed.statusSkippedRows).toBe(1);
+      } else {
+        expect(row?.status ?? "subscribed").toBe(expected);
+      }
+    });
+  }
+
+  it("a `status` column with no status words in it is the user's own data", () => {
+    const parsed = parseSubscriberCsv("email,status\na@x.co,trial\nb@x.co,paid");
+    expect(parsed.statusSkippedRows).toBe(0);
+    expect(parsed.rows).toEqual([
+      { email: "a@x.co", attributes: { status: "trial" } },
+      { email: "b@x.co", attributes: { status: "paid" } },
+    ]);
+  });
+
+  it("in a real status column, an unknown word is skipped and counted", () => {
+    const parsed = parseSubscriberCsv("email,status\na@x.co,active\nb@x.co,frozen\nc@x.co,unsubscribed");
+    expect(parsed.rows.map((r) => [r.email, r.status])).toEqual([
+      ["a@x.co", "subscribed"],
+      ["c@x.co", "unsubscribed"],
+    ]);
+    expect(parsed.statusSkippedRows).toBe(1);
+  });
+});

@@ -10,8 +10,8 @@ export type CsvSubscriberRow = {
   email: string;
   firstName?: string;
   lastName?: string;
-  // From an optional `status` column. Absent (or an unrecognized value) means
-  // `subscribed` — see STATUS_VALUES.
+  // From an optional `status` column. Absent or blank means `subscribed`; an
+  // unrecognized word skips the row (see STATUS_VALUES).
   status?: CsvSubscriberStatus;
   // From an optional `unsubscribed_at` column; only meaningful when status is
   // `unsubscribed`. Lets a migration keep the original opt-out date instead of
@@ -300,11 +300,17 @@ const MAILCHIMP_SYSTEM_COLUMNS = new Set([
 ]);
 
 // Values a `status` column may carry that we map onto an importable status.
-// Deliberately lenient: an *unrecognized* value (a `status` column that actually
-// means something else, like "trial"/"paid") falls back to `subscribed`, which is
-// exactly what happened before the column was read at all. Only words that
-// clearly mean "this person opted out" change the outcome, so honoring the column
-// can never silently swallow somebody's whole import.
+//
+// An unrecognized value is NEVER read as `subscribed` in a real status column:
+// a provider word we have not listed could mean "left", and guessing
+// "subscribed" would re-subscribe them. Such rows are skipped and counted with
+// the bounced/unconfirmed ones (statusSkippedRows), so the import says how many.
+//
+// What counts as a real status column: one where at least one value is a word
+// below or in UNIMPORTABLE_STATUS_VALUES. A column headed `status` whose values
+// are all something else ("trial"/"paid") is somebody's own data, not a
+// subscription status, and is kept as a custom field instead, so it can never
+// silently swallow a whole import.
 const STATUS_VALUES: Record<string, CsvSubscriberStatus> = {
   subscribed: "subscribed",
   subscribe: "subscribed",
@@ -328,6 +334,10 @@ const STATUS_VALUES: Record<string, CsvSubscriberStatus> = {
   // Provider export words.
   cancelled: "unsubscribed", // Kit
   canceled: "unsubscribed",
+  "opted-out": "unsubscribed",
+  resigned: "unsubscribed",
+  "non-subscribed": "unsubscribed", // Mailchimp's non-subscribed contacts never opted in
+  nonsubscribed: "unsubscribed",
   paused: "unsubscribed", // beehiiv: the reader asked not to be mailed for now
   cold: "subscribed", // Kit: subscribed but unengaged
 };
@@ -364,6 +374,8 @@ const UNIMPORTABLE_STATUS_VALUES = new Set([
   "validating", // beehiiv: address still being checked
   "invalid", // beehiiv: address found undeliverable
   "needs_attention", // beehiiv: awaiting approval
+  "transactional", // Mailchimp: never opted in to marketing
+  "archived", // Mailchimp: removed from the audience
 ]);
 
 // What a header column maps to: a known subscriber column, a custom attribute
@@ -393,9 +405,21 @@ export function parseSubscriberCsv(content: string): CsvParseResult {
 
   const header = lines[0].map((h) => h.trim().toLowerCase());
   const isMailchimpExport = header.includes("leid") && header.includes("euid");
-  const hasStatusColumn = header.some((h) => HEADER_ALIASES[h] === "status");
-  const columns: ColumnTarget[] = header.map((h) => {
+  const isStatusWord = (v: string) => {
+    const raw = v.trim().toLowerCase();
+    return raw in STATUS_VALUES || UNIMPORTABLE_STATUS_VALUES.has(raw);
+  };
+  const columns: ColumnTarget[] = header.map((h, i) => {
     const alias = HEADER_ALIASES[h];
+    if (alias === "status") {
+      // A real status column has at least one status word in it; otherwise the
+      // header is a coincidence and the column is the user's own data.
+      const real = lines.slice(1).some((line) => isStatusWord(line[i] ?? ""));
+      if (!real) {
+        const key = slugifyFieldKey(h);
+        return key ? { kind: "attribute", key } : null;
+      }
+    }
     if (alias) return { kind: alias };
     if (isMailchimpExport && MAILCHIMP_SYSTEM_COLUMNS.has(h)) return null;
     const key = slugifyFieldKey(h);
@@ -406,6 +430,7 @@ export function parseSubscriberCsv(content: string): CsvParseResult {
   if (!columns.some((c) => c?.kind === "email")) {
     throw new Error('CSV must include an "email" column');
   }
+  const hasStatusColumn = columns.some((c) => c?.kind === "status");
 
   const dataLines = lines.slice(1);
   const rows: CsvSubscriberRow[] = [];
@@ -425,8 +450,10 @@ export function parseSubscriberCsv(content: string): CsvParseResult {
       else if (col.kind === "lastName") record.lastName = value;
       else if (col.kind === "status") {
         const raw = value.toLowerCase();
-        if (UNIMPORTABLE_STATUS_VALUES.has(raw)) unimportable = true;
-        else record.status = STATUS_VALUES[raw] ?? "subscribed";
+        // Unknown words are skipped, never guessed into `subscribed` (above).
+        const mapped = STATUS_VALUES[raw];
+        if (mapped) record.status = mapped;
+        else unimportable = true;
       } else if (col.kind === "unsubscribedAt") record.unsubscribedAt = parseDateCell(value);
       // Several columns can name the join date (Mailchimp's OPTIN_TIME is often
       // empty, CONFIRM_TIME is not); the first one with a date wins.

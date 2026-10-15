@@ -527,9 +527,11 @@ themselves, and manual writing continues unaffected.
     opt-out date. Rows marked **bounced, spam-complained, or unconfirmed** — including
     Mailchimp's `cleaned` and `pending` — are **skipped**, because a file may not assert
     a delivery failure Day3 never observed, and those addresses belong on the
-    suppression list (§6.7). An *unrecognized* value falls back to `subscribed`, so a
-    `status` column that actually means something else ("trial", "paid") can never
-    silently swallow an import.
+    suppression list (§6.7). An *unrecognized* value is **never** read as
+    `subscribed`: in a real status column it is skipped and counted with those rows,
+    since an unknown provider word could mean the person left. A column headed
+    `status` that holds no status words at all ("trial", "paid") is the user's own
+    data and is kept as a custom field, so it can never silently swallow an import.
   - **Already-suppressed addresses are filtered out on the way in** and reported in the
     import's skip breakdown, so a suppression list loaded first is automatically honored.
   - The import history lists every upload with added/skipped counts (and how many of
@@ -1897,9 +1899,9 @@ account-wide list) with their sizes → pick one → **Start import**. `?import=
    marks **bounced, spam-complained, or unconfirmed** (including Mailchimp's `cleaned`
    and `pending`) are skipped rather than imported: Day3 will not assert a delivery
    failure it never saw, and those addresses belong on the suppression list. An
-   unrecognized value in a `status` column (a column that actually means
-   `trial`/`paid`) falls back to `subscribed`, so reading the column can never silently
-   swallow an import.
+   unrecognized value in a status column is skipped and counted, never guessed into
+   `subscribed`; a `status` column with no status words in it at all (`trial`/`paid`)
+   is kept as a custom field instead, so reading it can never swallow an import.
 5. **Split large lists.** The cap is **5,000 rows / 5 MB per file** — a 40,000-contact
    list is eight uploads, which is fine (they merge into the same audience and dedup
    against each other), or one API run instead.

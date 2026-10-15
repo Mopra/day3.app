@@ -423,10 +423,11 @@ page share a single account lookup instead of one per caller.
 - **A CSV import may only assert `subscribed` or `unsubscribed`** — the same rule the
   public API enforces. `parseSubscriberCsv` maps a `status` column's opt-out synonyms to
   `unsubscribed` (with `unsubscribed_at` for the original date), *drops* rows marked
-  bounced/complained/`cleaned`/`pending` into `statusSkippedRows`, and falls back to
-  `subscribed` for an unrecognized value — because `status` is a common header for
-  unrelated data ("trial"/"paid") and a strict reading would silently swallow whole
-  imports.
+  bounced/complained/`cleaned`/`pending` into `statusSkippedRows`, and also skips
+  an unrecognized value: guessing `subscribed` once re-subscribed Kit's `cancelled`
+  rows. Because `status` is also a common header for unrelated data
+  ("trial"/"paid"), a `status` column only counts as one when at least one of its
+  values is a known status word; otherwise it is kept as a custom field.
 - Failed-import recovery: a `status='failed'` import is never auto-retried. A user
   re-uploads a corrected CSV via `POST /api/audiences/[id]/imports/[importId]/retry`,
   which overwrites the stored object, resets the row to `pending`, and re-enqueues
