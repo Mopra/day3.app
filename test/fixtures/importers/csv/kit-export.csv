@@ -1,0 +1,8 @@
+first_name,email_address,created_at,status,tags,city,state,country
+Alice,alice@convertkit.dev,2023-01-27T11:43:55Z,Confirmed,"VIP, Newsletter",Portland,OR,US
+Benito,benito@convertkit.dev,2023-02-03T11:43:55Z,Unsubscribed,,Austin,TX,US
+Carl,complained@convertkit.dev,2023-02-05T11:43:55Z,Complained,,,,
+Dora,unconfirmed@convertkit.dev,2023-02-06T11:43:55Z,Unconfirmed,,,,
+Bo,bounced@convertkit.dev,2023-02-06T11:43:55Z,Bounced,,,,
+Cole,cold@convertkit.dev,2023-02-06T11:43:55Z,Cold,,,,
+Cass,cancelled@convertkit.dev,2023-02-06T11:43:55Z,cancelled,,,,

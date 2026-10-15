@@ -1,0 +1,32 @@
+{
+  "data": [
+    {
+      "id": "sub_00000000-0000-0000-0000-000000000001",
+      "email": "Ada@Example.com",
+      "status": "active",
+      "created": 1666800076,
+      "subscription_tier": "premium",
+      "subscription_premium_tier_names": ["Gold"],
+      "utm_source": "twitter",
+      "utm_medium": "social",
+      "utm_channel": "website",
+      "utm_campaign": "",
+      "referring_site": "",
+      "referral_code": "ABC123",
+      "custom_fields": [
+        { "name": "First Name", "kind": "string", "value": "Ada" },
+        { "name": "Last Name", "kind": "string", "value": "Lovelace" },
+        { "name": "Company", "kind": "string", "value": "Analytical Engines" },
+        { "name": "Interests", "kind": "list", "value": ["math", "poetry"] }
+      ]
+    },
+    { "id": "sub_00000000-0000-0000-0000-000000000002", "email": "left@example.com", "status": "inactive", "created": 1667000000, "subscription_tier": "free", "subscription_premium_tier_names": [], "custom_fields": [] },
+    { "id": "sub_00000000-0000-0000-0000-000000000003", "email": "paused@example.com", "status": "paused", "created": 1667100000, "subscription_tier": "free", "subscription_premium_tier_names": [], "custom_fields": [] },
+    { "id": "sub_00000000-0000-0000-0000-000000000004", "email": "pending@example.com", "status": "pending", "created": 1667200000, "subscription_tier": "free", "subscription_premium_tier_names": [], "custom_fields": [] },
+    { "id": "sub_00000000-0000-0000-0000-000000000005", "email": "validating@example.com", "status": "validating", "created": 1667300000, "subscription_tier": "free", "subscription_premium_tier_names": [], "custom_fields": [] }
+  ],
+  "limit": 100,
+  "has_more": true,
+  "next_cursor": "eyJpZCI6InN1Yl81In0",
+  "total_results": 10
+}

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, sql, type SQL } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { imports, segments, subscribers, topics } from "../db/schema";
 import { safeParseSegmentFilter, segmentFilterCondition } from "../lib/segment-filter";
@@ -20,9 +20,14 @@ export async function audienceStatusCounts(db: Db, audienceId: string) {
   >;
 }
 
+// Every import column except the provider key and the paging cursor: this list
+// is sent to the browser, and the encrypted key must never leave the server.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const { sourceCredential, sourceCursor, r2Key, ...IMPORT_PUBLIC_COLUMNS } = getTableColumns(imports);
+
 export function listAudienceImports(db: Db, audienceId: string) {
   return db
-    .select()
+    .select(IMPORT_PUBLIC_COLUMNS)
     .from(imports)
     .where(eq(imports.audienceId, audienceId))
     .orderBy(desc(imports.createdAt))

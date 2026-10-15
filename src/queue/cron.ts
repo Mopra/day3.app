@@ -5,6 +5,7 @@ import {
   automationEnrollments,
   campaignRecipients,
   campaigns,
+  imports,
   jobLogs,
   sendingDomains,
   transactionalEmails,
@@ -423,6 +424,28 @@ export async function pruneWebhookDeliveries(db: Db, now: Date): Promise<number>
     )
     .returning({ id: webhookDeliveries.id });
   return deleted.length;
+}
+
+// A provider import's API key is stored (encrypted) only while the job runs, and
+// every terminal write clears it. This is the backstop for a job that never
+// reached one (lost queue message, worker gone for a day): an import that has
+// not moved for this long is failed and its key erased. A running import touches
+// updated_at on every page, so a slow but live one is never caught.
+export const IMPORT_CREDENTIAL_TTL_MS = 24 * 60 * 60 * 1000;
+
+export async function expireImportCredentials(db: Db, now: Date): Promise<number> {
+  const cutoff = new Date(now.getTime() - IMPORT_CREDENTIAL_TTL_MS).toISOString();
+  const expired = await db
+    .update(imports)
+    .set({
+      sourceCredential: null,
+      status: sql`CASE WHEN ${imports.status} IN ('pending', 'processing') THEN 'failed' ELSE ${imports.status} END`,
+      error: sql`CASE WHEN ${imports.status} IN ('pending', 'processing') THEN ${"The import stopped before it finished. Start it again with your API key; contacts already imported are kept."} ELSE ${imports.error} END`,
+      updatedAt: now.toISOString(),
+    })
+    .where(and(isNotNull(imports.sourceCredential), lt(imports.updatedAt, cutoff)))
+    .returning({ id: imports.id });
+  return expired.length;
 }
 
 export const JOB_LOG_RETENTION_DAYS = 30;
@@ -1157,6 +1180,7 @@ export async function runScheduledSweeps(deps: CronDeps, now: Date = new Date())
   await stage("reconcile", () => reconcileSendingCampaigns(db, queue));
   const rescued = (await stage("rescue_pipeline", () => rescueStuckPipelineCampaigns(db, queue, now))) ?? 0;
   const webhooks = (await stage("webhook_deliveries", () => sweepWebhookDeliveries(db, queue, now))) ?? 0;
+  await stage("import_credentials", () => expireImportCredentials(db, now));
   const automation = (await stage("automations", () => sweepAutomationEnrollments(db, queue, now))) ?? {
     restored: 0,
     deferred: 0,

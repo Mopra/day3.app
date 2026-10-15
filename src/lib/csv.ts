@@ -17,6 +17,9 @@ export type CsvSubscriberRow = {
   // `unsubscribed`. Lets a migration keep the original opt-out date instead of
   // stamping everyone with the import time.
   unsubscribedAt?: string;
+  // When the contact joined at the old provider (a `created_at`-style column),
+  // so a migration keeps the real signup date. Absent means the import time.
+  createdAt?: string;
   // Any column that isn't email/first/last name/status/unsubscribed_at becomes a
   // custom attribute, keyed by a slug of its header (e.g. "Phone number" →
   // "phone_number"). These are usable as {{merge_tags}} in campaigns.
@@ -200,7 +203,14 @@ function parseCsvLines(input: string): string[][] {
   return rows.filter((r) => r.some((cell) => cell.trim().length > 0));
 }
 
-type KnownColumn = "email" | "firstName" | "lastName" | "status" | "unsubscribedAt";
+type KnownColumn =
+  | "email"
+  | "firstName"
+  | "lastName"
+  | "status"
+  | "unsubscribedAt"
+  | "createdAt"
+  | "cleanedAt";
 
 const HEADER_ALIASES: Record<string, KnownColumn> = {
   email: "email",
@@ -228,7 +238,66 @@ const HEADER_ALIASES: Record<string, KnownColumn> = {
   "unsubscribed at": "unsubscribedAt",
   unsubscribe_date: "unsubscribedAt",
   opted_out_at: "unsubscribedAt",
+  // Provider exports (see PROVIDER_EXPORTS below for which file says what).
+  subscriber: "email", // MailerLite's email column
+  name: "firstName", // MailerLite's first-name field
+  // Not `state`: Kit's export has a location `state` column ("TX") beside its
+  // `status`, and reading that as a status would re-subscribe every opt-out.
+  subscriber_status: "status",
+  unsub_time: "unsubscribedAt", // Mailchimp unsubscribed_*.csv
+  clean_time: "cleanedAt", // Mailchimp cleaned_*.csv
+  created_at: "createdAt", // beehiiv, Kit
+  "created at": "createdAt",
+  subscribed_at: "createdAt", // MailerLite
+  subscribed: "createdAt", // MailerLite's export header for the same date
+  "subscribed at": "createdAt",
+  "subscription date": "createdAt",
+  optin_time: "createdAt", // Mailchimp (often empty; CONFIRM_TIME is the fallback)
+  confirm_time: "createdAt",
 };
+
+// Which provider export each alias above comes from, with its source, so the
+// next person can check them against a fresh export:
+//   beehiiv   email, First Name, Last Name, status (active / inactive / pending /
+//             validating / invalid), tier, created_at, unsubscribed_at.
+//             From a real export in TryGhost/migrate (mg-beehiiv-members
+//             fixtures); dates look like "2023-03-24 10:23:10 UTC".
+//   Mailchimp Email Address, First Name, Last Name, merge fields, MEMBER_RATING,
+//             OPTIN_TIME, ..., LEID, EUID, NOTES, TAGS. One file per status and
+//             no status column: unsubscribed_*.csv adds UNSUB_TIME (+ UNSUB_*),
+//             cleaned_*.csv adds CLEAN_TIME. Real exports in TryGhost/migrate
+//             (mg-mailchimp-members fixtures); mailchimp.com/help/view-export-contacts.
+//   Kit       first name, email, created_at, status, tags, custom fields
+//             (help.kit.com "How to export subscribers"; literal header names
+//             beyond created_at are not published, so both the help's words and
+//             the API's names are aliased).
+//   MailerLite "Subscriber" (email) plus whichever columns were visible, one
+//             file per status filter (mailerlite.com/help/how-to-export-subscribers).
+//
+// Mailchimp's system columns are bookkeeping, not contact data. In a file that
+// is recognisably a Mailchimp export (it has LEID and EUID) they are dropped
+// instead of filling the audience's 50 custom fields with noise.
+const MAILCHIMP_SYSTEM_COLUMNS = new Set([
+  "member_rating",
+  "optin_ip",
+  "confirm_ip",
+  "latitude",
+  "longitude",
+  "gmtoff",
+  "dstoff",
+  "timezone",
+  "cc",
+  "region",
+  "last_changed",
+  "leid",
+  "euid",
+  "notes",
+  "unsub_campaign_title",
+  "unsub_campaign_id",
+  "unsub_reason_other",
+  "clean_campaign_title",
+  "clean_campaign_id",
+]);
 
 // Values a `status` column may carry that we map onto an importable status.
 // Deliberately lenient: an *unrecognized* value (a `status` column that actually
@@ -256,6 +325,11 @@ const STATUS_VALUES: Record<string, CsvSubscriberStatus> = {
   inactive: "unsubscribed",
   no: "unsubscribed",
   false: "unsubscribed",
+  // Provider export words.
+  cancelled: "unsubscribed", // Kit
+  canceled: "unsubscribed",
+  paused: "unsubscribed", // beehiiv: the reader asked not to be mailed for now
+  cold: "subscribed", // Kit: subscribed but unengaged
 };
 
 // Status values that mean the address is undeliverable, complained, or never
@@ -285,6 +359,11 @@ const UNIMPORTABLE_STATUS_VALUES = new Set([
   "pending", // never completed double opt-in — no consent to inherit
   "unconfirmed",
   "not confirmed",
+  "junk", // MailerLite's spam-complaint status
+  "spam complaints",
+  "validating", // beehiiv: address still being checked
+  "invalid", // beehiiv: address found undeliverable
+  "needs_attention", // beehiiv: awaiting approval
 ]);
 
 // What a header column maps to: a known subscriber column, a custom attribute
@@ -294,8 +373,14 @@ type ColumnTarget = { kind: KnownColumn } | { kind: "attribute"; key: string } |
 // Parse a date cell into an ISO timestamp, or undefined when it isn't a date we
 // understand — a garbled opt-out date must not abort the row, it just falls back
 // to the import time.
+//
+// Provider exports write "2023-04-21 11:16:57" (Mailchimp, documented as UTC)
+// and "2023-03-24 10:23:10 UTC" (beehiiv). JavaScript reads a zoneless
+// date-time as LOCAL time, which would shift every date by the server's offset,
+// so that shape is read as UTC explicitly.
 function parseDateCell(value: string): string | undefined {
-  const ms = Date.parse(value);
+  const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2})?)(?:\s*UTC)?$/i.exec(value.trim());
+  const ms = m ? Date.parse(`${m[1]}T${m[2]}Z`) : Date.parse(value);
   return Number.isNaN(ms) ? undefined : new Date(ms).toISOString();
 }
 
@@ -307,9 +392,12 @@ export function parseSubscriberCsv(content: string): CsvParseResult {
     return { rows: [], totalRows: 0, invalidRows: 0, statusSkippedRows: 0 };
 
   const header = lines[0].map((h) => h.trim().toLowerCase());
+  const isMailchimpExport = header.includes("leid") && header.includes("euid");
+  const hasStatusColumn = header.some((h) => HEADER_ALIASES[h] === "status");
   const columns: ColumnTarget[] = header.map((h) => {
     const alias = HEADER_ALIASES[h];
     if (alias) return { kind: alias };
+    if (isMailchimpExport && MAILCHIMP_SYSTEM_COLUMNS.has(h)) return null;
     const key = slugifyFieldKey(h);
     // Unrecognized, non-empty headers become custom attributes. A header that
     // slugs to nothing (e.g. all punctuation) is skipped.
@@ -340,6 +428,11 @@ export function parseSubscriberCsv(content: string): CsvParseResult {
         if (UNIMPORTABLE_STATUS_VALUES.has(raw)) unimportable = true;
         else record.status = STATUS_VALUES[raw] ?? "subscribed";
       } else if (col.kind === "unsubscribedAt") record.unsubscribedAt = parseDateCell(value);
+      // Several columns can name the join date (Mailchimp's OPTIN_TIME is often
+      // empty, CONFIRM_TIME is not); the first one with a date wins.
+      else if (col.kind === "createdAt") record.createdAt ??= parseDateCell(value);
+      // A Mailchimp cleaned_*.csv row: the address hard bounced there.
+      else if (col.kind === "cleanedAt") unimportable = true;
       else if (col.kind === "attribute") attributes[col.key] = value.slice(0, MAX_ATTR_VALUE_LEN);
     });
     if (!record.email || !isValidEmail(record.email)) {
@@ -353,6 +446,12 @@ export function parseSubscriberCsv(content: string): CsvParseResult {
       statusSkippedRows++;
       continue;
     }
+    // An opt-out date with no status column says the row is an opt-out: that is
+    // how Mailchimp's unsubscribed_*.csv marks every row (UNSUB_TIME). With a
+    // status column the status decides (a resubscribed reader can carry an old
+    // date).
+    if (!hasStatusColumn && record.unsubscribedAt) record.status = "unsubscribed";
+    if (record.status !== "unsubscribed") delete record.unsubscribedAt;
     if (Object.keys(attributes).length > 0) record.attributes = attributes;
     rows.push(record as CsvSubscriberRow);
   }

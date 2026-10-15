@@ -1,0 +1,8 @@
+{
+  "subscribers": [
+    { "id": 207, "state": "complained", "first_name": "Carl", "email_address": "complained@convertkit.dev", "created_at": "2023-02-05T11:43:55Z", "fields": {} },
+    { "id": 208, "state": "inactive", "first_name": "Dora", "email_address": "unconfirmed@convertkit.dev", "created_at": "2023-02-06T11:43:55Z", "fields": {} },
+    { "id": 209, "state": "active", "first_name": "Eve", "email_address": "eve@convertkit.dev", "created_at": "2023-02-07T11:43:55Z", "fields": { "category": null } }
+  ],
+  "pagination": { "has_previous_page": true, "has_next_page": false, "start_cursor": "WzIwN10=", "end_cursor": "WzIwOV0=", "per_page": 1000 }
+}

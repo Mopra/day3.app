@@ -1,0 +1,65 @@
+{
+  "data": [
+    {
+      "id": "31986843064993538",
+      "email": "second@example.com",
+      "status": "active",
+      "source": "webform",
+      "subscribed_at": "2022-01-01 00:00:00",
+      "unsubscribed_at": null,
+      "created_at": "2022-01-01 00:00:00",
+      "updated_at": "2022-01-01 00:00:00",
+      "fields": {
+        "name": "Second",
+        "last_name": null
+      }
+    },
+    {
+      "id": "31986843064993540",
+      "email": "junk@example.com",
+      "status": "junk",
+      "source": "api",
+      "subscribed_at": "2022-02-02 00:00:00",
+      "unsubscribed_at": null,
+      "created_at": "2022-02-02 00:00:00",
+      "updated_at": "2022-02-02 00:00:00",
+      "fields": {
+        "name": null
+      }
+    },
+    {
+      "id": "31986843064993541",
+      "email": "bounced@example.com",
+      "status": "bounced",
+      "source": "api",
+      "subscribed_at": "2022-02-03 00:00:00",
+      "unsubscribed_at": null,
+      "created_at": "2022-02-03 00:00:00",
+      "updated_at": "2022-02-03 00:00:00",
+      "fields": {}
+    },
+    {
+      "id": "31986843064993542",
+      "email": "unconfirmed@example.com",
+      "status": "unconfirmed",
+      "source": "api",
+      "subscribed_at": null,
+      "unsubscribed_at": null,
+      "created_at": "2022-02-04 00:00:00",
+      "updated_at": "2022-02-04 00:00:00",
+      "fields": {}
+    }
+  ],
+  "links": {
+    "first": null,
+    "last": null,
+    "prev": "https://connect.mailerlite.com/api/subscribers?cursor=eyJpZCI6MX0",
+    "next": null
+  },
+  "meta": {
+    "path": "https://connect.mailerlite.com/api/subscribers",
+    "per_page": 100,
+    "next_cursor": null,
+    "prev_cursor": "eyJpZCI6MX0"
+  }
+}

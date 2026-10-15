@@ -257,6 +257,10 @@ export type ImportRow = {
   // Rows whose `status` column marked them bounced/complained/unconfirmed at the
   // old provider — valid addresses we declined to import as contacts.
   statusSkippedRows: number;
+  // Of importedRows, how many came in as `unsubscribed` (opt-outs carried over).
+  unsubscribedRows: number;
+  // "csv", or the provider id of an "Import from another provider" job.
+  source: string;
   error: string | null;
   createdAt: string;
 };

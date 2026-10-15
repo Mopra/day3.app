@@ -1,24 +1,22 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../../db/client";
-import { accounts, imports, subscribers } from "../../db/schema";
-import { newId, nowIso } from "../../lib/ids";
+import { accounts, imports } from "../../db/schema";
+import { nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
-import { canonicalizeEmail, MAX_IMPORT_ROWS, parseSubscriberCsv } from "../../lib/csv";
+import { MAX_IMPORT_ROWS, parseSubscriberCsv } from "../../lib/csv";
 import { maxSubscribersForPlan } from "../../lib/plans-catalog";
-import { getSuppressedEmails } from "../../services/suppression";
 import { registerAudienceFields } from "../../services/audience-fields";
 import { countAccountSubscribers } from "../../services/subscriber-limit";
 import { enrollAudienceJoin } from "../../services/automation-enroll";
+import { IMPORT_INSERT_CHUNK, importRowsChunk } from "../../services/import-rows";
 import type { ObjectStore } from "../../lib/storage";
-
-// Postgres allows up to 65535 bound params per statement; chunk into
-// comfortably-sized multi-row inserts.
-const INSERT_CHUNK = 500;
+import { processProviderImport, type ProviderImportDeps } from "./process-provider-import";
 
 export async function processImport(
   message: { importId: string; accountId: string },
   db: Db,
   store: ObjectStore,
+  providerDeps?: ProviderImportDeps,
 ): Promise<void> {
   const importRow = await db.query.imports.findFirst({
     where: and(eq(imports.id, message.importId), eq(imports.accountId, message.accountId)),
@@ -54,6 +52,12 @@ export async function processImport(
     .set({ status: "processing", updatedAt: nowIso() })
     .where(eq(imports.id, importRow.id));
 
+  // "Import from another provider" (beehiiv, Kit, ...): same job, same rules,
+  // rows paged from the provider's API instead of read from a stored file.
+  if (importRow.source !== "csv") {
+    return processProviderImport(db, importRow, providerDeps);
+  }
+
   try {
     const object = await store.get(importRow.r2Key);
     if (!object) throw new Error(`CSV not found in storage at ${importRow.r2Key}`);
@@ -87,76 +91,39 @@ export async function processImport(
       );
     }
 
-    const suppressed = await getSuppressedEmails(
-      db,
-      importRow.accountId,
-      parsed.rows.map((r) => r.email),
-    );
-
-    // parseSubscriberCsv already canonicalizes r.email; canonicalize here too so
-    // the suppression filter never compares a raw against a canonical value.
-    const validCount = parsed.rows.length;
-    const afterSuppression = parsed.rows.filter(
-      (r) => !suppressed.has(canonicalizeEmail(r.email)),
-    );
-    const suppressedCount = validCount - afterSuppression.length;
-
     // Free-tier subscriber-cap backstop. The upload route already rejects an
     // import that wouldn't fit, but subscribers can arrive via public forms
-    // between upload and processing — so cap inserts to the remaining headroom
+    // between upload and processing, so cap inserts to the remaining headroom
     // here too. Paid tiers are unlimited (cap = null).
     const account = await db.query.accounts.findFirst({
       where: eq(accounts.id, importRow.accountId),
     });
     const cap = account ? maxSubscribersForPlan(account.plan) : null;
-    let candidates = afterSuppression;
-    let overCapCount = 0;
-    if (cap !== null) {
-      const current = await countAccountSubscribers(db, importRow.accountId);
-      const headroom = Math.max(0, cap - current);
-      if (candidates.length > headroom) {
-        overCapCount = candidates.length - headroom;
-        candidates = candidates.slice(0, headroom);
-      }
-    }
+    let headroom =
+      cap === null ? null : Math.max(0, cap - (await countAccountSubscribers(db, importRow.accountId)));
 
     const now = nowIso();
     let imported = 0;
+    let unsubscribed = 0;
+    let suppressedCount = 0;
+    let overCapCount = 0;
+    let duplicateCount = 0;
     // Rows that landed as `subscribed`: the audience-join trigger fires for
     // these once the import has committed (not for opt-outs carried over).
     const joinedIds: string[] = [];
-    for (let i = 0; i < candidates.length; i += INSERT_CHUNK) {
-      const chunk = candidates.slice(i, i + INSERT_CHUNK);
-      const result = await db
-        .insert(subscribers)
-        .values(
-          chunk.map((row) => ({
-            id: newId("sub"),
-            accountId: importRow.accountId,
-            audienceId: importRow.audienceId,
-            email: canonicalizeEmail(row.email),
-            firstName: row.firstName ?? null,
-            lastName: row.lastName ?? null,
-            attributes: row.attributes ?? null,
-            // A `status` column carries opt-outs over from another platform, so a
-            // migration never re-subscribes someone who had left. Absent → the
-            // historical default, `subscribed`. Bounce/complaint statuses never
-            // reach here: parseSubscriberCsv drops those rows (statusSkippedRows).
-            status: row.status ?? ("subscribed" as const),
-            // Preserve the original opt-out date when the file carried one, so
-            // "when did they leave?" survives the move.
-            unsubscribedAt:
-              row.status === "unsubscribed" ? (row.unsubscribedAt ?? now) : null,
-            source: "import",
-            importedAt: now,
-            createdAt: now,
-            updatedAt: now,
-          })),
-        )
-        .onConflictDoNothing()
-        .returning({ id: subscribers.id, status: subscribers.status });
-      imported += result.length;
-      for (const r of result) if (r.status === "subscribed") joinedIds.push(r.id);
+    const target = { accountId: importRow.accountId, audienceId: importRow.audienceId };
+    for (let i = 0; i < parsed.rows.length; i += IMPORT_INSERT_CHUNK) {
+      const res = await importRowsChunk(db, target, parsed.rows.slice(i, i + IMPORT_INSERT_CHUNK), {
+        headroom,
+        now,
+      });
+      if (headroom !== null) headroom = Math.max(0, headroom - res.attempted);
+      imported += res.imported;
+      unsubscribed += res.unsubscribed;
+      suppressedCount += res.suppressed;
+      overCapCount += res.overCap;
+      duplicateCount += res.duplicates;
+      joinedIds.push(...res.joinedIds);
       // Progressive count so a large import shows real movement, not a hang.
       await db
         .update(imports)
@@ -164,9 +131,8 @@ export async function processImport(
         .where(eq(imports.id, importRow.id));
     }
 
-    // Duplicates = rows we tried to insert that onConflictDoNothing skipped
-    // (already in this audience). The five reasons sum to skippedRows.
-    const duplicateCount = candidates.length - imported;
+    // Duplicates = rows onConflictDoNothing skipped (already in this audience).
+    // The five reasons sum to skippedRows.
     const skipped =
       suppressedCount +
       parsed.invalidRows +
@@ -180,6 +146,7 @@ export async function processImport(
         status: "completed",
         totalRows: parsed.totalRows,
         importedRows: imported,
+        unsubscribedRows: unsubscribed,
         skippedRows: skipped,
         invalidRows: parsed.invalidRows,
         suppressedRows: suppressedCount,
@@ -208,6 +175,7 @@ export async function processImport(
       payload: {
         totalRows: parsed.totalRows,
         imported,
+        unsubscribed,
         invalid: parsed.invalidRows,
         suppressed: suppressedCount,
         duplicate: duplicateCount,

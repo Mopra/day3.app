@@ -40,6 +40,11 @@ export const POST = route<{ params: Promise<{ id: string; importId: string }> }>
     if (importRow.status !== "failed") {
       throw new HttpError(409, `Only failed imports can be retried (status is "${importRow.status}")`);
     }
+    // A provider import has no stored file to replace, and its key is gone once
+    // it failed: it is retried by starting a new one (dedup-safe, nothing doubles).
+    if (importRow.source !== "csv") {
+      throw new HttpError(409, "Start a new import with your API key to retry this one.");
+    }
 
     const form = await req.formData().catch(() => null);
     const file = form?.get("file");

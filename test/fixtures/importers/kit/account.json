@@ -1,0 +1,11 @@
+{
+  "user": { "id": 1, "email": "creator@kit.dev" },
+  "account": {
+    "id": 5,
+    "name": "Kit Greenhouse",
+    "plan_type": "creator",
+    "primary_email_address": "creator@kit.dev",
+    "created_at": "2023-02-17T11:43:55Z",
+    "timezone": { "name": "America/New_York", "friendly_name": "Eastern Time (US & Canada)", "utc_offset": "-05:00" }
+  }
+}

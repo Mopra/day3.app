@@ -1,0 +1,6 @@
+{
+  "lists": [
+    { "id": "a1b2c3d4e5", "name": "Main newsletter", "stats": { "member_count": 2, "unsubscribe_count": 1, "cleaned_count": 1 } }
+  ],
+  "total_items": 1
+}

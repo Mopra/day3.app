@@ -1,0 +1,3 @@
+Subscriber,name,last_name,Subscribed,Status
+left@example.com,Left,,2020-05-05 05:05:05,unsubscribed
+junk@example.com,,,2022-02-02 00:00:00,junk

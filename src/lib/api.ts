@@ -5,9 +5,13 @@
 // same as the reference.
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  // A machine-readable reason some routes add beside the message (e.g. a
+  // provider import's `no_access`), so the UI can offer the right way out.
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -27,7 +31,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(path, { ...init, headers });
   const data = (await res.json().catch(() => ({}))) as Record<string, unknown> & T;
   if (!res.ok) {
-    throw new ApiError(typeof data.error === "string" ? data.error : res.statusText, res.status);
+    throw new ApiError(
+      typeof data.error === "string" ? data.error : res.statusText,
+      res.status,
+      typeof data.code === "string" ? data.code : undefined,
+    );
   }
   return data;
 }

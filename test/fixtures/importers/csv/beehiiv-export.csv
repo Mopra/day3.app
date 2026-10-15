@@ -1,0 +1,8 @@
+email,First Name,Last Name,status,tier,created_at,stripe_customer_id,Free Tier,Gold Tier,unsubscribed_at
+ada@example.com,Ada,Lovelace,active,premium,2023-03-24 10:23:10 UTC,cus_123,No,Yes,
+left@example.com,Left,,inactive,free,2022-01-01 09:00:00 UTC,,Yes,No,2023-05-05 12:00:00 UTC
+pending@example.com,,,pending,free,2023-01-01 00:00:00 UTC,,Yes,No,
+checking@example.com,,,validating,free,2023-01-01 00:00:00 UTC,,Yes,No,
+bad@example.com,,,invalid,free,2023-01-01 00:00:00 UTC,,Yes,No,
+review@example.com,,,needs_attention,free,2023-01-01 00:00:00 UTC,,Yes,No,
+paused@example.com,,,paused,free,2023-01-01 00:00:00 UTC,,Yes,No,

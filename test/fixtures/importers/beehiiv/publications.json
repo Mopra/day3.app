@@ -1,0 +1,24 @@
+{
+  "data": [
+    {
+      "id": "pub_00000000-0000-0000-0000-000000000001",
+      "name": "The Daily Byte",
+      "organization_name": "Byte Media",
+      "referral_program_enabled": true,
+      "created": 1666800076,
+      "stats": { "active_subscriptions": 4, "active_premium_subscriptions": 1, "active_free_subscriptions": 3 }
+    },
+    {
+      "id": "pub_00000000-0000-0000-0000-000000000002",
+      "name": "Weekend Reads",
+      "organization_name": "Byte Media",
+      "referral_program_enabled": false,
+      "created": 1690000000,
+      "stats": { "active_subscriptions": 0, "active_premium_subscriptions": 0, "active_free_subscriptions": 0 }
+    }
+  ],
+  "limit": 100,
+  "page": 1,
+  "total_results": 2,
+  "total_pages": 1
+}

@@ -1,0 +1,7 @@
+{
+  "subscribers": [
+    { "id": 204, "state": "active", "first_name": "Alice", "email_address": "alice@convertkit.dev", "created_at": "2023-01-27T11:43:55Z" }
+  ],
+  "pagination": { "has_previous_page": false, "has_next_page": true, "start_cursor": "WzIwNF0=", "end_cursor": "WzIwNF0=", "per_page": 1 },
+  "total_count": 2
+}

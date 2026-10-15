@@ -480,6 +480,8 @@ export const forms = pgTable(
 
 export const IMPORT_STATUSES = ["pending", "processing", "completed", "failed"] as const;
 export type ImportStatus = (typeof IMPORT_STATUSES)[number];
+export const IMPORT_SOURCES = ["csv", "beehiiv", "kit", "mailchimp", "mailerlite"] as const;
+export type ImportSource = (typeof IMPORT_SOURCES)[number];
 
 export const imports = pgTable(
   "imports",
@@ -505,7 +507,24 @@ export const imports = pgTable(
     duplicateRows: integer("duplicate_rows").notNull().default(0),
     overCapRows: integer("over_cap_rows").notNull().default(0),
     statusSkippedRows: integer("status_skipped_rows").notNull().default(0),
+    // Of importedRows, how many landed as `unsubscribed` (opt-outs carried over
+    // from the old platform), so "imported" never reads as "will be mailed".
+    unsubscribedRows: integer("unsubscribed_rows").notNull().default(0),
     error: text("error"),
+
+    // Where the rows come from. `csv` reads the uploaded file at r2Key; a provider
+    // id (src/importers) pages that provider's API for the list/publication in
+    // sourceRef, and r2Key is empty.
+    source: text("source").$type<ImportSource>().notNull().default("csv"),
+    sourceRef: text("source_ref"),
+    // The provider API key, AES-GCM encrypted (src/lib/crypto.ts). Held only while
+    // the import runs: every terminal write sets it back to NULL, and the cron
+    // sweep clears any that outlive IMPORT_CREDENTIAL_TTL. Never sent to a client
+    // (listAudienceImports leaves it out).
+    sourceCredential: text("source_credential"),
+    // The last fully imported page's cursor, so a resumed (crashed or redeployed)
+    // import continues where it stopped instead of re-reading from page one.
+    sourceCursor: text("source_cursor"),
 
     createdAt: tstz("created_at").notNull(),
     updatedAt: tstz("updated_at").notNull(),

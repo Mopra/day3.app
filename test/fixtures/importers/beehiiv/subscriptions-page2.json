@@ -1,0 +1,13 @@
+{
+  "data": [
+    { "id": "sub_00000000-0000-0000-0000-000000000006", "email": "bad@@example", "status": "invalid", "created": 1667400000, "subscription_tier": "free", "subscription_premium_tier_names": [], "custom_fields": [] },
+    { "id": "sub_00000000-0000-0000-0000-000000000007", "email": "review@example.com", "status": "needs_attention", "created": 1667500000, "subscription_tier": "free", "subscription_premium_tier_names": [], "custom_fields": [] },
+    { "id": "sub_00000000-0000-0000-0000-000000000008", "email": "optedout-in-day3@example.com", "status": "active", "created": 1667600000, "subscription_tier": "free", "subscription_premium_tier_names": [], "custom_fields": [] },
+    { "id": "sub_00000000-0000-0000-0000-000000000009", "email": "suppressed@example.com", "status": "active", "created": 1667700000, "subscription_tier": "free", "subscription_premium_tier_names": [], "custom_fields": [] },
+    { "id": "sub_00000000-0000-0000-0000-000000000010", "email": "grace@example.com", "status": "active", "created": 1667800000, "subscription_tier": "free", "subscription_premium_tier_names": [], "custom_fields": [ { "name": "First Name", "kind": "string", "value": "Grace" } ] }
+  ],
+  "limit": 100,
+  "has_more": false,
+  "next_cursor": null,
+  "total_results": 10
+}
