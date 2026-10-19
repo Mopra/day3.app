@@ -5,6 +5,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -182,6 +183,27 @@ export const blockedDomains = pgTable("blocked_domains", {
   createdBy: text("created_by").notNull(),
   createdAt: tstz("created_at").notNull(),
 });
+
+// The cards each org has paid with, as Clerk's paymentAttempt webhook reports
+// them (brand + last 4; Clerk exposes no expiry or Stripe fingerprint). Used by
+// services/repeat-fraud.ts: on 2026-10-19 the same Visa 2709 paid for two
+// phishing orgs a few hours apart, and the second one was only caught by hand.
+// Keyed on the Clerk org, not the account, because the webhook can arrive before
+// the account row exists, and so a purged account's card still counts.
+export const paymentCards = pgTable(
+  "payment_cards",
+  {
+    clerkOrgId: text("clerk_org_id").notNull(),
+    brand: text("brand").notNull(),
+    last4: text("last4").notNull(),
+    payerEmail: text("payer_email"),
+    createdAt: tstz("created_at").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.clerkOrgId, t.brand, t.last4] }),
+    index("idx_payment_cards_card").on(t.brand, t.last4),
+  ],
+);
 
 // A saved "From" identity — a from-name + from-address pair bound to a sending
 // domain. Replaces free-text From entry in the campaign composer: users pick a
@@ -1673,6 +1695,7 @@ export type SuppressionEntry = typeof suppressionEntries.$inferSelect;
 export type RiskReview = typeof riskReviews.$inferSelect;
 export type ContentReview = typeof contentReviews.$inferSelect;
 export type BlockedDomain = typeof blockedDomains.$inferSelect;
+export type PaymentCard = typeof paymentCards.$inferSelect;
 export type JobLog = typeof jobLogs.$inferSelect;
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type IdempotencyKey = typeof idempotencyKeys.$inferSelect;

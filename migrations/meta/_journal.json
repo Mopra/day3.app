@@ -302,6 +302,13 @@
       "when": 1792079442521,
       "tag": "0042_provider_import",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1792435070604,
+      "tag": "0043_payment_cards",
+      "breakpoints": true
     }
   ]
 }

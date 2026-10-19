@@ -16,6 +16,7 @@ import {
   roleFromClerk,
 } from "@/services/accounts";
 import type { SubscriptionLifecycle } from "@/services/plans";
+import { recordPaymentAttempt } from "@/services/repeat-fraud";
 
 type Rec = Record<string, unknown>;
 const rec = (v: unknown): Rec => (typeof v === "object" && v !== null ? (v as Rec) : {});
@@ -130,6 +131,23 @@ export async function POST(req: NextRequest) {
           lifecycle,
           periodStart: epochToIso(data.period_start),
           periodEnd: epochToIso(data.period_end),
+        });
+      }
+      break;
+    }
+    // Checkout and renewals. Records the card and pauses the org when the card or
+    // the payer matches a risk-paused workspace (services/repeat-fraud.ts).
+    case "paymentAttempt.created":
+    case "paymentAttempt.updated": {
+      const payer = rec(data.payer);
+      const source = rec(data.payment_source);
+      const orgId = str(payer.organization_id);
+      if (orgId) {
+        await recordPaymentAttempt(db, {
+          clerkOrgId: orgId,
+          brand: str(source.card_type),
+          last4: str(source.last4),
+          payerEmail: str(payer.email),
         });
       }
       break;

@@ -5,6 +5,7 @@ import { accountUsers, accounts, type Account } from "../db/schema";
 import type { JobQueue } from "../queue/messages";
 import { newId, nowIso } from "../lib/ids";
 import { restampAutomationSandbox } from "./automation-sandbox";
+import { checkNewWorkspace } from "./repeat-fraud";
 import { ensureSharedDomain } from "./shared-domain";
 import { attributionFromMetadata, reportSignup, signupMethod } from "./signup-analytics";
 import { addMemberToTeamAudience, ensureTeamAudience } from "./team-audience";
@@ -309,6 +310,11 @@ export async function syncCurrentOrganization(
   // A new workspace is a signup: tell the marketing site's GA4 (see
   // signup-analytics.ts). Never throws.
   if (created) {
+    // A comeback from a paused workspace (same person, same card) is paused
+    // before it can do anything. Never throws.
+    if (await checkNewWorkspace(db, account, { clerkUserId: auth.userId, email })) {
+      account = (await getAccountByClerkOrgId(db, auth.orgId))!;
+    }
     await reportSignup(attributionFromMetadata(user.unsafeMetadata), signupMethod(user));
   }
 
