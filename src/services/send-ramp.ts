@@ -34,7 +34,9 @@ export type RampTier = {
 // incident, and large enough that a real customer's first day of integration
 // testing, welcome emails and a first small campaign never notices it.
 export const RAMP_TIERS: RampTier[] = [
-  { fromDay: 0, perDay: 500 },
+  // 250, not 500: on 2026-10-19 a phishing account sent 496 on day one in
+  // campaigns of ~33, each under every other bar, and stopped only at 500.
+  { fromDay: 0, perDay: 250 },
   { fromDay: 1, perDay: 2_000 },
   { fromDay: 3, perDay: 10_000 },
   { fromDay: 7, perDay: 50_000 },

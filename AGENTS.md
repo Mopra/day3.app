@@ -121,8 +121,13 @@ serves the UI and the API routes; a separate long-running Node worker
    label that is the brand plus a closed list of SaaS affixes (`getacme`, `acmehq`)
    is the brand (`isBrandVariant`; a free-form lookalike like `hotdoc-billing` is
    not). The regressions live in `test/content-review.test.ts` under "honest
-   first-week mail". **Campaigns and automations block on `blocked` only**, like
-   transactional: `high` sends and stays flagged.
+   first-week mail". **Campaigns block on `blocked` and hold on `high`** (paused
+   `paused_code='review'`, released by admin approve); automations block on
+   `blocked` only. A campaign from a **new account** (inside the ramp) is also
+   held when the AI names a lure or impersonation, or when a `medium` review
+   mails a list that is >= 80% consumer mailboxes
+   (`src/services/new-account-hold.ts`); established senders' medium mail sends
+   flagged.
 
    **Day3 is a transactional email service too, and an established sender's
    transactional mail is never refused by a guess.** `isBlocking(review, account)`
@@ -354,7 +359,7 @@ page share a single account lookup instead of one per caller.
   because a paused account's window is empty by construction.
 - **The new-account send ramp is enforced inside `reserveQuota`, and that is
   deliberate.** `src/services/send-ramp.ts` caps a workspace's daily sends by
-  account age (500 on day one, lifting entirely after 14 days) on top of the plan
+  account age (250 on day one, lifting entirely after 14 days) on top of the plan
   limit, because the plan limit never answered "should an account created four
   minutes ago put 100,000 emails on the shared SES identity tonight". It lives in
   the quota statement — the one choke point every real send already passes

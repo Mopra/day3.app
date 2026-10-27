@@ -4,7 +4,7 @@ import { requireAdmin } from "@/api/context";
 import { accounts, campaigns } from "@/db/schema";
 import { safeParseTheme } from "@/lib/theme";
 
-// Campaigns needing attention: blocked / pending_review, or any with medium+ risk.
+// Campaigns needing attention: blocked / pending_review / held, or any with medium+ risk.
 export const GET = route(async () => {
   const { db } = await requireAdmin();
   const rows = await db
@@ -25,6 +25,9 @@ export const GET = route(async () => {
       or(
         eq(campaigns.status, "blocked"),
         eq(campaigns.status, "pending_review"),
+        // Held by the review, whatever its level: a new account's lure hold
+        // can carry a `low` merged level and still needs an admin.
+        eq(campaigns.pausedCode, "review"),
         inArray(campaigns.riskLevel, ["medium", "high", "blocked"]),
       ),
     )

@@ -583,7 +583,7 @@ export const PAUSED_CODES = [
   "config", // platform-side sending misconfiguration (ops alerted)
   "suspended", // provider suspended the platform account (ops alerted)
   "error", // repeated identical send failures tripped the circuit breaker
-  "review", // pre-send review said `high`: held before any recipient was generated; an admin approves or blocks it
+  "review", // pre-send review said `high` (or a new account's lure / consumer-list hold): held before any recipient was generated; an admin approves or blocks it
 ] as const;
 export type PausedCode = (typeof PAUSED_CODES)[number];
 

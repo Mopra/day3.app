@@ -3,7 +3,10 @@ import type { Db } from "../../db/client";
 import { accounts, campaigns, riskReviews, sendingDomains } from "../../db/schema";
 import { newId, nowIso } from "../../lib/ids";
 import { logJob } from "../../lib/job-log";
+import { logger } from "../../lib/logger";
+import { audienceMix, isNewAccount, newAccountHoldReason } from "../../services/new-account-hold";
 import { notifyAccount } from "../../services/notifications";
+import { campaignRecipientScope } from "../../services/recipient-scope";
 import { reviewCampaignRisk } from "../../services/risk";
 import type { JobQueue } from "../messages";
 
@@ -75,8 +78,10 @@ export async function reviewCampaign(
   // bounds the damage. It does not bound it enough: on 2026-10-27 the AI pass
   // rated a new account's campaign `high` (recommended action `block`), the
   // campaign was approved anyway, and 475 emails went out in 15 seconds before
-  // the 500/day ramp stopped it. A flag in the admin queue is read after the
+  // the then-500/day ramp stopped it. A flag in the admin queue is read after the
   // fact; the hold is read before.
+  //
+  // New accounts are held on more than `high`; see below.
   //
   // It is a hold rather than a block because `high` is reachable by soft
   // signals honest first-week mail carries ("sign in to your account" in a
@@ -84,12 +89,35 @@ export async function reviewCampaign(
   // campaign can only be duplicated; a held one can be duplicated too, or
   // released as it is by an admin who reads it. The
   // transactional path keeps its own rule (content-review.ts isBlocking).
-  const verdict: "approved" | "held" | "blocked" =
+  let verdict: "approved" | "held" | "blocked" =
     review.riskLevel === "blocked"
       ? "blocked"
       : review.recommendedAction === "block"
         ? "held"
         : "approved";
+  let heldReason =
+    "Our pre-send review flagged this campaign as high risk, so it is held for a manual check before anything goes out.";
+
+  // A new account is held on less: an AI lure concern, or a flagged review
+  // mailing a mostly-consumer list (services/new-account-hold.ts). The account
+  // is read here, not before, because an established sender never needs it.
+  const account = await db.query.accounts.findFirst({
+    where: eq(accounts.id, campaign.accountId),
+  });
+  // A sandbox campaign only reaches the org's own members, so holding it
+  // protects nobody (and the shared domain invites an impersonation reading).
+  if (verdict === "approved" && account && !campaign.sandbox && isNewAccount(account)) {
+    // The mix only matters for a medium review, so a clean one skips the
+    // count. A dangling segment/topic is generate-recipients' problem to
+    // report; here it just means the mix is unknown.
+    const scope = review.riskLevel === "medium" ? await campaignRecipientScope(db, campaign) : null;
+    const mix = scope && !scope.error ? await audienceMix(db, campaign, scope.conditions) : null;
+    const reason = newAccountHoldReason(review, mix);
+    if (reason) {
+      verdict = "held";
+      heldReason = reason;
+    }
+  }
   const approved = verdict === "approved";
 
   const transitioned = await db
@@ -103,9 +131,7 @@ export async function reviewCampaign(
       ...(verdict === "held"
         ? {
             pausedCode: "review" as const,
-            pausedReason:
-              "Our pre-send review flagged this campaign as high risk, so it is held for a manual check before anything goes out. " +
-              review.summary,
+            pausedReason: `${heldReason} ${review.summary}`,
           }
         : {}),
       updatedAt: nowIso(),
@@ -126,10 +152,15 @@ export async function reviewCampaign(
     // the status transition so a duplicate delivery can't notify twice;
     // best-effort so a notification failure never fails the review job after
     // the decision is already recorded.
-    try {
-      const account = await db.query.accounts.findFirst({
-        where: eq(accounts.id, campaign.accountId),
+    // A hold waits on an admin, so every hold pages: the review queue is read
+    // when someone looks, and a held campaign is someone waiting on us.
+    if (verdict === "held") {
+      void logger.reportError("campaign held for manual review", new Error(heldReason), {
+        accountId: campaign.accountId,
+        entityId: campaign.id,
       });
+    }
+    try {
       if (account) {
         await notifyAccount(
           db,
@@ -145,7 +176,7 @@ export async function reviewCampaign(
             : {
                 kind: "campaign_held",
                 title: `"${campaign.name}" is held for a manual review`,
-                body: `${review.summary} Nothing has been sent. To send now, duplicate the campaign, apply the guidance, and send the fixed copy; otherwise we check it by hand and release or refuse it.`,
+                body: `${heldReason} Nothing has been sent. To send now, duplicate the campaign, apply the guidance, and send the fixed copy; otherwise we check it by hand and release or refuse it.`,
                 ctaHref: `/campaigns/${campaign.id}`,
                 ctaLabel: "See why",
               },

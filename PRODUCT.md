@@ -458,7 +458,14 @@ guards make that observable:
   so nothing sends until an admin approves it from the review queue or the sender
   duplicates and fixes it (a hold rather than a block, because `high` is reachable by
   ordinary product updates; since 2026-10-27, after an AI-rated `high` campaign sent
-  475 emails before the ramp cap). `medium` sends and is flagged for admin review. For
+  475 emails before the ramp cap). `medium` sends and is flagged for admin review,
+  except from a **new account** (inside the 14-day ramp), which is also held when the
+  AI review names a lure or impersonation (by category or in its rationale), or when a
+  `medium` campaign goes to a list that is at least 80% personal mailboxes (Gmail,
+  iCloud and similar, 20+ recipients): the pattern of a scraped list (since
+  2026-10-27, after a new account sent 496 phishing emails in 15 small campaigns the
+  AI had called "a lure"). Every hold pages the team and shows in the admin review
+  queue. For
   an automation publish only `blocked` stops it. A **blocked campaign** shows the sender
   exactly what was flagged, concrete fix-it steps, why it matters for sender reputation,
   and a one-click **Duplicate & fix** path (blocked campaigns themselves are immutable);
@@ -838,7 +845,7 @@ other. Each domain still opens to its own detail page.
     customer's site, a domain-expiry warning) are reviewed as what they are: the named
     site is the subject of the message, not a claim about who sent it.
 - **New workspaces ramp up their sending.** For the first two weeks an account's
-  daily send ceiling rises with its age (500 on day one, then 2,000, 10,000 and
+  daily send ceiling rises with its age (250 on day one, then 2,000, 10,000 and
   50,000, lifting entirely after 14 days), capped always by the plan allowance and
   never exceeding it. This is standard practice for new senders and it is good for
   honest customers: a brand new domain that mails 50,000 strangers on its first night

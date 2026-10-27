@@ -34,7 +34,7 @@ async function setup() {
     monthlyEmailLimit: 100_000,
     currentPeriodStart: nowIso(),
     currentPeriodEnd: daysAhead(10),
-    dailySentCount: 500,
+    dailySentCount: 250,
     dailySentDate: utcDayKey(),
   });
   const domain = await seedDomain(db, account.id);

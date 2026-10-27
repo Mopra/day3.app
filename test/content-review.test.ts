@@ -571,21 +571,21 @@ describe("new-account send ramp", () => {
 
   it("caps a brand new account well below its plan limit", async () => {
     // The exact shape of the incident: a paid plan bought minutes after
-    // signup. The plan says 100,000; day one says 500.
+    // signup. The plan says 100,000; day one says 250.
     const account = await seedAccount(db, {
       rampLiftedAt: null,
       createdAt: nowMinus(0),
       monthlyEmailLimit: 100_000,
     });
-    expect(rampDailyLimit(account)).toBe(500);
+    expect(rampDailyLimit(account)).toBe(250);
 
     const granted = await reserveQuota(db, account.id, 10_000);
-    expect(granted).toBe(500);
+    expect(granted).toBe(250);
 
     const after = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
-    expect(after!.dailySentCount).toBe(500);
+    expect(after!.dailySentCount).toBe(250);
     // The plan counter only moved by what was actually granted.
-    expect(after!.monthlyEmailSentCount).toBe(500);
+    expect(after!.monthlyEmailSentCount).toBe(250);
   });
 
   it("relaxes as the account ages and lifts entirely after two weeks", async () => {
@@ -637,13 +637,13 @@ describe("new-account send ramp", () => {
 
   it("credits the daily counter when a reservation is released", async () => {
     const account = await seedAccount(db, { rampLiftedAt: null, createdAt: nowMinus(0) });
-    await reserveQuota(db, account.id, 500);
-    await releaseReservation(db, account.id, 200);
+    await reserveQuota(db, account.id, 250);
+    await releaseReservation(db, account.id, 100);
 
     const after = await db.query.accounts.findFirst({ where: eq(accounts.id, account.id) });
-    expect(after!.dailySentCount).toBe(300);
+    expect(after!.dailySentCount).toBe(150);
     // Abandoned reservations must not eat a young account's ramp.
-    expect(await reserveQuota(db, account.id, 500)).toBe(200);
+    expect(await reserveQuota(db, account.id, 250)).toBe(100);
   });
 
   it("explains the ramp rather than telling a young account to upgrade", async () => {
