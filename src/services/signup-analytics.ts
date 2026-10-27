@@ -7,13 +7,17 @@
 // event when an account row is first created, under the visitor's GA client id
 // carried over from the site:
 //
-//   day3.app CTA (adds ?ga_cid=...&utm_*=...) → /sign-up (stores them in the
+//   day3.app CTA (adds ?ga_cid=...&ga_sid=...&utm_*=...) → /sign-up (stores them in the
 //   Clerk user's unsafeMetadata) → syncCurrentOrganization creates the account
 //   → reportSignup.
 //
 // Reusing the site's client id is what lets GA4 credit the signup to the
-// channel and page that earned it. Without one (a direct visit) the event is
-// still counted, under a fresh id.
+// channel and page that earned it. The session id matters as much: a
+// Measurement Protocol event without `session_id` is not joined to any session,
+// so GA4 reports it as "Unassigned" with landing page "(not set)" even under the
+// right client id. Every sign_up landed there until ga_sid was carried too.
+// Without a client id (a direct visit) the event is still counted, under a
+// fresh id.
 //
 // This is the app's one sign_up. Do not add a client-side GA tag to fire another:
 // it would set the cookies the privacy policy says the app does not, and GA4
@@ -26,6 +30,7 @@ export const SIGNUP_ATTRIBUTION_KEY = "signupAttribution";
 
 export type SignupAttribution = {
   gaClientId?: string;
+  gaSessionId?: string;
   utmSource?: string;
   utmMedium?: string;
   utmCampaign?: string;
@@ -34,6 +39,7 @@ export type SignupAttribution = {
 
 const FIELDS: Record<keyof SignupAttribution, string> = {
   gaClientId: "ga_cid",
+  gaSessionId: "ga_sid",
   utmSource: "utm_source",
   utmMedium: "utm_medium",
   utmCampaign: "utm_campaign",
@@ -42,6 +48,8 @@ const FIELDS: Record<keyof SignupAttribution, string> = {
 
 // A GA4 client id is two dot-separated integers ("1234567890.1712345678").
 const CLIENT_ID = /^\d{1,20}\.\d{1,20}$/;
+// A GA4 session id is the session's start time in Unix seconds.
+const SESSION_ID = /^\d{1,20}$/;
 // GA4 truncates parameter values at 100 characters; anything longer is not ours.
 const MAX_VALUE = 100;
 
@@ -50,6 +58,7 @@ function clean(key: keyof SignupAttribution, value: unknown): string | undefined
   const v = value.trim();
   if (!v || v.length > MAX_VALUE) return undefined;
   if (key === "gaClientId" && !CLIENT_ID.test(v)) return undefined;
+  if (key === "gaSessionId" && !SESSION_ID.test(v)) return undefined;
   return v;
 }
 
@@ -107,6 +116,11 @@ export function signupPayload(attribution: SignupAttribution, method = "email") 
     // Required for the event to count as engaged in GA4 reports.
     engagement_time_msec: 1,
   };
+  // Joins the event to the visit on the site, so it inherits that session's
+  // channel and landing page. Only meaningful under the site's own client id.
+  if (attribution.gaClientId && attribution.gaSessionId) {
+    params.session_id = attribution.gaSessionId;
+  }
   // The same names the site's signup_click uses, so one custom dimension reads both.
   if (attribution.utmContent) params.page_path = attribution.utmContent;
   if (attribution.utmCampaign) params.placement = attribution.utmCampaign;

@@ -13,6 +13,7 @@ describe("signup attribution", () => {
     expect(
       attributionFromSearchParams({
         ga_cid: "123456789.1712345678",
+        ga_sid: "1712345999",
         utm_source: "day3-website",
         utm_medium: "cta",
         utm_campaign: "header",
@@ -21,6 +22,7 @@ describe("signup attribution", () => {
       }),
     ).toEqual({
       gaClientId: "123456789.1712345678",
+      gaSessionId: "1712345999",
       utmSource: "day3-website",
       utmMedium: "cta",
       utmCampaign: "header",
@@ -31,6 +33,7 @@ describe("signup attribution", () => {
   it("returns undefined when the URL carries nothing, and drops a malformed client id", () => {
     expect(attributionFromSearchParams({})).toBeUndefined();
     expect(attributionFromSearchParams({ ga_cid: "GA1.1.<script>" })).toBeUndefined();
+    expect(attributionFromSearchParams({ ga_sid: "s1712345999$o1" })).toBeUndefined();
   });
 
   it("round-trips through Clerk metadata and ignores junk there", () => {
@@ -49,6 +52,13 @@ describe("signup attribution", () => {
     });
     expect(signupPayload({}).client_id).toMatch(/^\d+\.\d+$/);
     expect(signupPayload({}, "google").events[0].params.method).toBe("google");
+  });
+
+  it("joins the sign_up to the site's session, but only under the site's client id", () => {
+    expect(signupPayload({ gaClientId: "1.2", gaSessionId: "1712345999" }).events[0].params.session_id).toBe(
+      "1712345999",
+    );
+    expect(signupPayload({ gaSessionId: "1712345999" }).events[0].params).not.toHaveProperty("session_id");
   });
 
   it("names the sign-up method from the user's social account, or email", () => {
