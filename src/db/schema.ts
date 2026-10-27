@@ -572,7 +572,7 @@ export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 // sentence; this code is what the cron sweep keys auto-resume on — string
 // matching on the reason text would be fragile. Only rate_limit / daily_limit /
 // quota are ever auto-resumed; user / reputation / account / config / suspended /
-// error require a human (the user for user/reputation, an operator for the rest).
+// error / review require a human (the user for user/reputation, an operator for the rest).
 export const PAUSED_CODES = [
   "user", // paused from the UI
   "reputation", // this campaign's own bounce/complaint rate (services/health.ts); the user resumes it
@@ -583,6 +583,7 @@ export const PAUSED_CODES = [
   "config", // platform-side sending misconfiguration (ops alerted)
   "suspended", // provider suspended the platform account (ops alerted)
   "error", // repeated identical send failures tripped the circuit breaker
+  "review", // pre-send review said `high`: held before any recipient was generated; an admin approves or blocks it
 ] as const;
 export type PausedCode = (typeof PAUSED_CODES)[number];
 
@@ -1079,6 +1080,9 @@ export const NOTIFICATION_KINDS = [
   "campaign_sent",
   "campaign_paused",
   "campaign_blocked",
+  // The pre-send review rated a campaign `high`: held (paused, code `review`)
+  // for an admin to release or refuse. Nothing was sent.
+  "campaign_held",
   "import_completed",
   "import_failed",
   "subscribers_cap_reached",

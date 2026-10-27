@@ -11,13 +11,14 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
   const { id } = await params;
   const campaign = await db.query.campaigns.findFirst({ where: eq(campaigns.id, id) });
   if (!campaign) throw new HttpError(404, "Not found");
-  if (campaign.status !== "blocked" && campaign.status !== "pending_review") {
+  const held = campaign.status === "paused" && campaign.pausedCode === "review";
+  if (campaign.status !== "blocked" && campaign.status !== "pending_review" && !held) {
     throw new HttpError(409, `Cannot approve from status "${campaign.status}"`);
   }
 
   await db
     .update(campaigns)
-    .set({ status: "approved", pausedReason: null, updatedAt: nowIso() })
+    .set({ status: "approved", pausedReason: null, pausedCode: null, updatedAt: nowIso() })
     .where(eq(campaigns.id, campaign.id));
   await logAdminAction(db, {
     action: "campaign.approve",

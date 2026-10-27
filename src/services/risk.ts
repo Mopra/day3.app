@@ -646,9 +646,14 @@ export function mergeReviews(
     0,
     MAX_GUIDANCE_ITEMS,
   );
-  const summary = ai.rationale
-    ? `${deterministic.summary} AI review: ${ai.rationale}`
-    : deterministic.summary;
+  // "No risk signals detected." is only true of the rule pass. Leading with it
+  // in front of an AI rationale that rates the campaign high reads as a
+  // contradiction, so a clean rule pass drops out when the AI has a reason.
+  const summary = !ai.rationale
+    ? deterministic.summary
+    : deterministic.categories.length === 0
+      ? `AI review: ${ai.rationale}`
+      : `${deterministic.summary} AI review: ${ai.rationale}`;
 
   return {
     riskLevel,

@@ -273,7 +273,7 @@ export function CampaignActions({
           Pause
         </Button>
       )}
-      {campaign.status === "paused" && (
+      {campaign.status === "paused" && campaign.pausedCode !== "review" && (
         <Button disabled={busy} onClick={() => action("resume", undefined, "Resumed")}>
           Resume
         </Button>

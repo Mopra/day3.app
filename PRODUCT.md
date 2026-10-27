@@ -8,7 +8,7 @@
 > **Keep it current.** This document MUST be updated whenever a feature, flow,
 > price, limit, or integration changes. See [Maintaining this document](#maintaining-this-document).
 >
-> Last verified against the codebase: **2026-10-15**.
+> Last verified against the codebase: **2026-10-27**.
 
 ---
 
@@ -453,9 +453,13 @@ guards make that observable:
   that window (at least 3, and at least 5% of what the AI reviewed), a reputation
   warning, or a risk pause) get it on every new piece of content; trusted accounts get it
   on one in ten.
-  Only a `blocked` verdict stops a campaign or an automation publish; `medium` and
-  `high` send and are flagged for admin review (a blocked campaign is final, and
-  `high` was reachable by ordinary product updates). A **blocked campaign** shows the sender
+  A campaign rated `blocked` is refused. A campaign rated `high` (recommended action
+  `block`) is **held**: paused with code `review` before any recipient is generated,
+  so nothing sends until an admin approves it from the review queue or the sender
+  duplicates and fixes it (a hold rather than a block, because `high` is reachable by
+  ordinary product updates; since 2026-10-27, after an AI-rated `high` campaign sent
+  475 emails before the ramp cap). `medium` sends and is flagged for admin review. For
+  an automation publish only `blocked` stops it. A **blocked campaign** shows the sender
   exactly what was flagged, concrete fix-it steps, why it matters for sender reputation,
   and a one-click **Duplicate & fix** path (blocked campaigns themselves are immutable);
   medium-risk campaigns still send but surface the guidance as suggestions for the next

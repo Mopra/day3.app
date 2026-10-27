@@ -70,7 +70,9 @@ describe("mergeReviews (escalate-only)", () => {
     expect(merged.recommendedAction).toBe("block");
     expect(merged.categories).toContain("cold_outreach");
     expect(merged.guidance).toContain("Only email people who signed up for your list.");
-    expect(merged.summary).toContain("AI review:");
+    // A clean rule pass must not open with "No risk signals detected." in
+    // front of an AI rationale that rates it high.
+    expect(merged.summary).toBe("AI review: This is cold outreach to strangers.");
     expect(merged.ai?.model).toBe("test-model");
   });
 

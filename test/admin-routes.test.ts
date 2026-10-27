@@ -431,6 +431,20 @@ describe("admin route hardening", () => {
       expect(JSON.parse(rows[0].payloadJson!).action).toBe("campaign.approve");
     });
 
+    it("approve releases a campaign the pre-send review held", async () => {
+      await currentDb
+        .update(campaigns)
+        .set({ status: "paused", pausedCode: "review", pausedReason: "held" })
+        .where(eq(campaigns.id, seeded.campaignId));
+      const res = await callRoute(ROUTES.find((r) => r.path === "campaigns/[id]/approve")!);
+      expect(res.status).toBe(200);
+      const c = await currentDb.query.campaigns.findFirst({
+        where: eq(campaigns.id, seeded.campaignId),
+      });
+      expect(c!.status).toBe("approved");
+      expect(c!.pausedCode).toBeNull();
+    });
+
     it("block logs admin_action", async () => {
       const res = await callRoute(ROUTES.find((r) => r.path === "campaigns/[id]/block")!);
       expect(res.status).toBe(200);

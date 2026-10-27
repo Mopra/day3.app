@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { reviewCampaign } from "../src/queue/handlers/review-campaign";
 import { generateCampaignRecipients } from "../src/queue/handlers/generate-recipients";
-import { campaignRecipients, campaigns, riskReviews } from "../src/db/schema";
+import { campaignRecipients, campaigns, notifications, riskReviews } from "../src/db/schema";
 import { addSuppression } from "../src/services/suppression";
 import {
   FakeQueue,
@@ -75,9 +75,11 @@ describe("review_campaign", () => {
     expect(queue.messages).toHaveLength(0);
   });
 
-  it("approves a high-risk campaign and leaves it flagged, rather than blocking it", async () => {
-    // "Sign in to your account" plus more than 15 links is a normal product
-    // update, and scored `high`. Only `blocked` blocks now.
+  it("holds a high-risk campaign before any recipient is generated", async () => {
+    // "Sign in to your account" plus more than 15 links scores `high`, whose
+    // recommended action is `block`. It used to approve-and-flag, and on
+    // 2026-10-27 that let 475 emails out before the ramp cap. A `block`
+    // recommendation now never sends: the campaign is held for an admin.
     const links = Array.from({ length: 16 }, (_, i) => `<a href="https://example.com/p/${i}">Link ${i}</a>`).join("");
     const { db, account, campaign } = await setup(`<p>Sign in to your account to see what's new.</p>${links}`);
     const queue = new FakeQueue();
@@ -86,6 +88,32 @@ describe("review_campaign", () => {
 
     const fresh = await db.query.campaigns.findFirst({ where: eq(campaigns.id, campaign.id) });
     expect(fresh?.riskLevel).toBe("high");
+    expect(fresh?.status).toBe("paused");
+    expect(fresh?.pausedCode).toBe("review");
+    expect(fresh?.pausedReason).toContain("held for a manual check");
+    expect(queue.messages).toHaveLength(0);
+
+    const review = await db.query.riskReviews.findFirst({
+      where: eq(riskReviews.campaignId, campaign.id),
+    });
+    expect(review?.recommendedAction).toBe("block");
+
+    const held = await db.query.notifications.findFirst({
+      where: eq(notifications.accountId, account.id),
+    });
+    expect(held?.kind).toBe("campaign_held");
+  });
+
+  it("approves a medium-risk campaign and leaves it flagged", async () => {
+    const { db, account, campaign } = await setup(
+      '<p>Act now! Last chance! <a href="https://bit.ly/x">Click</a></p>',
+    );
+    const queue = new FakeQueue();
+
+    await reviewCampaign({ campaignId: campaign.id, accountId: account.id }, db, asQueue(queue), "mock");
+
+    const fresh = await db.query.campaigns.findFirst({ where: eq(campaigns.id, campaign.id) });
+    expect(fresh?.riskLevel).toBe("medium");
     expect(fresh?.status).toBe("approved");
     expect(queue.messages[0]?.type).toBe("generate_campaign_recipients");
   });

@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
 import { route, json, HttpError } from "@/api/http";
 import { requireAccount } from "@/api/context";
 import { findCampaign } from "@/api/finders";
@@ -16,6 +16,12 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
   if (campaign.status !== "paused") {
     throw new HttpError(409, "Only a paused campaign can be resumed");
   }
+  // Held by the pre-send review before any recipient was generated: only an
+  // admin releases it (admin approve), and resuming would set it "sending"
+  // with nobody to send to anyway.
+  if (campaign.pausedCode === "review") {
+    throw new HttpError(409, "This campaign is held for a manual review and can't be resumed");
+  }
 
   const eligibility = checkSendEligibility(account);
   if (!eligibility.allowed) throw new HttpError(403, eligibility.reason);
@@ -23,7 +29,13 @@ export const POST = route<{ params: Promise<{ id: string }> }>(async (_req, { pa
   await db
     .update(campaigns)
     .set({ status: "sending", pausedReason: null, pausedCode: null, updatedAt: nowIso() })
-    .where(and(eq(campaigns.id, campaign.id), eq(campaigns.status, "paused")));
+    .where(
+      and(
+        eq(campaigns.id, campaign.id),
+        eq(campaigns.status, "paused"),
+        or(isNull(campaigns.pausedCode), ne(campaigns.pausedCode, "review")),
+      ),
+    );
 
   // Restore full lane width, not a single lane: a large campaign resumed with
   // one self-chaining batch would drain at 1/SEND_LANES of its designed rate

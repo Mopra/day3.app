@@ -616,7 +616,7 @@ export function CampaignDetailView({
           Pause
         </Button>
       )}
-      {campaign.status === "paused" && (
+      {campaign.status === "paused" && campaign.pausedCode !== "review" && (
         <Button disabled={busy} onClick={() => action("resume", undefined, "Resumed")}>
           Resume
         </Button>
@@ -733,7 +733,9 @@ export function CampaignDetailView({
               : campaign.status === "paused"
                 ? campaign.pausedCode === "reputation"
                   ? "We paused this send to protect your deliverability"
-                  : "Sending is paused"
+                  : campaign.pausedCode === "review"
+                    ? "Held for a manual review"
+                    : "Sending is paused"
                 : campaignStatusLabel(campaign.status)
           }
         >
