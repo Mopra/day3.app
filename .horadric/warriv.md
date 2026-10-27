@@ -7,6 +7,8 @@
 
 ## Lately
 
+- 2026-10-27 Round (human left): only open quest is the GA4 check, parked until 2026-10-29. Nothing to do.
+- 2026-10-27 Look back: the day was clean. The day gave 1 lore note (#5, GA4 sign_up needs session_id via ga_sid).
 - 2026-10-15 Round (hourly): log all done (7), no aim open, nothing landed, Open empty, no check stone to cast. Nothing to do.
 - 2026-10-15 Round (hourly): log all done (7), no aim open, nothing landed, Open empty, no check stone to cast. Nothing to do.
 - 2026-10-15 Round (human left): log all done (7), no aim open, nothing landed, Open empty. Nothing to do.
@@ -22,4 +24,6 @@
 - 2026-10-12 Handed "Test AgentID sign-up end to end from an MCP client" to the human: needs their AgentID login and makes a real prod workspace.
 
 ## Open
+
+- The human told session 097a4d3e that acc_bp33x88rd8h5h9jvkztv (paused, cold whisky list) split sends into many small campaigns to slip under per-campaign health checks, as spt did on 2026-10-19. If no quest or fix covers it by next round, file one (campaign health judged across a new account's campaigns, not each alone).
 
