@@ -176,8 +176,8 @@ describe("enforceAccountHealth: the workspace window", () => {
     const told = await notes(db, account.id, "account_health_warning");
     expect(told).toHaveLength(1);
     expect(told[0].body).toMatch(/20 of the 400 emails/);
-    expect(told[0].body).toMatch(/You are still sending/);
-    expect(told[0].body).toMatch(/Amazon SES/);
+    expect(told[0].body).toMatch(/you are still sending/);
+    expect(told[0].body).toMatch(/marked for good/);
 
     // Every later bounce webhook re-runs this; the inbox hears it once.
     await fillCampaign(db, campaign, { bounced: 3 });
@@ -218,8 +218,8 @@ describe("enforceAccountHealth: the workspace window", () => {
     expect(acct.sendingEnabled).toBe(false);
     const told = await notes(db, account.id, "account_paused");
     expect(told).toHaveLength(1);
-    expect(told[0].body).toMatch(/Amazon SES/);
-    expect(told[0].body).toMatch(/contact support/);
+    expect(told[0].body).toMatch(/protect you, not to punish you/);
+    expect(told[0].body).toMatch(/reply to this email/);
   });
 
   it("escalates to an account pause when a second campaign flags in the window", async () => {

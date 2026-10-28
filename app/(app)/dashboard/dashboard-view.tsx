@@ -27,6 +27,7 @@ import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { FirstSendView } from "@/components/first-send-view";
 import { UpgradeNudge, UsageBar, usageInfo } from "@/components/plan-usage";
 import type { Account, AccountHealth, CampaignListItem, OnboardingState } from "@/lib/types";
+import { customerPauseMessage } from "@/lib/pause-message";
 
 // A single KPI tile. Every stat card shares this skeleton — a muted label with a
 // trailing icon, a prominent value, and a footer pinned to the bottom — so the
@@ -148,7 +149,7 @@ export function DashboardView({
       {account.riskStatus === "paused" && (
         <Alert variant="destructive">
           <AlertTitle>Sending is paused</AlertTitle>
-          <AlertDescription>{account.pausedReason ?? "Contact support."}</AlertDescription>
+          <AlertDescription>{customerPauseMessage(account.pausedReason)}</AlertDescription>
         </Alert>
       )}
 

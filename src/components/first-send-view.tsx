@@ -27,6 +27,7 @@ import { Reveal } from "@/components/ui/reveal";
 import { useApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Account, OnboardingState } from "@/lib/types";
+import { customerPauseMessage } from "@/lib/pause-message";
 
 // The dashboard a brand new account sees, in place of the tiles and the
 // recent-campaigns table.
@@ -209,7 +210,7 @@ export function FirstSendView({
       {account.riskStatus === "paused" && (
         <Alert variant="destructive">
           <AlertTitle>Sending is paused</AlertTitle>
-          <AlertDescription>{account.pausedReason ?? "Contact support."}</AlertDescription>
+          <AlertDescription>{customerPauseMessage(account.pausedReason)}</AlertDescription>
         </Alert>
       )}
 

@@ -520,7 +520,7 @@ describe("end-to-end: webhook ingestion drives status, suppression, and auto-pau
         and(eq(notifications.accountId, account.id), eq(notifications.kind, "account_paused")),
       );
     expect(pausedNotes).toHaveLength(1);
-    expect(pausedNotes[0].body).toMatch(/Amazon SES/);
+    expect(pausedNotes[0].body).toMatch(/protect you, not to punish you/);
 
     // Suppression list now holds the bounce + all six complaints.
     const allSup = await db

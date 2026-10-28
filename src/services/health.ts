@@ -589,14 +589,23 @@ export async function enforceCampaignHealth(
 // normal, that the bad addresses are already gone, and how to get back to
 // sending. Kept next to the rule so the text and the thresholds move together.
 
+//
+// The voice is the owner's own (mrr/outreach/SUPPORT-VOICE.md): assume an
+// honest mistake, explain with their numbers and what it does to THEIR
+// domain, present the pause as protection, and offer a person. The earlier
+// texts were accurate and read like a compliance desk; a customer called
+// that out, rightly.
+
 const WHY_BOUNCES =
-  "A hard bounce means the mailbox no longer exists. Gmail, Outlook and the other inbox providers judge a sender by this number: above 5% they start filtering everything you send, not just the campaign that bounced.";
+  "A hard bounce means the mailbox no longer exists. Gmail, Outlook and the other inbox providers watch this number closely: above 5% they start sending everything from your domain to spam, not just this campaign.";
 const WHY_COMPLAINTS =
-  'A complaint is a recipient pressing "report spam". Inbox providers treat it as the strongest signal there is: above 0.1% they start filtering everything you send.';
+  'A complaint is someone pressing "report spam". Inbox providers take it more seriously than anything else: above 0.1% they start sending everything from your domain to spam, even your important emails.';
 const ALREADY_SUPPRESSED =
-  "Every address that bounced or complained has already been removed from your audience and will never be mailed again.";
+  "The good news: every address that bounced or complained has already been removed from your audience, so it will never be mailed again.";
 const HOW_TO_FIX =
-  "To bring the number down: remove contacts who have not opened anything in a year, do not import lists you did not collect yourself, and turn on double opt-in for your signup forms.";
+  "What helps most: remove contacts who have not opened anything in a year, only mail people who signed up to hear from you, and turn on double opt-in for your signup forms.";
+const HELP =
+  "This happens to honest senders too, often with an older list. If you are not sure what to do, just reply and I will help.";
 
 export function campaignPausedNotification(
   campaign: Pick<Campaign, "id" | "name">,
@@ -610,14 +619,14 @@ export function campaignPausedNotification(
     : `${health.bounced} of the first ${health.attempted} emails from "${campaign.name}" hard-bounced (${pct(health.bounceRate)}).`;
   const why = byComplaints ? WHY_COMPLAINTS : WHY_BOUNCES;
   const next = byComplaints
-    ? "Before you resume, look at who this went to and whether they asked for it: a complaint rate this high usually means the list was not collected by opt-in, or the content does not match what people signed up for."
-    : "You can resume the send safely. Before you do, look at where this list came from: a rate this high usually means it is old or was not collected by opt-in, and the rest of it will bounce at about the same rate.";
+    ? "Before you resume, take a look at who this went to and whether they asked for it. A complaint rate this high usually means some of the list never signed up, or the email is not what people expected."
+    : "You can resume the send safely. Before you do, take a look at where this list came from: a rate this high usually means it is old, and the rest of it will bounce at about the same rate.";
   return {
     kind: "campaign_reputation_paused" as const,
     title: byComplaints
       ? `"${campaign.name}" is paused: too many spam complaints`
       : `"${campaign.name}" is paused: too many addresses are bouncing`,
-    body: `${what} ${why} We paused the send so the rest of the list does not make it worse. ${ALREADY_SUPPRESSED} ${next}`,
+    body: `${what} ${why} I paused this one campaign to protect your domain, so the rest of the list does not make it worse. ${ALREADY_SUPPRESSED} ${next} ${HELP}`,
     ctaHref: `/campaigns/${campaign.id}`,
     ctaLabel: "Review and resume",
   };
@@ -647,11 +656,11 @@ export function accountWarningNotification(health: AccountHealth) {
       `Mailbox providers refused ${health.spamRejected} of the ${health.attempted} emails your workspace sent in the last ${days} as spam (${pct(health.spamRejectRate)}).`,
     );
   }
-  const why = `Amazon SES, which delivers Day3's mail, reviews senders above ${pct(BOUNCE_RATE_WARNING, 0)} bounces or ${pct(COMPLAINT_RATE_WARNING, 1)} complaints, so we pause a workspace that reaches ${pct(BOUNCE_RATE_PAUSE, 0)} bounces or ${pct(COMPLAINT_RATE_PAUSE, 1)} complaints.`;
+  const why = `Email services are strict about this. Above ${pct(BOUNCE_RATE_WARNING, 0)} bounces or ${pct(COMPLAINT_RATE_WARNING, 1)} complaints, inbox providers start treating your domain as a spammer, and at ${pct(BOUNCE_RATE_PAUSE, 0)} or ${pct(COMPLAINT_RATE_PAUSE, 1)} Day3 pauses sending before your domain gets marked for good.`;
   return {
     kind: "account_health_warning" as const,
-    title: "Your sending reputation needs attention",
-    body: `${parts.join(" ")} You are still sending. ${why} ${HOW_TO_FIX}`,
+    title: "A heads-up about your sending reputation",
+    body: `${parts.join(" ")} Nothing is paused and you are still sending. I am telling you now so you can fix it while it is easy. ${why} ${HOW_TO_FIX} ${HELP}`,
     ctaHref: "/metrics",
     ctaLabel: "See your reputation",
   };
@@ -662,7 +671,7 @@ export function accountPausedNotification(health: AccountHealth) {
   return {
     kind: "account_paused" as const,
     title: "Sending is paused for your workspace",
-    body: `${what}. That is close to the line where Amazon SES, which delivers mail for every Day3 workspace, would restrict the whole platform, so we stopped sending for your workspace before it got there. Nothing you sent is lost, and every address that bounced or complained has already been removed from your audience. To get sending re-enabled, remove stale or purchased addresses from your audience, then reply to this email or contact support and we will lift the pause together. ${HOW_TO_FIX}`,
+    body: `${what}. I paused sending for your workspace, and I want to be clear that this is to protect you, not to punish you. Numbers like these get a domain marked as spam by the inbox providers, and then all of your mail lands in spam, even the important emails. Nothing you sent is lost, and every address that bounced or complained has already been removed from your audience. ${HOW_TO_FIX} Then reply to this email and we will get you sending again together. Mistakes with lists happen, and I would much rather help you fix it than lose you.`,
     ctaHref: "/audiences",
     ctaLabel: "Review your audience",
   };
