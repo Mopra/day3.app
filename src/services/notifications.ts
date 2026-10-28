@@ -33,6 +33,9 @@ export type NotifyInput = {
   // for the email button.
   ctaHref?: string;
   ctaLabel?: string;
+  // Sender name on the email. Defaults to "Day3"; texts written as "I" (the
+  // reputation notices in health.ts) name the person so the voice has one.
+  fromName?: string;
 };
 
 function escapeHtml(value: string): string {
@@ -114,7 +117,7 @@ export async function notifyAccount(db: Db, account: Account, input: NotifyInput
           .send({
             accountId: account.id,
             fromEmail: FROM_EMAIL,
-            fromName: "Day3",
+            fromName: input.fromName ?? "Day3",
             toEmail,
             subject: input.title,
             html,

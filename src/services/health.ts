@@ -604,6 +604,8 @@ const ALREADY_SUPPRESSED =
   "The good news: every address that bounced or complained has already been removed from your audience, so it will never be mailed again.";
 const HOW_TO_FIX =
   "What helps most: remove contacts who have not opened anything in a year, only mail people who signed up to hear from you, and turn on double opt-in for your signup forms.";
+// These texts speak as "I", so they are signed by a person, not "Day3".
+const PERSONAL_FROM_NAME = "Morten from Day3";
 const HELP =
   "This happens to honest senders too, often with an older list. If you are not sure what to do, just reply and I will help.";
 
@@ -629,6 +631,7 @@ export function campaignPausedNotification(
     body: `${what} ${why} I paused this one campaign to protect your domain, so the rest of the list does not make it worse. ${ALREADY_SUPPRESSED} ${next} ${HELP}`,
     ctaHref: `/campaigns/${campaign.id}`,
     ctaLabel: "Review and resume",
+    fromName: PERSONAL_FROM_NAME,
   };
 }
 
@@ -663,6 +666,7 @@ export function accountWarningNotification(health: AccountHealth) {
     body: `${parts.join(" ")} Nothing is paused and you are still sending. I am telling you now so you can fix it while it is easy. ${why} ${HOW_TO_FIX} ${HELP}`,
     ctaHref: "/metrics",
     ctaLabel: "See your reputation",
+    fromName: PERSONAL_FROM_NAME,
   };
 }
 
@@ -674,5 +678,6 @@ export function accountPausedNotification(health: AccountHealth) {
     body: `${what}. I paused sending for your workspace, and I want to be clear that this is to protect you, not to punish you. Numbers like these get a domain marked as spam by the inbox providers, and then all of your mail lands in spam, even the important emails. Nothing you sent is lost, and every address that bounced or complained has already been removed from your audience. ${HOW_TO_FIX} Then reply to this email and we will get you sending again together. Mistakes with lists happen, and I would much rather help you fix it than lose you.`,
     ctaHref: "/audiences",
     ctaLabel: "Review your audience",
+    fromName: PERSONAL_FROM_NAME,
   };
 }
